@@ -30,5 +30,7 @@
 uv run python -m scalper_hft.cli download --symbol BTCUSDT --interval 1m --days 30
 uv run python -m scalper_hft.cli backtest --strategy mean_reversion --symbol BTCUSDT --interval 1m --days 30
 uv run python -m scalper_hft.cli overfit --strategy mean_reversion --symbol BTCUSDT --interval 5m --days 30
+uv run python -m scalper_hft.cli cscv --strategy funding_carry --symbol BTCUSDT --interval 1m --days 90
 uv run python -m scalper_hft.cli report --strategy mean_reversion --symbol BTCUSDT --interval 5m --days 60
+uv run python -m scalper_hft.cli record-bookticker --symbol BTCUSDT --minutes 60
 ```

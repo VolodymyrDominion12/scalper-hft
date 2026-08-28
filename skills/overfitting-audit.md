@@ -6,6 +6,7 @@
 ## Команда
 ```bash
 .venv/bin/python -m scalper_hft.cli overfit --strategy <name> --symbol BTCUSDT --interval 1m --days 30
+.venv/bin/python -m scalper_hft.cli cscv --strategy <name> --symbol BTCUSDT --interval 1m --days 90 --variants 30
 .venv/bin/python -m scalper_hft.cli report --strategy <name> --symbol BTCUSDT --interval 5m --days 60
 ```
 
@@ -14,8 +15,10 @@
 2. **Deflated Sharpe**: `DSR > 0.95` — edge значущий після коригування на кількість спроб
    (`n_trials` = комбінації параметрів × бектести). `estimate_n_trials` збільшуй,
    якщо дослідник ітеративно перебирав варіанти.
-3. **Sensitivity**: `smoothness > 0.3` — плато параметрів; ізольований пік = перенавчання.
-4. **Мінімальна кількість угод**: для скальпінгу — не менше ~100 угод на аудит, інакше
+3. **CSCV/PBO**: `pbo < 0.5` — IS-кращі варіанти стабільно працюють на OOS;
+   `pbo > 0.5` — ймовірне перенавчання.
+4. **Sensitivity**: `smoothness > 0.3` — плато параметрів; ізольований пік = перенавчання.
+5. **Мінімальна кількість угод**: для скальпінгу — не менше ~100 угод на аудит, інакше
    метрики нестабільні (перевір `n_trades` у звіті).
 
 ## Правила
