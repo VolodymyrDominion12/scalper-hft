@@ -31,21 +31,25 @@ class BinanceClient:
         api_secret: str = "",
         exchange_id: str = "binance-testnet",
         auth: bool = False,
+        market_type: str = "future",
     ) -> None:
         """auth=True — лише коли потрібні приватні ендпоінти (торгівля).
 
         Для завантаження даних (публічні klines/trades/funding) ключі НЕ
         передаються: Binance валідує X-MBX-APIKEY навіть на публічних
         ендпоінтах і відхиляє невалідні ключі.
+        market_type: 'future' (USDT-M ф'ючерси) або 'spot' — для delta-neutral
+        арбітражу потрібні обидва ринки.
         """
         exchange_cls = getattr(ccxt, exchange_id) if hasattr(ccxt, exchange_id) else ccxt.binance
         params: dict[str, Any] = {
             "enableRateLimit": True,
-            "options": {"defaultType": "future"},
+            "options": {"defaultType": market_type},
         }
         if auth and api_key and api_secret:
             params.update({"apiKey": api_key, "secret": api_secret})
         self.exchange: ccxt.Exchange = exchange_cls(params)  # type: ignore[arg-type]
+        self.market_type = market_type
         self._market_cache: dict[str, dict[str, Any]] = {}
 
     # ── метадані ──────────────────────────────────────────────────────────────

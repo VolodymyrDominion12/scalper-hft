@@ -101,6 +101,41 @@ class Downloader:
         save_klines(path, out)
         return out
 
+    def spot_klines(self, symbol: str, interval: str, days: int) -> pd.DataFrame:
+        """Спотові klines (для delta-neutral арбітражу) у окремий кеш."""
+        from scalper_hft.data.binance_client import BinanceClient
+        from scalper_hft.data.storage import spot_klines_path
+
+        path = spot_klines_path(get_settings().data_dir_abs, symbol, interval)
+        existing = load_klines(path)
+        start_ms = int((_utc_now() - pd.Timedelta(days=days)).value // 1_000_000)
+        if existing is not None and not existing.empty:
+            start_ms = min(start_ms, int(existing.index[-1].value // 1_000_000))
+
+        spot_client = BinanceClient(market_type="spot")
+        frames: list[pd.DataFrame] = [existing] if existing is not None and not existing.empty else []
+        since = start_ms
+        interval_ms = _interval_ms(interval)
+        guard = 0
+        while True:
+            guard += 1
+            if guard > 10_000:
+                raise RuntimeError("Забагато батчів spot klines")
+            batch = self._with_retry(spot_client.fetch_klines, symbol, interval, since)
+            if not batch:
+                break
+            df = pd.DataFrame(batch, columns=["ts", "open", "high", "low", "close", "volume"])
+            df["ts"] = pd.to_datetime(df["ts"], unit="ms")
+            df = df.set_index("ts")
+            frames.append(df)
+            since = int(df.index[-1].value // 1_000_000) + interval_ms
+            if len(batch) < 1000:
+                break
+        out = pd.concat(frames).sort_index()
+        out = out[~out.index.duplicated(keep="last")]
+        save_klines(path, out)
+        return out
+
     def agg_trades(self, symbol: str, days: int, start_ms: int | None = None) -> pd.DataFrame:
         """Завантажити історичні агреговані трейди (для CVD).
 
@@ -238,3 +273,21 @@ def download_funding(symbol: str, days: int, force: bool = False) -> pd.DataFram
     if cached is not None and not cached.empty:
         return cached
     return Downloader().funding(symbol, days)
+
+
+def download_spot_klines(symbol: str, interval: str, days: int, force: bool = False) -> pd.DataFrame:
+    """Спотові klines (для delta-neutral арбітражу) з окремим кешем."""
+    from scalper_hft.data.storage import spot_klines_path
+
+    settings = get_settings()
+    path = spot_klines_path(settings.data_dir_abs, symbol, interval)
+    cached = None if force else load_klines(path)
+    if cached is not None and not cached.empty:
+        now = _utc_now()
+        newest = cached.index[-1]
+        stale = newest < now - pd.Timedelta(milliseconds=max(2 * _interval_ms(interval), 60_000))
+        if not stale:
+            logger.info("Кеш spot klines %s %s свіжий: %d рядків", symbol, interval, len(cached))
+            return cached
+    logger.info("Завантаження spot klines %s %s за %d днів", symbol, interval, days)
+    return Downloader().spot_klines(symbol, interval, days)

@@ -54,6 +54,8 @@ uv venv .venv && uv pip install -e ".[optim,ml,dev]"
 | `ml` | walk-forward LightGBM класифікатор напрямку |
 | `paper` | один крок paper-торгівлі на останньому барі |
 | `paper-run` | **циклічний paper-прогін** (N кроків, збереження equity/угод у `results/`) |
+| `paper-replay` | відтворення історії через risk-трейдера (валiдація risk-шару) |
+| `arb` | **delta-neutral funding arb** (перп+спот): бектест + walk-forward, `--maker` |
 | `report` | повний markdown-звіт у `docs/reports/` |
 | `record-bookticker` | запис best bid/ask (WS) у parquet — для OB-стратегій (`--depth` — 5 рівнів) |
 

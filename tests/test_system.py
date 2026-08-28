@@ -301,3 +301,29 @@ def test_paper_replay_daily_reset():
     days = pd.to_datetime(trades["exit_ts"]).dt.date.nunique() if len(trades) else 0
     assert days >= 2, f"після скидання паузи угоди мають бути в наступні дні, днів з угодами: {days}"
     assert len(trades) >= 3, f"мінімум 3 угоди (по одній серії на день), отримано {len(trades)}"
+
+
+def test_delta_neutral_basis_accounting():
+    """Delta-neutral: ціновий PnL = ±Δbasis; funding один раз за блок; 2-leg комісії."""
+    import numpy as np
+    import pandas as pd
+
+    from scalper_hft.backtest.delta_neutral import run_delta_neutral_backtest
+    from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.strategies.funding_arb import FundingArb
+
+    idx = pd.date_range("2025-01-01", periods=300, freq="1min")
+    # перп росте, спот стабільний → basis зростає
+    perp = pd.DataFrame({"close": 100.0 + 0.001 * np.arange(300)}, index=idx)
+    spot = pd.DataFrame({"close": 100.0 + np.zeros(300)}, index=idx)
+    # три ставки: третя припадає на активну carry-позицію (перевірка funding-платежу)
+    funding = pd.DataFrame({"fundingRate": [0.0005, 0.0005, 0.0005]}, index=[idx[30], idx[150], idx[210]])
+    # carry=+1 (шорт перп/лонг спот) при позитивному фандінгу
+    s = FundingArb(upper_threshold=0.0004, lower_threshold=-0.0004, exit_threshold=0.0001)
+    res = run_delta_neutral_backtest(perp, spot, s, funding, position_pct=1.0,
+                                     cost=CostModel(0, 0, 0))
+    # basis зростає → carry+1 (шорт перп) втрачає на basis; funding отримує на активній позиції
+    ret_total = res.metrics.total_return
+    assert ret_total < 0, f"шорт перпа при зростаючому basis має втрачати, отримали {ret_total}"
+    # funding внесок ≈ одна ставка × 0.0005 (позиція активна на третій ставці)
+    assert abs(res.funding_pnl / 100 - 0.0005) < 0.0002, f"funding внесок: {res.funding_pnl}"

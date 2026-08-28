@@ -39,6 +39,11 @@ def klines_path(data_dir: Path, symbol: str, interval: str) -> Path:
     return data_dir / f"{symbol}_{interval}_klines.parquet"
 
 
+def spot_klines_path(data_dir: Path, symbol: str, interval: str) -> Path:
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return data_dir / f"{symbol}_{interval}_spot_klines.parquet"
+
+
 def trades_path(data_dir: Path, symbol: str) -> Path:
     data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir / f"{symbol}_aggTrades.parquet"

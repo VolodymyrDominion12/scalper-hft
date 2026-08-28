@@ -384,6 +384,41 @@ def cmd_paper_replay(args: argparse.Namespace) -> None:
         )
 
 
+def cmd_arb(args: argparse.Namespace) -> None:
+    """Delta-neutral funding arbitrage (перп+спот): бектест + walk-forward."""
+    from scalper_hft.backtest.delta_neutral import run_delta_neutral_backtest, run_dn_walk_forward
+    from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.config import get_settings
+    from scalper_hft.data.downloader import download_funding, download_klines, download_spot_klines
+    from scalper_hft.strategies import get_strategy
+
+    perp = download_klines(args.symbol, args.interval, args.days)
+    spot = download_spot_klines(args.symbol, args.interval, args.days)
+    funding = download_funding(args.symbol, args.days)
+    strategy = get_strategy(args.strategy, **args.param_dict)
+    settings = get_settings()
+    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+
+    res = run_delta_neutral_backtest(
+        perp, spot, strategy, funding, position_pct=args.position_pct or 0.1, cost=cost,
+        maker_execution=args.maker,
+    )
+    print("\n" + res.summary())
+    _plot_equity(res.equity, args.strategy, args.symbol)
+
+    if args.walkforward:
+        wf = run_dn_walk_forward(
+            perp, spot, strategy, funding, train_bars=args.train, test_bars=args.test,
+            position_pct=args.position_pct or 0.1,
+        )
+        print(
+            f"\nWalk-forward: {wf['n_windows']} вікон | avg IS SRh={wf['avg_is_sharpe']:+.3f} | "
+            f"avg OOS SRh={wf['avg_oos_sharpe']:+.3f} | позитивних OOS: {wf['positive_windows']:.0%}"
+        )
+        if wf["avg_oos_sharpe"] < 0.1:
+            print("⚠  OOS слабкий — edge не підтверджено")
+
+
 def _plot_equity(equity: pd.Series, strategy: str, symbol: str) -> None:
     try:
         import matplotlib
@@ -471,6 +506,15 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--minutes", type=int, default=60, help="Тривалість запису, хв")
     p.add_argument("--depth", action="store_true", help="Записувати depth5 (5 рівнів стакана) замість bookTicker")
     p.set_defaults(func=cmd_record_bookticker)
+
+    p = sub.add_parser("arb", help="Delta-neutral funding arb (перп+спот)")
+    add_common(p)
+    p.add_argument("--position-pct", type=float, default=None, help="Ноціонал кожної ноги (за замовч. 0.1)")
+    p.add_argument("--maker", action="store_true", help="Комісії maker (post-only) на обох ногах")
+    p.add_argument("--walkforward", action="store_true", help="Додатково walk-forward")
+    p.add_argument("--train", type=int, default=20000)
+    p.add_argument("--test", type=int, default=5000)
+    p.set_defaults(func=cmd_arb)
 
     p = sub.add_parser("ml", help="Walk-forward ML-класифікатор напрямку")
     add_common(p)
