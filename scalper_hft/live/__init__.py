@@ -7,6 +7,6 @@
 """
 
 from scalper_hft.live.account import PaperAccount
-from scalper_hft.live.trader import LiveTrader, run_trader_once
+from scalper_hft.live.trader import LiveTrader, closed_klines, run_trader_once
 
-__all__ = ["PaperAccount", "LiveTrader", "run_trader_once"]
+__all__ = ["PaperAccount", "LiveTrader", "closed_klines", "run_trader_once"]

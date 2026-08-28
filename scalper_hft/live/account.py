@@ -1,7 +1,10 @@
 """Paper-акаунт: симуляція виконання без реальних грошей.
 
-Використовується в режимі DRY_RUN=true (testnet) або коли API-ключів немає.
-Облік: капітал, позиції, комісії, історія угод.
+Облік як USDT-M ф'ючерс (не спот):
+    - cash — гаманець (маржа + реалізований PnL); при відкритті списується
+      лише комісія, не повний ноціонал;
+    - equity = cash + unrealized PnL (mark-to-market);
+    - realized_pnl — журнал для звітів, не додається до cash вдруге.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ class Position:
     size: float  # у базовій валюті (e.g. BTC)
     entry_price: float
     entry_ts: pd.Timestamp
+    entry_fee: float = 0.0
 
 
 @dataclass
@@ -25,27 +29,51 @@ class PaperAccount:
     initial_capital: float = 10_000.0
     taker_fee: float = 0.0005
     maker_fee: float = 0.0002
-    cash: float = field(default=10_000.0, init=False)
+    cash: float = field(init=False)
     positions: dict[str, Position] = field(default_factory=dict, init=False)
     trades: list[dict] = field(default_factory=list, init=False)
     realized_pnl: float = 0.0
     consecutive_losses: int = 0
-    day_start_equity: float = field(default=10_000.0, init=False)
+    day_start_equity: float = field(init=False)
+    _marks: dict[str, float] = field(default_factory=dict, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.cash = float(self.initial_capital)
+        self.day_start_equity = float(self.initial_capital)
+
+    def mark(self, prices: dict[str, float]) -> None:
+        """Оновити mark-ціни для UPNL (ключ — символ)."""
+        self._marks.update(prices)
+
+    def unrealized_pnl(self, prices: dict[str, float] | None = None) -> float:
+        marks = {**self._marks, **(prices or {})}
+        total = 0.0
+        for sym, pos in self.positions.items():
+            px = marks.get(sym, pos.entry_price)
+            if pos.side == "long":
+                total += (px - pos.entry_price) * pos.size
+            else:
+                total += (pos.entry_price - px) * pos.size
+        return total
+
+    def equity_at(self, prices: dict[str, float] | None = None) -> float:
+        """Капітал з mark-to-market. Без prices — останні mark або ціна входу."""
+        return self.cash + self.unrealized_pnl(prices)
 
     @property
     def equity(self) -> float:
-        return self.cash + self.realized_pnl
+        return self.equity_at()
 
     def open_position(
         self, symbol: str, side: str, size: float, price: float, ts: pd.Timestamp, is_maker: bool = False
     ) -> None:
+        if symbol in self.positions:
+            raise ValueError(f"позиція {symbol} вже відкрита — спочатку close")
         fee_rate = self.maker_fee if is_maker else self.taker_fee
         fee = price * size * fee_rate
-        if side == "long":
-            self.cash -= price * size + fee
-        else:
-            self.cash += price * size - fee
-        self.positions[symbol] = Position(symbol, side, size, price, ts)
+        self.cash -= fee
+        self.positions[symbol] = Position(symbol, side, size, price, ts, entry_fee=fee)
+        self._marks[symbol] = price
 
     def close_position(
         self, symbol: str, price: float, ts: pd.Timestamp, is_maker: bool = False
@@ -54,12 +82,13 @@ class PaperAccount:
         fee_rate = self.maker_fee if is_maker else self.taker_fee
         fee = price * pos.size * fee_rate
         if pos.side == "long":
-            pnl = (price - pos.entry_price) * pos.size - fee
-            self.cash += price * pos.size - fee
+            price_pnl = (price - pos.entry_price) * pos.size
         else:
-            pnl = (pos.entry_price - price) * pos.size - fee
-            self.cash -= price * pos.size + fee
+            price_pnl = (pos.entry_price - price) * pos.size
+        pnl = price_pnl - fee - pos.entry_fee
+        self.cash += price_pnl - fee
         self.realized_pnl += pnl
+        self._marks.pop(symbol, None)
         trade = {
             "type": "trade",
             "symbol": symbol,
@@ -94,6 +123,7 @@ class PaperAccount:
         notional = pos.entry_price * pos.size
         side = 1.0 if pos.side == "long" else -1.0
         pnl = -side * rate * notional
+        self.cash += pnl
         self.realized_pnl += pnl
         self.trades.append(
             {

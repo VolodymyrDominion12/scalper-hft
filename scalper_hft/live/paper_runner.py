@@ -18,7 +18,6 @@ from pathlib import Path
 
 import pandas as pd
 
-from scalper_hft.backtest.execution import CostModel
 from scalper_hft.config import get_settings
 from scalper_hft.data.binance_client import BinanceClient
 from scalper_hft.live.account import PaperAccount
@@ -70,30 +69,21 @@ class PaperRunner:
         self.strategy = strategy
         self.symbol = symbol
         self.interval = interval
-        self.account = account or PaperAccount(initial_capital=10_000.0)
+        settings = get_settings()
+        self.account = account or PaperAccount(
+            initial_capital=10_000.0,
+            taker_fee=settings.taker_fee,
+            maker_fee=settings.maker_fee,
+        )
         self.trader = LiveTrader(strategy, symbol, interval, account=self.account)
-        self._funding: pd.DataFrame | None = None
 
     def step(self) -> str:
-        """Один крок циклу: свіжі дані → сигнал → виконання."""
+        """Один крок: свіжі дані → сигнал на закритому барі → виконання."""
         df = _fetch_recent(self.symbol, self.interval)
-        if self.strategy.needs_funding:
-            from scalper_hft.data.downloader import download_funding
-            from scalper_hft.live.trader import execute_signal
-
-            funding = download_funding(self.symbol, days=30)
-            sig = self._signal_with_funding(df, funding)
-            return execute_signal(self.trader, sig, df)
         return run_trader_once(self.trader, df)
-
-    def _signal_with_funding(self, df: pd.DataFrame, funding: pd.DataFrame) -> int:
-        """Сигнал з урахуванням funding (для needs_funding стратегій)."""
-        sig = self.strategy.generate_signals(df, funding=funding)
-        return int(sig.iloc[-1]) if len(sig) else 0
 
     def run(self, iterations: int = 10, sleep_sec: int = 60, out_dir: Path | None = None) -> PaperRunResult:
         """Цикл з iterations кроків і паузою sleep_sec між ними."""
-        settings = get_settings()
         result = PaperRunResult(account=self.account, symbol=self.symbol, strategy=self.strategy.name)
         out_dir = out_dir or Path("results")
         out_dir.mkdir(parents=True, exist_ok=True)

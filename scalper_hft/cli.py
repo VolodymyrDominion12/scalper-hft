@@ -498,7 +498,7 @@ def main(argv: list[str] | None = None) -> None:
     def add_common(p: argparse.ArgumentParser) -> None:
         p.add_argument("--symbol", default=None, help="Символ, e.g. BTCUSDT (за замовч. з .env)")
         p.add_argument("--interval", default=None, help="Таймфрейм: 1s/5s/1m/5m/15m/1h")
-        p.add_argument("--strategy", default="mean_reversion", help="Стратегія з реєстру: mean_reversion, cvd_momentum, ob_imbalance, market_maker")
+        p.add_argument("--strategy", default="mean_reversion", help="Стратегія з реєстру: mean_reversion, cvd_momentum, pairs_arb, ...")
         p.add_argument("--days", type=int, default=60, help="Глибина історії, днів")
         p.add_argument("-p", "--param", action="append", default=[], help="Параметр стратегії: key=value")
 

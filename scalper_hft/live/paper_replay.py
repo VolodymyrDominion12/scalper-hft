@@ -98,20 +98,13 @@ def paper_replay(
     last_day = None
     funding_i = 0
 
-    def _unrealized(price: float) -> float:
-        pos = account.positions.get(symbol)
-        if pos is None:
-            return 0.0
-        if pos.side == "long":
-            return (price - pos.entry_price) * pos.size
-        return (pos.entry_price - price) * pos.size
-
     def _equity(price: float) -> float:
-        return account.cash + account.realized_pnl + _unrealized(price)
+        return account.equity_at({symbol: price})
 
     for i in range(1, len(df)):
         ts = df.index[i]
         price = float(df["close"].iloc[i])
+        account.mark({symbol: price})
         # щоденне скидання day_start_equity
         day = ts.date()
         if last_day is not None and day != last_day:
@@ -137,16 +130,22 @@ def paper_replay(
             if pos is not None:
                 account.close_position(symbol, price, ts)
         elif signal > 0:
+            if pos is not None and pos.side != "long":
+                account.close_position(symbol, price, ts)
+                pos = None
             if pos is None:
-                blocked = _risk_gate(account, settings)
+                blocked = _risk_gate(account, settings, price, symbol)
                 if blocked:
                     risk_blocks.append({"ts": ts, "reason": blocked, "signal": signal})
                 else:
                     size = position_pct * _equity(price) / price
                     account.open_position(symbol, "long", size, price, ts)
         else:
+            if pos is not None and pos.side != "short":
+                account.close_position(symbol, price, ts)
+                pos = None
             if pos is None:
-                blocked = _risk_gate(account, settings)
+                blocked = _risk_gate(account, settings, price, symbol)
                 if blocked:
                     risk_blocks.append({"ts": ts, "reason": blocked, "signal": signal})
                 else:
@@ -170,8 +169,9 @@ def paper_replay(
     )
 
 
-def _risk_gate(account: PaperAccount, settings) -> str | None:
+def _risk_gate(account: PaperAccount, settings, mark_price: float, symbol: str) -> str | None:
     """Ті самі правила, що в LiveTrader.risk_check; повертає причину блоку або None."""
+    account.mark({symbol: mark_price})
     if account.consecutive_losses >= settings.max_consecutive_losses:
         return "max_consecutive_losses"
     if account.equity <= account.day_start_equity * (1 - settings.daily_loss_limit):

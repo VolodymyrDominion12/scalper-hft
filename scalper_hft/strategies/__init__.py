@@ -10,6 +10,7 @@ from scalper_hft.strategies.funding_carry import FundingCarryScalper
 from scalper_hft.strategies.market_maker import PassiveMarketMaker
 from scalper_hft.strategies.mean_reversion import MeanReversionScalper
 from scalper_hft.strategies.ob_imbalance import ObImbalanceScalper
+from scalper_hft.strategies.pairs_arb import PairsArb
 
 REGISTRY: dict[str, type[Strategy]] = {
     cls.name: cls
@@ -21,6 +22,7 @@ REGISTRY: dict[str, type[Strategy]] = {
         FundingCarryScalper,
         FundingArb,
         BasisReversion,
+        PairsArb,
     )
 }
 
