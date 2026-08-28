@@ -357,3 +357,26 @@ def test_basis_reversion_signals():
     s = BasisReversion(exit_bps=1.0, lookback=120)
     sig = s.generate_signals(df)
     assert (sig != 0).sum() > 0, "очікували сигнали на аномальному basis"
+
+
+def test_pairs_accounting():
+    """Парний бектест: спред PnL = ∓Δratio; funding ніг з правильними знаками."""
+    import numpy as np
+    import pandas as pd
+
+    from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.backtest.pairs import run_pairs_backtest
+    from scalper_hft.strategies.pairs_arb import PairsArb
+
+    idx = pd.date_range("2025-01-01", periods=500, freq="1min")
+    leg1 = pd.DataFrame({"close": 100.0 + 0.002 * np.arange(500)}, index=idx)   # росте
+    leg2 = pd.DataFrame({"close": 100.0 + 0.0 * np.arange(500)}, index=idx)     # flat
+    f1 = pd.DataFrame({"fundingRate": [0.0005]}, index=[idx[100], idx[250], idx[400]])
+    f2 = pd.DataFrame({"fundingRate": [0.0005]}, index=[idx[100], idx[250], idx[400]])
+    # ratio=log(leg1/leg2) зростає → z стає високим → pos=+1 (шорт leg1/лонг leg2) → втрачає
+    s = PairsArb(entry_z=1.5, exit_z=0.1, lookback=60)
+    res = run_pairs_backtest(leg1, leg2, s, f1, f2, position_pct=1.0, cost=CostModel(0, 0, 0))
+    # спред-втрата: ratio зріс ≈ log(100.998/100) ≈ 0.01 → шорт leg1 втрачає ≈ 1%
+    # funding: leg1 short отримує +0.0005×3; leg2 long платить -0.0005×3 → нетто 0
+    assert res.metrics.total_return < -0.005, f"очікували спред-втрату, отримали {res.metrics.total_return}"
+    assert abs(res.funding_pnl / 100) < 0.0005, f"netto funding ≈ 0 (дві ноги гасять): {res.funding_pnl}"

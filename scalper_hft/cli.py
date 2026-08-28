@@ -419,6 +419,45 @@ def cmd_arb(args: argparse.Namespace) -> None:
             print("⚠  OOS слабкий — edge не підтверджено")
 
 
+def cmd_pairs(args: argparse.Namespace) -> None:
+    """Статистичний арбітраж пар (BTC/ETH/SOL перпи)."""
+    from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.backtest.pairs import run_pairs_backtest
+    from scalper_hft.config import get_settings
+    from scalper_hft.data.downloader import download_funding, download_klines
+    from scalper_hft.strategies import get_strategy
+
+    leg1, leg2 = (args.leg1 or "BTCUSDT"), (args.leg2 or "ETHUSDT")
+    df1 = download_klines(leg1, args.interval, args.days)
+    df2 = download_klines(leg2, args.interval, args.days)
+    f1 = download_funding(leg1, args.days)
+    f2 = download_funding(leg2, args.days)
+    strategy = get_strategy(args.strategy, **args.param_dict)
+    settings = get_settings()
+    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+
+    res = run_pairs_backtest(
+        df1, df2, strategy, f1, f2,
+        position_pct=args.position_pct or 0.1, cost=cost, maker_execution=args.maker,
+    )
+    print(f"\nПара: {leg1} / {leg2} ({args.interval}, {len(res.spread)} спільних барів)")
+    print(res.summary())
+    _plot_equity(res.equity, args.strategy, f"{leg1}_{leg2}")
+
+    if args.walkforward:
+        from scalper_hft.backtest.pairs import run_pairs_walk_forward
+
+        wf = run_pairs_walk_forward(
+            df1, df2, strategy, f1, f2,
+            train_bars=args.train, test_bars=args.test,
+            position_pct=args.position_pct or 0.1, maker_execution=args.maker,
+        )
+        print(
+            f"\nWalk-forward: {wf['n_windows']} вікон | IS SRh={wf['avg_is_sharpe']:+.3f} | "
+            f"OOS SRh={wf['avg_oos_sharpe']:+.3f} | позитивних OOS: {wf['positive_windows']:.0%}"
+        )
+
+
 def _plot_equity(equity: pd.Series, strategy: str, symbol: str) -> None:
     try:
         import matplotlib
@@ -515,6 +554,17 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--train", type=int, default=20000)
     p.add_argument("--test", type=int, default=5000)
     p.set_defaults(func=cmd_arb)
+
+    p = sub.add_parser("pairs", help="Статистичний арбітраж пар перпів (BTC/ETH/SOL)")
+    add_common(p)
+    p.add_argument("--leg1", default="BTCUSDT", help="Перша нога")
+    p.add_argument("--leg2", default="ETHUSDT", help="Друга нога")
+    p.add_argument("--position-pct", type=float, default=None, help="Ноціонал кожної ноги")
+    p.add_argument("--maker", action="store_true", help="Комісії maker (post-only)")
+    p.add_argument("--walkforward", action="store_true", help="Додатково walk-forward")
+    p.add_argument("--train", type=int, default=1500)
+    p.add_argument("--test", type=int, default=500)
+    p.set_defaults(func=cmd_pairs)
 
     p = sub.add_parser("ml", help="Walk-forward ML-класифікатор напрямку")
     add_common(p)
