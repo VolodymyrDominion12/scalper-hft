@@ -7,6 +7,14 @@
 """
 
 from scalper_hft.live.account import PaperAccount
+from scalper_hft.live.pairs_runner import PairsPaperRunner, replay_pairs
 from scalper_hft.live.trader import LiveTrader, closed_klines, run_trader_once
 
-__all__ = ["PaperAccount", "LiveTrader", "closed_klines", "run_trader_once"]
+__all__ = [
+    "PaperAccount",
+    "LiveTrader",
+    "closed_klines",
+    "run_trader_once",
+    "PairsPaperRunner",
+    "replay_pairs",
+]

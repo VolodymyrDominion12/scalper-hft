@@ -13,7 +13,7 @@ AFML-розширення (Marcos López de Prado):
 """
 
 from scalper_hft.ml.features import build_labeled_dataset
-from scalper_hft.ml.trainer import train_walk_forward, predict
+from scalper_hft.ml.trainer import train_walk_forward, train_from_ohlcv, predict, MlResult
 from scalper_hft.ml.labeling import label_from_ohlcv, get_events, get_labels
 from scalper_hft.ml.sample_weights import compute_sample_weights, seq_bootstrap, get_ind_matrix
 from scalper_hft.ml.frac_diff import frac_diff_ffd, find_min_d, add_frac_diff, frac_diff_features
@@ -21,7 +21,9 @@ from scalper_hft.ml.frac_diff import frac_diff_ffd, find_min_d, add_frac_diff, f
 __all__ = [
     "build_labeled_dataset",
     "train_walk_forward",
+    "train_from_ohlcv",
     "predict",
+    "MlResult",
     # AFML
     "label_from_ohlcv",
     "get_events",

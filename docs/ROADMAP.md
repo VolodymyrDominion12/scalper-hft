@@ -10,8 +10,8 @@
 комісій/фандінгу) з одним валідованим кандидатом: **pairs_arb на 1h, maker**.
 Це **не** готовий HFT-скальпер. Taker-скальпінг на 1m відхилено fee-drag;
 funding/basis сплять у низькому режимі 2025–26. Phase 0 (облік, закритий бар,
-post-only, REGISTRY) закрито. Live все ще не готовий до грошей: немає 2-ніг
-paper runner і моделі пропущених maker-філлів.
+post-only, REGISTRY) закрито. Live все ще не готовий до грошей: Phase 1 (paper pairs) є в коді — потрібен
+≥8 тижнів прогону без розходження з бектестом.
 
 **Правило розгортання:** жоден live, доки paper pairs не пройде ≥8 тижнів без
 розходження з бектестом.
@@ -35,29 +35,25 @@ paper-replay реверсує і рахує daily-loss на mark-to-market. Те
 
 ---
 
-## Phase 1 — Paper pairs (2–4 тижні)
+## Phase 1 — Paper pairs (код 2026-08-28; gate — 8 тижнів paper)
 
-Єдиний шлях до грошей. Бектест pairs уже є; live-циклу для 2 ніг **немає**.
+Зроблено в репозиторії:
+1. `PairsEngine` / `PairsPaperRunner` / `PairsPortfolioRunner` — дві ноги,
+   z-score на закритому барі, maker all-or-none, рівні ноціонали.
+2. Модель філла: post-only на OHLC; unfilled + wait_bars; ніколи однонога позиція.
+3. CLI: `paper-run-pairs`, `paper-replay-pairs`, `pairs-portfolio`.
+4. Ризик: `PAIR_NOTIONAL_PCT` / `PORTFOLIO_NOTIONAL_PCT` (3 пари → 20% нога),
+   стоп після `MAX_LOSING_MONTHS` збиткових місяців.
+5. SQLite `results/paper_pairs.sqlite` (equity, orders, trades, months).
+6. Дашборд: XRP/LINK + секція pairs + SQLite.
+7. Weekly-audit: валідовані пари + портфель; Telegram — OOS, не funding-шум.
+8. Ключі: лишаються в `.env` (`DRY_RUN=true`). Linger: вручну
+   `loginctl enable-linger $USER` для depth-рекордера.
 
-1. **PairsPaperRunner**: дві ноги, z-score на закритому 1h барі, maker post-only
-   на обох, рівні ноціонали (як у бектесті), funding обох ніг.
-2. **Реалістичний філл**: post-only може не виконатись — таймаут, реквот, лог
-   unfilled. Бектест зараз припускає 100% філл на close — це оптимістично.
-3. **CLI** `paper-run-pairs --leg1 XRPUSDT --leg2 BTCUSDT --interval 1h --maker`.
-4. **Ризик портфеля**: ≤30% ноціоналу на пару, ≤60% сумарно; стоп після 2
-   місяців поспіль збитку (вже в STRATEGY_STATUS).
-5. **Персистенція**: SQLite (угоди, ордери, equity, fill/reject) замість CSV.
-6. **Дашборд**: XRP/LINK + секція pairs (зараз лише BTC/ETH/SOL і REGISTRY без pairs).
-7. **Weekly-audit**: прибрати акцент з відхиленого `funding_carry`; ганяти
-   валідовані пари + портфель; Telegram — OOS/DD, не «funding низький».
-8. **Ключі**: валідні testnet, потім paper на mainnet (`DRY_RUN=true`).
-9. **systemd linger**: `loginctl enable-linger` для depth-рекордера.
+Критерій виходу (ще відкритий): ≥8 тижнів paper, tracking vs бектест, fill-rate
+у звіті, maxDD у межах бектесту × 1.5.
 
-Критерій виходу: ≥8 тижнів paper, кореляція paper vs backtest PnL, розходження
-філлів < порогу (зафіксувати в звіті), maxDD у межах бектесту × 1.5.
-
-Стартовий портфель (з [pairs_audit.md](pairs_audit.md)):
-**XRP/BTC + BTC/ETH + LINK/BTC**, рівні ваги, 1h, maker.
+Стартовий портфель: **XRP/BTC + BTC/ETH + LINK/BTC**, 1h, maker.
 
 ---
 

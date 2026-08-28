@@ -14,6 +14,10 @@ __pycache__/
 # дані (великі parquet — локально)
 data/*.parquet
 
+# paper-прогони
+results/
+*.sqlite
+
 # звіти та графіки (генеруються)
 docs/reports/
 docs/plots/

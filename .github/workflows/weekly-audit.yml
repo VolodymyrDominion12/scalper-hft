@@ -1,17 +1,13 @@
-# Щотижневий аудит стратегій на свіжих даних (GitHub Actions)
+# Щотижневий аудит валідованих pairs (GitHub Actions)
 #
-# Запускається за розкладом (щопонеділка 06:00 UTC) та вручну (workflow_dispatch).
-# Підготовка:
-#   1. Репозиторій на GitHub (git remote add origin ...)
-#   2. Secrets: BINANCE_API_KEY, BINANCE_API_SECRET (для download даних — необов'язкові,
-#      публічні дані працюють без ключів), TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
-#      (для сповіщення результату).
+# Щопонеділка 06:00 UTC та вручну. Публічні дані без ключів.
+# Secrets: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID.
 
 name: weekly-audit
 
 on:
   schedule:
-    - cron: "0 6 * * 1"   # щопонеділка 06:00 UTC
+    - cron: "0 6 * * 1"
   workflow_dispatch:
 
 jobs:
@@ -31,89 +27,74 @@ jobs:
       - name: Юніт-тести
         run: uv run pytest tests/ -q
 
-      - name: Завантажити свіжі дані (BTC/ETH/SOL, 1m, 30 днів)
+      - name: Завантажити 1h дані валідованих ніг (365д)
         run: |
-          uv run python -m scalper_hft.cli download --symbol BTCUSDT --interval 1m --days 30
-          uv run python -m scalper_hft.cli download --symbol ETHUSDT --interval 1m --days 30
-          uv run python -m scalper_hft.cli download --symbol SOLUSDT --interval 1m --days 30
-          uv run python -m scalper_hft.cli download --symbol BTCUSDT --interval 1m --days 90 --funding
+          uv run python -m scalper_hft.cli download \
+            --symbol BTCUSDT,ETHUSDT,XRPUSDT,LINKUSDT --interval 1h --days 365 --funding
 
-      - name: Аудит funding_carry (BTC/ETH/SOL)
-        run: |
-          for sym in BTCUSDT ETHUSDT SOLUSDT; do
-            uv run python -m scalper_hft.cli report \
-              --strategy funding_carry --symbol $sym --interval 1m --days 90 \
-              --train 20000 --test 5000 \
-              -p upper_threshold=0.00006 -p lower_threshold=-0.00006 -p exit_threshold=0.00002
-          done
-
-      - name: Аудит pairs_arb (BTC/ETH на 1h)
-        run: |
-          uv run python -m scalper_hft.cli pairs --strategy pairs_arb \
-            --leg1 BTCUSDT --leg2 ETHUSDT --interval 1h --days 180 --maker --walkforward \
-            -p entry_z=2.0 -p exit_z=0.3 -p lookback=240
-
-      - name: Аудит pairs_arb (XRP/BTC та LINK/BTC на 1h)
+      - name: Аудит pairs XRP/BTC, BTC/ETH, LINK/BTC
         run: |
           uv run python -m scalper_hft.cli pairs --strategy pairs_arb \
             --leg1 XRPUSDT --leg2 BTCUSDT --interval 1h --days 365 --maker --walkforward \
             -p entry_z=2.0 -p exit_z=0.3 -p lookback=480
           uv run python -m scalper_hft.cli pairs --strategy pairs_arb \
+            --leg1 BTCUSDT --leg2 ETHUSDT --interval 1h --days 365 --maker --walkforward \
+            -p entry_z=2.0 -p exit_z=0.3 -p lookback=240
+          uv run python -m scalper_hft.cli pairs --strategy pairs_arb \
             --leg1 LINKUSDT --leg2 BTCUSDT --interval 1h --days 365 --maker --walkforward \
             -p entry_z=2.0 -p exit_z=0.3 -p lookback=240
 
-      - name: Моніторинг фандінг-режиму (авто-алерт при високому режимі)
+      - name: Портфель трьох пар
         run: |
-          uv run python - <<'EOF'
-          import logging; logging.basicConfig(level=logging.WARNING)
-          import os
-          from scalper_hft.data.downloader import download_funding
-          from scalper_hft.live.telegram import send_telegram
+          uv run python -m scalper_hft.cli pairs-portfolio --interval 1h --days 365 --position-pct 0.3
 
-          lines = []
-          for sym in ("BTCUSDT", "ETHUSDT", "SOLUSDT"):
-              f = download_funding(sym, days=30)
-              r = f["fundingRate"]
-              ann = r.mean() * 3 * 365 * 100
-              hi = (r > 0.0001).mean() * 100  # частка точок >36% річних
-              lines.append(f"{sym}: річний фандінг {ann:.1f}%, >36%річних: {hi:.0f}% точок")
-              print(lines[-1])
-
-          # режим високий, якщо середній річний фандінг > 10% або є точки >36%
-          high = any((f["fundingRate"] > 0.0001).mean() > 0.05 for f in [download_funding(s, 30) for s in ("BTCUSDT", "ETHUSDT", "SOLUSDT")])
-          if high:
-              send_telegram("🚨 ФАНДІНГ-РЕЖИМ ВИСОКИЙ!\n" + "\n".join(lines) + "\n\nFunding-стратегії активуються — перевірте scalper-hft.")
-          else:
-              send_telegram("📉 Фандінг-режим низький (як очікувано):\n" + "\n".join(lines))
-          EOF
-
-      - name: CSCV/PBO аудит funding_carry
-        run: |
-          uv run python -m scalper_hft.cli cscv --strategy funding_carry \
-            --symbol BTCUSDT --interval 1m --days 90 --variants 20 --blocks 8
-
-      - name: Завантажити звіти як артефакт
-        uses: actions/upload-artifact@v4
-        with:
-          name: audit-reports
-          path: docs/reports/*.md
-
-      - name: Telegram-сповіщення
+      - name: Telegram — OOS / DD / funding wake-up
         if: always()
         run: |
           uv run python - <<'EOF'
-          import os
-          from pathlib import Path
-          reports = sorted(Path("docs/reports").glob("funding_carry_*.md"))
-          summary = []
-          for rp in reports[-3:]:
-              txt = rp.read_text()
-              for line in txt.splitlines():
-                  if "OOS Sharpe:" in line or "DSR:" in line:
-                      summary.append(f"{rp.name}: {line.strip()}")
-          msg = "📊 Weekly audit scalper-hft\n" + "\n".join(summary[-6:])
-          os.environ["TELEGRAM_BOT_TOKEN"] = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-          os.environ["TELEGRAM_CHAT_ID"] = os.environ.get("TELEGRAM_CHAT_ID", "")
+          from scalper_hft.backtest.pairs import run_pairs_walk_forward
+          from scalper_hft.data.downloader import download_funding, download_klines
           from scalper_hft.live.telegram import send_telegram
-          send_telegram(msg)
+          from scalper_hft.strategies.pairs_arb import PairsArb
+
+          specs = [
+              ("XRPUSDT", "BTCUSDT", dict(entry_z=2.0, exit_z=0.3, lookback=480)),
+              ("BTCUSDT", "ETHUSDT", dict(entry_z=2.0, exit_z=0.3, lookback=240)),
+              ("LINKUSDT", "BTCUSDT", dict(entry_z=2.0, exit_z=0.3, lookback=240)),
+          ]
+          lines = ["Weekly pairs audit"]
+          for a, b, p in specs:
+              d1 = download_klines(a, "1h", 365)
+              d2 = download_klines(b, "1h", 365)
+              f1 = download_funding(a, 365)
+              f2 = download_funding(b, 365)
+              wf = run_pairs_walk_forward(d1, d2, PairsArb(**p), f1, f2, maker_execution=True, position_pct=0.3)
+              lines.append(
+                  f"{a}/{b}: OOS={wf['avg_oos_sharpe']:+.3f} вікон>0={wf['positive_windows']:.0%} n={wf['n_windows']}"
+              )
+
+          high = False
+          flines = []
+          for sym in ("BTCUSDT", "ETHUSDT", "SOLUSDT"):
+              try:
+                  f = download_funding(sym, 30)
+              except Exception:
+                  continue
+              r = f["fundingRate"]
+              hi = float((r > 0.0001).mean())
+              flines.append(f"{sym} >36%річ: {hi:.0%}")
+              if hi > 0.05:
+                  high = True
+          if high:
+              lines.append("FUNDING РЕЖИМ ВИСОКИЙ: " + "; ".join(flines))
+          send_telegram("\n".join(lines))
           EOF
+
+      - name: Артефакти
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-reports
+          path: |
+            docs/reports/*.md
+            docs/plots/*.png
+          if-no-files-found: ignore

@@ -60,6 +60,15 @@ class PaperAccount:
         """Капітал з mark-to-market. Без prices — останні mark або ціна входу."""
         return self.cash + self.unrealized_pnl(prices)
 
+    def gross_notional(self, prices: dict[str, float] | None = None) -> float:
+        """Сумарний |ціна × розмір| відкритих ніг."""
+        marks = {**self._marks, **(prices or {})}
+        total = 0.0
+        for sym, pos in self.positions.items():
+            px = marks.get(sym, pos.entry_price)
+            total += abs(px * pos.size)
+        return total
+
     @property
     def equity(self) -> float:
         return self.equity_at()

@@ -192,18 +192,46 @@ def cmd_overfit(args: argparse.Namespace) -> None:
 
 
 def cmd_ml(args: argparse.Namespace) -> None:
-    from scalper_hft.data.downloader import download_agg_trades
-    from scalper_hft.ml.features import build_labeled_dataset
-    from scalper_hft.ml.trainer import train_walk_forward
+    """Walk-forward ML: Triple-Barrier + LightGBM + AFML sample weights."""
+    from scalper_hft.ml.trainer import train_from_ohlcv
 
     df = _load_klines(args.symbol, args.interval, args.days)
-    trades = download_agg_trades(args.symbol, args.days) if args.trades else None
-    X, y = build_labeled_dataset(df, horizon=args.horizon, trades=trades)
-    if len(X) < 1000:
-        logger.error("Замало labeled-прикладів (%d) — збільшіть days", len(X))
+    trades = None
+    if args.trades:
+        from scalper_hft.data.downloader import download_agg_trades
+        trades = download_agg_trades(args.symbol, args.days)
+
+    mode = getattr(args, "mode", "triple_barrier")
+    pt   = float(getattr(args, "pt", 1.0))
+    sl   = float(getattr(args, "sl", 1.0))
+    holding = int(getattr(args, "holding", 10))
+    decay    = float(getattr(args, "decay", 0.9))
+    frac_d   = float(getattr(args, "frac_d", 0.4))
+    no_frac  = bool(getattr(args, "no_frac_diff", False))
+
+    try:
+        res = train_from_ohlcv(
+            df=df,
+            train_size=args.train,
+            test_size=args.test,
+            mode=mode,
+            pt=pt,
+            sl=sl,
+            holding_bars=holding,
+            decay=decay,
+            frac_d=frac_d,
+            add_frac_diff=not no_frac,
+            trades=trades,
+        )
+    except ValueError as e:
+        logger.error("ML тренування: %s", e)
         sys.exit(1)
-    res = train_walk_forward(X, y, train_size=args.train, test_size=args.test, close=df["close"])
+
     print("\n" + res.summary())
+
+    if res.feature_importance is not None:
+        print("\nТоп-10 фіч (gain):")
+        print(res.feature_importance.head(10).to_string())
 
 
 def cmd_paper(args: argparse.Namespace) -> None:
@@ -458,6 +486,97 @@ def cmd_pairs(args: argparse.Namespace) -> None:
         )
 
 
+def cmd_pairs_portfolio(args: argparse.Namespace) -> None:
+    """Бектест портфеля валідованих пар (XRP/BTC + BTC/ETH + LINK/BTC)."""
+    from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.backtest.pairs_portfolio import run_pairs_portfolio
+    from scalper_hft.config import get_settings
+    from scalper_hft.data.downloader import download_funding, download_klines
+    from scalper_hft.live.pairs_runner import VALIDATED_PAIRS
+    from scalper_hft.strategies.pairs_arb import PairsArb
+
+    interval = args.interval or "1h"
+    settings = get_settings()
+    symbols = sorted({c["leg1"] for c in VALIDATED_PAIRS} | {c["leg2"] for c in VALIDATED_PAIRS})
+    data = {sym: download_klines(sym, interval, args.days) for sym in symbols}
+    funding = {sym: download_funding(sym, args.days) for sym in symbols}
+    configs = []
+    for cfg in VALIDATED_PAIRS:
+        configs.append(
+            {
+                "leg1": cfg["leg1"],
+                "leg2": cfg["leg2"],
+                "strategy": PairsArb(entry_z=cfg["entry_z"], exit_z=cfg["exit_z"], lookback=cfg["lookback"]),
+                "funding1": funding[cfg["leg1"]],
+                "funding2": funding[cfg["leg2"]],
+            }
+        )
+    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    res = run_pairs_portfolio(
+        data, configs, position_pct=args.position_pct or 0.3, cost=cost, maker_execution=True
+    )
+    print(res.summary())
+    _plot_equity(res.equity, "pairs_portfolio", "validated")
+
+
+def cmd_paper_run_pairs(args: argparse.Namespace) -> None:
+    """Циклічний paper pairs (maker, 2 ноги) або портфель валідованих пар."""
+    from scalper_hft.live.pairs_runner import PairsPaperRunner, PairsPortfolioRunner
+    from scalper_hft.live.store import PaperStore
+    from scalper_hft.strategies import get_strategy
+
+    store = PaperStore()
+    interval = args.interval or "1h"
+    if args.portfolio:
+        runner = PairsPortfolioRunner(interval=interval, store=store, is_maker=True)
+    else:
+        strategy = get_strategy(args.strategy or "pairs_arb", **args.param_dict)
+        runner = PairsPaperRunner(
+            args.leg1 or "XRPUSDT",
+            args.leg2 or "BTCUSDT",
+            interval=interval,
+            strategy=strategy,
+            store=store,
+            is_maker=True,
+        )
+    result = runner.run(iterations=args.iterations, sleep_sec=args.sleep)
+    print("\n" + result.summary())
+    if args.notify:
+        from scalper_hft.live.telegram import send_telegram
+
+        send_telegram(
+            f"Paper pairs {result.pair}: {result.actions[-1] if result.actions else '-'} | "
+            f"equity={result.account.equity:.2f} fill={result.n_filled}/{result.n_filled + result.n_unfilled}"
+        )
+
+
+def cmd_paper_replay_pairs(args: argparse.Namespace) -> None:
+    """Історичний paper pairs з моделлю unfilled post-only."""
+    from scalper_hft.data.downloader import download_funding, download_klines
+    from scalper_hft.live.pairs_runner import replay_pairs
+    from scalper_hft.live.store import PaperStore
+    from scalper_hft.strategies import get_strategy
+
+    interval = args.interval or "1h"
+    leg1, leg2 = (args.leg1 or "XRPUSDT"), (args.leg2 or "BTCUSDT")
+    df1 = download_klines(leg1, interval, args.days)
+    df2 = download_klines(leg2, interval, args.days)
+    strategy = get_strategy(args.strategy or "pairs_arb", **args.param_dict)
+    store = PaperStore()
+    result = replay_pairs(
+        leg1, leg2, df1, df2, strategy=strategy, store=store,
+        funding1=download_funding(leg1, args.days),
+        funding2=download_funding(leg2, args.days),
+        is_maker=True, interval=interval,
+    )
+    print("\n" + result.summary())
+    _plot_equity(result.equity, "paper_pairs", f"{leg1}_{leg2}")
+    if args.notify:
+        from scalper_hft.live.telegram import send_telegram
+
+        send_telegram(result.summary())
+
+
 def _plot_equity(equity: pd.Series, strategy: str, symbol: str) -> None:
     try:
         import matplotlib
@@ -566,9 +685,40 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--test", type=int, default=500)
     p.set_defaults(func=cmd_pairs)
 
-    p = sub.add_parser("ml", help="Walk-forward ML-класифікатор напрямку")
+    p = sub.add_parser("pairs-portfolio", help="Бектест портфеля валідованих пар")
     add_common(p)
-    p.add_argument("--horizon", type=int, default=3, help="Горизонт прогнозу, барів")
+    p.add_argument("--position-pct", type=float, default=0.3)
+    p.set_defaults(func=cmd_pairs_portfolio, interval="1h")
+
+    p = sub.add_parser("paper-run-pairs", help="Paper pairs (maker, 2 ноги) або --portfolio")
+    add_common(p)
+    p.add_argument("--leg1", default="XRPUSDT")
+    p.add_argument("--leg2", default="BTCUSDT")
+    p.add_argument("--portfolio", action="store_true", help="Три валідовані пари на спільному рахунку")
+    p.add_argument("--iterations", type=int, default=10)
+    p.add_argument("--sleep", type=int, default=300, help="Пауза між кроками, сек (для 1h — 300+)")
+    p.add_argument("--notify", action="store_true")
+    p.set_defaults(func=cmd_paper_run_pairs, strategy="pairs_arb", interval="1h")
+
+    p = sub.add_parser("paper-replay-pairs", help="Історичний paper pairs з моделлю unfilled")
+    add_common(p)
+    p.add_argument("--leg1", default="XRPUSDT")
+    p.add_argument("--leg2", default="BTCUSDT")
+    p.add_argument("--notify", action="store_true")
+    p.set_defaults(func=cmd_paper_replay_pairs, strategy="pairs_arb", interval="1h")
+
+    p = sub.add_parser("ml", help="Walk-forward ML-класифікатор: Triple-Barrier + LightGBM + AFML")
+    add_common(p)
+    p.add_argument("--mode", default="triple_barrier", choices=["triple_barrier", "horizon"],
+                   help="Режим лейблінгу: triple_barrier (AFML, default) або horizon")
+    p.add_argument("--pt", type=float, default=1.0, help="Profit-take множник (× ATR)")
+    p.add_argument("--sl", type=float, default=1.0, help="Stop-loss множник (× ATR)")
+    p.add_argument("--holding", type=int, default=10, help="Вертикальний бар'єр (барів)")
+    p.add_argument("--decay", type=float, default=0.9, help="Time-decay для sample weights")
+    p.add_argument("--frac-d", type=float, default=0.4, dest="frac_d",
+                   help="Ступінь fractional differencing")
+    p.add_argument("--no-frac-diff", action="store_true", dest="no_frac_diff",
+                   help="Вимкнути frac_diff фічі")
     p.add_argument("--train", type=int, default=2000)
     p.add_argument("--test", type=int, default=500)
     p.add_argument("--trades", action="store_true", help="Використати aggTrades (CVD фічі)")

@@ -9,7 +9,7 @@
 """
 
 from scalper_hft.validation.cscv import CscvResult, combinatorial_splits, pbo_cscv, variant_returns
-from scalper_hft.validation.cv import purged_kfold_indices, time_series_split
+from scalper_hft.validation.cv import purged_kfold_indices, time_series_split, PurgedKFold
 from scalper_hft.validation.deflated_sharpe import (
     deflated_sharpe_ratio,
     estimate_n_trials,
@@ -26,6 +26,7 @@ __all__ = [
     "variant_returns",
     "purged_kfold_indices",
     "time_series_split",
+    "PurgedKFold",
     "deflated_sharpe_ratio",
     "estimate_n_trials",
     "probability_of_backtest_overfitting",

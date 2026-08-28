@@ -54,6 +54,10 @@ class Settings:
     max_open_positions: int = field(default_factory=lambda: _env_int("MAX_OPEN_POSITIONS", 1))
     daily_loss_limit: float = field(default_factory=lambda: _env_float("DAILY_LOSS_LIMIT", 0.03))
     max_consecutive_losses: int = field(default_factory=lambda: _env_int("MAX_CONSECUTIVE_LOSSES", 3))
+    pair_notional_pct: float = field(default_factory=lambda: _env_float("PAIR_NOTIONAL_PCT", 0.30))
+    portfolio_notional_pct: float = field(default_factory=lambda: _env_float("PORTFOLIO_NOTIONAL_PCT", 0.60))
+    max_losing_months: int = field(default_factory=lambda: _env_int("MAX_LOSING_MONTHS", 2))
+    maker_fill_wait_bars: int = field(default_factory=lambda: _env_int("MAKER_FILL_WAIT_BARS", 1))
 
     # Дані
     data_dir: Path = field(default_factory=lambda: Path(os.getenv("DATA_DIR", "./data")))
