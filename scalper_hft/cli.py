@@ -129,6 +129,32 @@ def cmd_optimize(args: argparse.Namespace) -> None:
     print("\n" + res.summary())
 
 
+def cmd_ml_opt(args: argparse.Namespace) -> None:
+    """Оптимізація параметрів маркування Triple-Barrier для ML-стратегій."""
+    from scalper_hft.validation.optimize import optimize_ml_params
+
+    df = _load_klines(args.symbol, args.interval, args.days)
+    trades = None
+    if args.trades:
+        from scalper_hft.data.downloader import download_agg_trades
+        trades = download_agg_trades(args.symbol, args.days)
+
+    res = optimize_ml_params(
+        df=df,
+        n_trials=args.trials,
+        n_splits=args.splits,
+        embargo_pct=args.embargo,
+        scoring=args.scoring,
+        decay=args.decay,
+        frac_d=args.frac_d,
+        add_frac_diff=not args.no_frac_diff,
+        trades=trades,
+        sampler=args.sampler,
+    )
+    print("\n[ML OPTIMIZATION RESULT]")
+    print(res.summary())
+
+
 def cmd_overfit(args: argparse.Namespace) -> None:
     """Повний аудит на перенавчання: WF + sensitivity + deflated Sharpe + CV."""
     from scalper_hft.backtest.engine import run_backtest
@@ -644,6 +670,19 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--trials", type=int, default=60)
     p.add_argument("--splits", type=int, default=4)
     p.set_defaults(func=cmd_optimize)
+
+    p = sub.add_parser("ml-opt", help="Оптимізація параметрів ML-моделі (AFML)")
+    add_common(p)
+    p.add_argument("--trials", type=int, default=40)
+    p.add_argument("--splits", type=int, default=5)
+    p.add_argument("--embargo", type=float, default=0.01)
+    p.add_argument("--scoring", default="neg_log_loss")
+    p.add_argument("--decay", type=float, default=0.9)
+    p.add_argument("--frac-d", type=float, default=0.4)
+    p.add_argument("--no-frac-diff", action="store_true")
+    p.add_argument("--trades", action="store_true", help="Використовувати aggTrades")
+    p.add_argument("--sampler", default="tpe", choices=["tpe", "random"])
+    p.set_defaults(func=cmd_ml_opt)
 
     p = sub.add_parser("overfit", help="Повний аудит на перенавчання")
     add_common(p)

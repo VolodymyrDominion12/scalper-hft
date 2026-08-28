@@ -12,6 +12,7 @@ from scalper_hft.strategies.mean_reversion import MeanReversionScalper
 from scalper_hft.strategies.ml_strategy import MLStrategy
 from scalper_hft.strategies.ob_imbalance import ObImbalanceScalper
 from scalper_hft.strategies.pairs_arb import PairsArb
+from scalper_hft.strategies.ensemble import EnsembleStrategy
 
 REGISTRY: dict[str, type[Strategy]] = {
     cls.name: cls
@@ -25,6 +26,7 @@ REGISTRY: dict[str, type[Strategy]] = {
         BasisReversion,
         PairsArb,
         MLStrategy,
+        EnsembleStrategy,
     )
 }
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-
 from scalper_hft.live.account import PaperAccount
 from scalper_hft.live.fills import both_or_neither, decide_fill
 from scalper_hft.live.pairs_runner import PairsEngine, pair_size_pct, replay_pairs
