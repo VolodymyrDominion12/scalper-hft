@@ -226,3 +226,78 @@ def test_interval_staleness_logic():
     assert _interval_ms("5m") == 300_000
     assert _interval_ms("1h") == 3_600_000
     assert _interval_ms("1s") == 1_000
+
+
+def test_funding_charged_once_per_block():
+    """Funding платиться ОДИН раз на період ставки, а не кожен бар."""
+    import numpy as np
+    import pandas as pd
+
+    from scalper_hft.backtest.engine import run_backtest
+    from scalper_hft.backtest.execution import CostModel
+
+    # 3 години 1m-барів; одна funding-ставка в середині
+    idx = pd.date_range("2025-01-01", periods=180, freq="1min")
+    close = pd.Series(100.0 + 0.001 * np.arange(180), index=idx)
+    df = pd.DataFrame({"open": close, "high": close * 1.001, "low": close * 0.999, "close": close, "volume": 10.0}, index=idx)
+    funding = pd.DataFrame({"fundingRate": [0.001]}, index=[pd.Timestamp("2025-01-01 01:00:00")])
+
+    class AlwaysShort:
+        name = "short"
+        param_space = {}
+        needs_trades = False
+
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def generate_signals(self, df):
+            import pandas as pd
+
+            return pd.Series(-1, index=df.index)
+
+    # шорт з позитивним фандінгом ОТРИМУЄ платіж: -pos × rate = -(-1) × 0.001 = +0.001
+    res_f = run_backtest(df, AlwaysShort(), cost=CostModel(maker_fee=0, taker_fee=0, slippage_frac=0), funding=funding, position_pct=1.0)
+    res_0 = run_backtest(df, AlwaysShort(), cost=CostModel(maker_fee=0, taker_fee=0, slippage_frac=0), funding=None, position_pct=1.0)
+    diff = res_f.equity.pct_change().fillna(0.0) - res_0.equity.pct_change().fillna(0.0)
+    # funding вплив має бути ≈ +0.001 РІВНО на одному барі (а не на всіх 180)
+    n_funding_bars = int((diff.abs() > 1e-9).sum())
+    assert n_funding_bars == 1, f"funding мав бути на одному барі, на {n_funding_bars}"
+    assert abs(float(diff[diff != 0].iloc[0]) - 0.001) < 1e-6, "розмір одного платежу = ставка"
+    assert abs(float(diff.sum()) - 0.001) < 1e-6, "сумарний вплив = одна ставка"
+
+
+def test_paper_replay_daily_reset():
+    """Пауза після серії збитків скидається на новий день (не блокує назавжди)."""
+    import numpy as np
+    import pandas as pd
+
+    from scalper_hft.live.paper_replay import paper_replay
+
+    # 3 дні 1m-барів; ціна щодня падає → кожен лонг-цикл збитковий
+    idx = pd.date_range("2025-01-01", periods=3 * 1440, freq="1min")
+    day_offset = (idx.day - idx[0].day).values * 0.01  # -1%/день
+    hour_drift = np.arange(len(idx)) * 0.00001  # повільне падіння всередині дня
+    close = pd.Series(100.0 * (1 - day_offset - hour_drift), index=idx)
+    df = pd.DataFrame({"open": close, "high": close, "low": close, "close": close, "volume": 10.0}, index=idx)
+
+    class PeriodicLong:
+        """Лонг кожен 6-й бар, решта — флет: часті збиткові round-trips."""
+
+        name = "periodic_long"
+        param_space = {}
+        needs_trades = False
+
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def generate_signals(self, df):
+            import pandas as pd
+
+            return pd.Series(np.where(np.arange(len(df)) % 6 == 0, 1, 0), index=df.index)
+
+    r = paper_replay(df, PeriodicLong(), position_pct=0.1)
+    trades = r.trades[r.trades["type"] == "trade"] if "type" in r.trades.columns else r.trades
+    # з паузою по 3 збитки на день і скиданням — угоди мають бути КОЖЕН день
+    days = pd.to_datetime(trades["exit_ts"]).dt.date.nunique() if len(trades) else 0
+    assert days >= 2, f"після скидання паузи угоди мають бути в наступні дні, днів з угодами: {days}"
+    assert len(trades) >= 3, f"мінімум 3 угоди (по одній серії на день), отримано {len(trades)}"

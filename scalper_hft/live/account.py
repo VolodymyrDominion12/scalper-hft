@@ -61,6 +61,7 @@ class PaperAccount:
             self.cash -= price * pos.size + fee
         self.realized_pnl += pnl
         trade = {
+            "type": "trade",
             "symbol": symbol,
             "side": pos.side,
             "size": pos.size,
@@ -80,3 +81,33 @@ class PaperAccount:
     @property
     def is_flat(self) -> bool:
         return len(self.positions) == 0
+
+    def apply_funding(self, symbol: str, rate: float, ts: pd.Timestamp) -> float:
+        """Funding-платіж: лонг платить позитивний фандінг, шорт отримує.
+
+        funding_pnl = -side × rate × notional, де side: +1 лонг, -1 шорт.
+        Повертає суму платежу (для логування/звіту).
+        """
+        pos = self.positions.get(symbol)
+        if pos is None:
+            return 0.0
+        notional = pos.entry_price * pos.size
+        side = 1.0 if pos.side == "long" else -1.0
+        pnl = -side * rate * notional
+        self.realized_pnl += pnl
+        self.trades.append(
+            {
+                "type": "funding",
+                "symbol": symbol,
+                "ts": ts,
+                "rate": rate,
+                "pnl": pnl,
+            }
+        )
+        return pnl
+
+    def roll_to_new_day(self, equity: float) -> None:
+        """Початок нового дня: фіксуємо стартовий капітал для денного ліміту
+        збитків і скидаємо лічильник серії збитків (пауза діє лише до кінця дня)."""
+        self.day_start_equity = equity
+        self.consecutive_losses = 0

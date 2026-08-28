@@ -1,46 +1,35 @@
-# TODO / Backlog (стан після ітерації 3)
+# TODO / Backlog (стан після ітерації 4)
 
-## ✅ Зроблено в ітерації 3
-- [x] **funding_carry + trend-фільтр** (`trend_block`): аудит показав, що фільтр
-      ПОГІРШУЄ carry на цьому вікні (шорт під час ралі збирає більше фандінгу,
-      ніж втрачає на ціні) → параметр за замовчуванням вимкнено (1.0)
-- [x] **Paper-прогін** (`paper-run`): циклічний трейдер зі свіжими даними,
-      збереженням equity/угод у `results/`, опцією `--notify`
-- [x] **Telegram-сповіщення** (`live/telegram.py`): ключі з trade-bots/.env,
-      валідність підтверджена (getMe OK, тестове повідомлення надіслано)
-- [x] **Валідація OB imbalance на реальних даних** (docs/ob_validation.md):
-      top-of-book imbalance вкрай біполярний (83% |imb|>0.5); depth5 стабільніший;
-      потрібне накопичення годин запису
-- [x] **Рекордер depth5** (5 рівнів стакана, `--depth`) з автоперепідключенням
-- [x] **Streamlit-дашборд** (`scalper_hft/dashboard.py`): кеш, бектест, equity,
-      Deflated Sharpe, paper-run результати
-- [x] **Виправлення таймзон**: рекордер пише UTC; `_utc_now()`; `.value` замість
-      `.timestamp()` (була помилка 3 год у epoch-конверсії); `_interval_ms` (був зламаний);
-      свіжість кешу klines залежить від інтервалу (2 бари)
+## ✅ Зроблено в ітерації 4
+- [x] **Paper-replay** (`paper-replay`): відтворення історії через risk-трейдера
+      з funding-платежами та mark-to-market; звіт про риск-блокування
+- [x] **Виправлено баг risk-шару**: ліміт позицій блокував ЗАКРИТТЯ (тепер закриття
+      ніколи не блокується); пауза після серії збитків скидається щодня
+- [x] **⚠ Виправлено баг обліку funding у бектесті**: ставка нараховувалася кожен
+      бар замість 1 разу/8h (завищення ~480×) → funding_carry ПЕРЕАУДИТОВАНО і
+      ВІДХИЛЕНО (деталі: docs/audit_findings.md)
+- [x] **WeightedDepthImbalance** фіча (зважена глибина: harmonic/equal/linear + EMA):
+      |imb|>0.5 знизився з 83% (top-of-book) до 46% (depth5)
+- [x] **Deploy безперервного запису стакана**: scripts/record_loop.sh +
+      deploy/scalper-record.service (systemd)
+- [x] **GitHub Actions**: .github/workflows/weekly-audit.yml (щотижневий аудит +
+      Telegram-звіт)
+- [x] **Тести**: +2 (funding один раз на блок; daily reset паузи) — всього 15
 
 ## Дані (data)
-- [ ] Безперервне накопичення bookTicker/depth5 (systemd/cron) — дні/тижні
+- [ ] Запустити systemd-юніт scalper-record (накопичення bookTicker/depth5, дні/тижні)
 - [ ] 1s/5s свічки для реалістичних maker-філів
-- [ ] Tardis.dev tick-дані (опційно, для аудиту філів nautilus_trader)
 
-## Стратегії
-- [ ] `WeightedDepthImbalance` фіча (зважена глибина 5+ рівнів + EMA) — після накопичення depth5
-- [ ] OB-аудит на накопичених даних за стандартною процедурою
-- [ ] funding_carry: paper-прогін на тиждень + порівняння з бектестом
-- [ ] Market maker: калібрування adverse_sel_haircut на depth5 даних
-- [ ] Delta-neutral funding arb (перп + спот) — потребує спотового API
+## Стратегії (після чесного переаудиту)
+- [ ] **Delta-neutral funding arb** (перп + спот, потребує спотового API) — єдиний
+      кандидат, де фандінг реально покриває витрати (великий ноціонал, без цінового ризику)
+- [ ] depth-weighted OB-стратегія після накопичення depth5 (WeightedDepthImbalance + EMA)
+- [ ] funding_carry: переробити на delta-neutral або з ціновим фільтром (не шортити ралі)
+- [ ] Maker з L2: калібрування adverse_sel_haircut на depth5
 
 ## Live
 - [ ] Live-режим з валідними Binance-ключами (поточні ключі невалідні)
-- [ ] Maker-ордери post-only з контролем інвентаря
 - [ ] Persistence угод у SQLite
-- [ ] asyncio-цикл з ccxt.pro (klines + bookTicker + user stream)
 
 ## Інфраструктура
-- [ ] GitHub Actions: щотижневий аудит стратегій на свіжих даних
-- [ ] systemd-юніт для рекордера bookTicker/depth5
-
-## Відомі проблеми
-- [ ] BookTicker стрім іноді закривається сервером (реконект додано; слідкувати)
-- [ ] streamlit dashboard.py виконує код при імпорті (стандартний патерн streamlit,
-      але ускладнює юніт-тестування)
+- [ ] Підключити репозиторій до GitHub і перевірити weekly-audit workflow

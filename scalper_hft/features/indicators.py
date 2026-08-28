@@ -132,6 +132,82 @@ def zscore(series: pd.Series, window: int = 100) -> pd.Series:
     return ((series - mean) / std).fillna(0.0)
 
 
+# ── Depth-фічі (з depth5/bookTicker записів) ────────────────────────────────
+def weighted_depth_imbalance(
+    depth: pd.DataFrame,
+    levels: int = 5,
+    weight_scheme: str = "harmonic",
+) -> pd.Series:
+    """Зважений дисбаланс глибини стакана.
+
+    depth: DataFrame з колонками bid{i}, bid{i}_qty, ask{i}, ask{i}_qty (i=1..levels)
+           або bookTicker-формат (bid/bid_qty/ask/ask_qty → 1 рівень).
+    weight_scheme:
+        'harmonic' — ваги 1/i (дальші рівні менш значущі);
+        'equal'    — всі рівні рівні;
+        'linear'   — ваги (levels-i+1).
+    Стабільніший за top-of-book imbalance: усереднює стіни по рівнях.
+    """
+    # bookTicker-формат → один рівень
+    if "bid_qty" in depth.columns and "bid1_qty" not in depth.columns:
+        return order_book_imbalance(depth["bid_qty"], depth["ask_qty"])
+
+    bids: list[pd.Series] = []
+    asks: list[pd.Series] = []
+    for i in range(1, levels + 1):
+        bcol, acol = f"bid{i}_qty", f"ask{i}_qty"
+        if bcol not in depth.columns or acol not in depth.columns:
+            break
+        bids.append(depth[bcol].fillna(0.0))
+        asks.append(depth[acol].fillna(0.0))
+    if not bids:
+        raise ValueError(f"Немає depth-колонок bid{{1..{levels}}}_qty у даних")
+
+    n = len(bids)
+    if weight_scheme == "harmonic":
+        w = np.array([1.0 / (i + 1) for i in range(n)])
+    elif weight_scheme == "linear":
+        w = np.array([float(n - i) for i in range(n)])
+    else:  # equal
+        w = np.ones(n)
+    w = w / w.sum()
+
+    wbid = sum(b * wi for b, wi in zip(bids, w))
+    wask = sum(a * wi for a, wi in zip(asks, w))
+    return order_book_imbalance(wbid, wask)
+
+
+def ema_smooth(series: pd.Series, span: int = 30) -> pd.Series:
+    """EMA-згладжування (для шумних мікроструктурних фіч)."""
+    return series.ewm(span=span, adjust=False).mean()
+
+
+def add_depth_to_klines(
+    df: pd.DataFrame,
+    depth: pd.DataFrame,
+    levels: int = 5,
+    weight_scheme: str = "harmonic",
+    smooth_span: int = 30,
+    resample: str = "1min",
+) -> pd.DataFrame:
+    """Приєднати зважений depth-imbalance до свічкового DataFrame.
+
+    depth-снапшоти усереднюються за період бару (resample), imbalance
+    згладжується EMA і вирівнюється на klines через ffill (без lookahead:
+    використовуються лише снапшоти до кінця бару).
+    """
+    if isinstance(depth.index, pd.RangeIndex) or not isinstance(depth.index, pd.DatetimeIndex):
+        depth = depth.copy()
+        depth.index = pd.to_datetime(depth.index)
+    imb_raw = weighted_depth_imbalance(depth, levels=levels, weight_scheme=weight_scheme)
+    imb_bar = imb_raw.resample(resample).mean().dropna()
+    imb_smooth = ema_smooth(imb_bar, smooth_span)
+    out = df.copy()
+    out["imbalance"] = imb_smooth.reindex(out.index, method="ffill").fillna(0.0)
+    out["imbalance_raw"] = imb_bar.reindex(out.index, method="ffill").fillna(0.0)
+    return out
+
+
 def add_standard_features(df: pd.DataFrame) -> pd.DataFrame:
     """Канонічний набір фіч для свічкових стратегій (без lookahead)."""
     out = df.copy()

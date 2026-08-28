@@ -83,12 +83,18 @@ class LiveTrader:
 
     # ── ризик-контроль (книга, гл. 4) ────────────────────────────────────────
     def risk_check(self, decision: TradeDecision) -> tuple[bool, str]:
-        """Перевірка ризик-лімітів. Повертає (дозволено?, причина відмови)."""
+        """Перевірка ризик-лімітів. Повертає (дозволено?, причина відмови).
+
+        Правило: закриття позицій НІКОЛИ не блокується (зменшення ризику
+        завжди дозволено); блокуються лише відкриття нових позицій.
+        """
+        if decision.action in ("close", "hold"):
+            return True, "ok"
         if self.account.consecutive_losses >= self.settings.max_consecutive_losses:
             return False, "серія збитків — пауза"
         if self.account.equity <= self.account.day_start_equity * (1 - self.settings.daily_loss_limit):
             return False, "денний ліміт збитків"
-        if decision.action != "hold" and len(self.account.positions) >= self.settings.max_open_positions:
+        if len(self.account.positions) >= self.settings.max_open_positions:
             return False, "максимум відкритих позицій"
         return True, "ok"
 

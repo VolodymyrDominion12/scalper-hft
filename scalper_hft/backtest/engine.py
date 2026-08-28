@@ -111,11 +111,20 @@ def run_backtest(
     # Прибуток за бар t = позиція, активна в t, × дохідність бару t, мінус комісії.
     strat_ret = pos * ret - fees
 
-    # Funding cash flow: ставка, вирівняна на бари; вплив = −позиція × ставка
-    # (лонг з позитивним фандінгом платить). Ставка відома зі свого періоду.
+    # Funding cash flow: платиться ОДИН раз на період ставки (не кожен бар!).
+    # Ставка, опублікована в момент fts, застосовується до позиції, активної
+    # у барі, що покриває fts: funding_pnl = −pos[bar] × rate.
+    # Позиція вирішена на попередньому барі — без lookahead.
     if funding is not None and not funding.empty:
-        fr = funding["fundingRate"].reindex(df.index, method="ffill").fillna(0.0)
-        strat_ret = strat_ret - pos * fr
+        rates = funding["fundingRate"].sort_index()
+        bar_idx = df.index.searchsorted(rates.index, side="right") - 1  # останній бар ≤ fts
+        mask = (bar_idx >= 0) & (bar_idx < len(df))
+        valid_bars = bar_idx[mask]
+        valid_rates = rates.values[mask]
+        funding_impact = pd.Series(0.0, index=df.index)
+        if len(valid_bars):
+            funding_impact.iloc[valid_bars] = -(pos.iloc[valid_bars].values * valid_rates)
+        strat_ret = strat_ret + funding_impact
 
     equity = (1.0 + strat_ret).cumprod() * initial_capital
 

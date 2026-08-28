@@ -361,6 +361,29 @@ def cmd_paper_run(args: argparse.Namespace) -> None:
         send_telegram(f"Paper-run {args.strategy} {args.symbol}: {result.actions[-1]}, equity={result.account.equity:.2f}")
 
 
+def cmd_paper_replay(args: argparse.Namespace) -> None:
+    """Відтворення історії через риск-контрольованого трейдера (валідація risk-шару)."""
+    from scalper_hft.data.downloader import download_funding
+    from scalper_hft.live.paper_replay import paper_replay
+    from scalper_hft.strategies import get_strategy
+
+    df = _load_klines(args.symbol, args.interval, args.days)
+    strategy = get_strategy(args.strategy, **args.param_dict)
+    funding = None
+    if strategy.needs_funding:
+        funding = download_funding(args.symbol, args.days)
+    result = paper_replay(df, strategy, funding=funding, position_pct=args.position_pct or 0.01)
+    print("\n" + result.summary())
+    if args.notify:
+        from scalper_hft.live.telegram import send_telegram
+
+        m = result.metrics
+        send_telegram(
+            f"📊 Paper-replay {args.strategy} {args.symbol} {args.interval}: "
+            f"ret={m.total_return:+.2%}, угод={m.n_trades}, риск-блоків={len(result.risk_blocks)}, funding={result.funding_pnl:+.2f}"
+        )
+
+
 def _plot_equity(equity: pd.Series, strategy: str, symbol: str) -> None:
     try:
         import matplotlib
@@ -467,6 +490,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--sleep", type=int, default=60, help="Пауза між кроками, сек")
     p.add_argument("--notify", action="store_true", help="Telegram-сповіщення після прогіну")
     p.set_defaults(func=cmd_paper_run)
+
+    p = sub.add_parser("paper-replay", help="Відтворення історії через risk-трейдера")
+    add_common(p)
+    p.add_argument("--position-pct", type=float, default=None, help="Частка капіталу на позицію")
+    p.add_argument("--notify", action="store_true", help="Telegram-сповіщення результату")
+    p.set_defaults(func=cmd_paper_replay)
 
     p = sub.add_parser("report", help="Markdown-звіт у docs/reports/")
     add_common(p)

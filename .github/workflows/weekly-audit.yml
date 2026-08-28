@@ -1,0 +1,79 @@
+# Щотижневий аудит стратегій на свіжих даних (GitHub Actions)
+#
+# Запускається за розкладом (щопонеділка 06:00 UTC) та вручну (workflow_dispatch).
+# Підготовка:
+#   1. Репозиторій на GitHub (git remote add origin ...)
+#   2. Secrets: BINANCE_API_KEY, BINANCE_API_SECRET (для download даних — необов'язкові,
+#      публічні дані працюють без ключів), TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+#      (для сповіщення результату).
+
+name: weekly-audit
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"   # щопонеділка 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Встановити залежності
+        run: uv sync --extra optim --extra ml --extra dev
+
+      - name: Юніт-тести
+        run: uv run pytest tests/ -q
+
+      - name: Завантажити свіжі дані (BTC/ETH/SOL, 1m, 30 днів)
+        run: |
+          uv run python -m scalper_hft.cli download --symbol BTCUSDT --interval 1m --days 30
+          uv run python -m scalper_hft.cli download --symbol ETHUSDT --interval 1m --days 30
+          uv run python -m scalper_hft.cli download --symbol SOLUSDT --interval 1m --days 30
+          uv run python -m scalper_hft.cli download --symbol BTCUSDT --interval 1m --days 90 --funding
+
+      - name: Аудит funding_carry (BTC/ETH/SOL)
+        run: |
+          for sym in BTCUSDT ETHUSDT SOLUSDT; do
+            uv run python -m scalper_hft.cli report \
+              --strategy funding_carry --symbol $sym --interval 1m --days 90 \
+              --train 20000 --test 5000 \
+              -p upper_threshold=0.00006 -p lower_threshold=-0.00006 -p exit_threshold=0.00002
+          done
+
+      - name: CSCV/PBO аудит funding_carry
+        run: |
+          uv run python -m scalper_hft.cli cscv --strategy funding_carry \
+            --symbol BTCUSDT --interval 1m --days 90 --variants 20 --blocks 8
+
+      - name: Завантажити звіти як артефакт
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-reports
+          path: docs/reports/*.md
+
+      - name: Telegram-сповіщення
+        if: always()
+        run: |
+          uv run python - <<'EOF'
+          import os
+          from pathlib import Path
+          reports = sorted(Path("docs/reports").glob("funding_carry_*.md"))
+          summary = []
+          for rp in reports[-3:]:
+              txt = rp.read_text()
+              for line in txt.splitlines():
+                  if "OOS Sharpe:" in line or "DSR:" in line:
+                      summary.append(f"{rp.name}: {line.strip()}")
+          msg = "📊 Weekly audit scalper-hft\n" + "\n".join(summary[-6:])
+          os.environ["TELEGRAM_BOT_TOKEN"] = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+          os.environ["TELEGRAM_CHAT_ID"] = os.environ.get("TELEGRAM_CHAT_ID", "")
+          from scalper_hft.live.telegram import send_telegram
+          send_telegram(msg)
+          EOF

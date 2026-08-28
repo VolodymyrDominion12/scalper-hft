@@ -1,0 +1,27 @@
+# systemd-юніт: безперервний запис bookTicker/depth5 (накопичення OB-даних)
+#
+# Встановлення:
+#   sudo cp deploy/scalper-record.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now scalper-record
+#
+# Дані зберігаються у scalper-hft/data/{SYMBOL}_bookTicker.parquet та
+# {SYMBOL}_depth5.parquet (файл перезаписується з append у кожній сесії).
+
+[Unit]
+Description=scalper-hft bookTicker/depth5 recorder
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=volodymyr
+WorkingDirectory=/home/volodymyr/PycharmProjects/scalper-hft
+# --minutes 1440 = одна сесія на добу; цикл у record_loop.sh підхопить наступну
+ExecStart=/home/volodymyr/PycharmProjects/scalper-hft/scripts/record_loop.sh BTCUSDT 1440
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
