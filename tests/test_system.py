@@ -380,3 +380,28 @@ def test_pairs_accounting():
     # funding: leg1 short отримує +0.0005×3; leg2 long платить -0.0005×3 → нетто 0
     assert res.metrics.total_return < -0.005, f"очікували спред-втрату, отримали {res.metrics.total_return}"
     assert abs(res.funding_pnl / 100) < 0.0005, f"netto funding ≈ 0 (дві ноги гасять): {res.funding_pnl}"
+
+
+def test_pairs_portfolio_combines():
+    """Портфель пар: комбінація equity з вагами."""
+    import numpy as np
+    import pandas as pd
+
+    from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.backtest.pairs_portfolio import run_pairs_portfolio
+    from scalper_hft.strategies.pairs_arb import PairsArb
+
+    idx = pd.date_range("2025-01-01", periods=500, freq="1min")
+    make = lambda base, slope: pd.DataFrame({"close": base + slope * np.arange(500)}, index=idx)
+    data = {
+        "A": make(100.0, 0.001),
+        "B": make(100.0, 0.0),
+        "C": make(50.0, 0.0005),
+    }
+    configs = [
+        {"leg1": "A", "leg2": "B", "strategy": PairsArb(entry_z=1.5, exit_z=0.1, lookback=60)},
+        {"leg1": "C", "leg2": "B", "strategy": PairsArb(entry_z=1.5, exit_z=0.1, lookback=60)},
+    ]
+    res = run_pairs_portfolio(data, configs, weights=[0.5, 0.5], position_pct=1.0, cost=CostModel(0, 0, 0))
+    assert len(res.pair_equities) == 2
+    assert res.equity.iloc[-1] > 0 and res.metrics.total_return == res.metrics.total_return  # не NaN

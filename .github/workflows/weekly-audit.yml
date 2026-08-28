@@ -53,6 +53,15 @@ jobs:
             --leg1 BTCUSDT --leg2 ETHUSDT --interval 1h --days 180 --maker --walkforward \
             -p entry_z=2.0 -p exit_z=0.3 -p lookback=240
 
+      - name: Аудит pairs_arb (XRP/BTC та LINK/BTC на 1h)
+        run: |
+          uv run python -m scalper_hft.cli pairs --strategy pairs_arb \
+            --leg1 XRPUSDT --leg2 BTCUSDT --interval 1h --days 365 --maker --walkforward \
+            -p entry_z=2.0 -p exit_z=0.3 -p lookback=480
+          uv run python -m scalper_hft.cli pairs --strategy pairs_arb \
+            --leg1 LINKUSDT --leg2 BTCUSDT --interval 1h --days 365 --maker --walkforward \
+            -p entry_z=2.0 -p exit_z=0.3 -p lookback=240
+
       - name: Моніторинг фандінг-режиму (авто-алерт при високому режимі)
         run: |
           uv run python - <<'EOF'
