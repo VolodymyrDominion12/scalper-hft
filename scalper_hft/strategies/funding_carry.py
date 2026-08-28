@@ -29,6 +29,7 @@ class FundingCarryScalper(Strategy):
         "upper_threshold": (0.00004, 0.0002, 0.00001),
         "lower_threshold": (-0.0002, -0.00004, 0.00001),
         "exit_threshold": (0.000005, 0.00005, 0.000005),
+        "trend_block": (0.3, 1.0, 0.1),
     }
 
     def __init__(
@@ -36,11 +37,13 @@ class FundingCarryScalper(Strategy):
         upper_threshold: float = 0.00006,
         lower_threshold: float = -0.00006,
         exit_threshold: float = 0.00002,
+        trend_block: float = 1.0,  # 1.0 = вимкнено (аудит: фільтр погіршує carry у цьому вікні)
     ) -> None:
         super().__init__(
             upper_threshold=upper_threshold,
             lower_threshold=lower_threshold,
             exit_threshold=exit_threshold,
+            trend_block=trend_block,
         )
 
     def generate_signals(self, df: pd.DataFrame, trades: pd.DataFrame | None = None, funding: pd.DataFrame | None = None) -> pd.Series:
@@ -63,6 +66,21 @@ class FundingCarryScalper(Strategy):
         target[prev_fr > upper] = -1.0  # шорт: збираємо позитивний фандінг
         target[prev_fr < lower] = 1.0  # лонг: збираємо негативний фандінг
         target[prev_fr.abs() < exit_th] = 0.0  # нейтральна зона
+
+        # ── trend-фільтр (покращення ітерації 3) ─────────────────────────────
+        # Не шортимо під час сильного аптренду (ціна вище EMA + сильний тренд):
+        # фандінг збирається, але ціновий ризик домінує. Дзеркально для лонга.
+        trend_block = float(self.get("trend_block", 0.7))
+        if trend_block < 1.0:
+            from scalper_hft.features.regimes import trend_strength
+
+            close_at_funding = df["close"].reindex(fr.index, method="ffill")
+            trend = trend_strength(close_at_funding, 21, 100)
+            price_above_ema = close_at_funding > close_at_funding.ewm(span=21, adjust=False).mean()
+            strong_up = (trend > trend_block) & price_above_ema
+            strong_down = (trend > trend_block) & ~price_above_ema
+            target[strong_up & (target == -1.0)] = 0.0  # блок шорта в аптренді
+            target[strong_down & (target == 1.0)] = 0.0  # блок лонга в даунтренді
 
         # позиція діє від ставки t до наступної ставки (ffill на бари)
         sig = target.reindex(df.index, method="ffill").fillna(0.0)

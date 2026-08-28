@@ -204,3 +204,25 @@ def test_combinatorial_splits_cover_all():
     for tr, te in splits:
         assert len(set(tr) & set(te)) == 0
         assert len(tr) == 3 and len(te) == 3
+
+
+def test_utc_now_helper():
+    """_utc_now має повертати naive UTC (збігається з індексами кешу)."""
+    from scalper_hft.data.downloader import _utc_now
+
+    now = _utc_now()
+    assert now.tz is None
+    # різниця з реальним UTC мала (< 60 сек)
+    import time
+
+    assert abs(time.time() - now.timestamp()) < 60
+
+
+def test_interval_staleness_logic():
+    """Свіжість кешу залежить від інтервалу: 2 бари 1m = 2 хв, 2 бари 1h = 2 год."""
+    from scalper_hft.data.downloader import _interval_ms
+
+    assert _interval_ms("1m") == 60_000
+    assert _interval_ms("5m") == 300_000
+    assert _interval_ms("1h") == 3_600_000
+    assert _interval_ms("1s") == 1_000

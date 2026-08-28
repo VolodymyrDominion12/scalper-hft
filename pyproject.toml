@@ -24,6 +24,12 @@ ml = [
     "scikit-learn>=1.4",
     "lightgbm>=4.3",
 ]
+dashboard = [
+    "streamlit>=1.30",
+]
+live = [
+    "websockets>=12",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",

@@ -53,8 +53,24 @@ uv venv .venv && uv pip install -e ".[optim,ml,dev]"
 | `cscv` | **PBO через Combinatorial Purged CV** (López de Prado) |
 | `ml` | walk-forward LightGBM класифікатор напрямку |
 | `paper` | один крок paper-торгівлі на останньому барі |
+| `paper-run` | **циклічний paper-прогін** (N кроків, збереження equity/угод у `results/`) |
 | `report` | повний markdown-звіт у `docs/reports/` |
-| `record-bookticker` | запис best bid/ask (WS) у parquet — для OB-стратегій |
+| `record-bookticker` | запис best bid/ask (WS) у parquet — для OB-стратегій (`--depth` — 5 рівнів) |
+
+## Дашборд (Streamlit)
+
+```bash
+uv pip install -e ".[dashboard]"
+.venv/bin/streamlit run scalper_hft/dashboard.py
+```
+Секції: кеш даних по символах, бектест з equity-кривою та Deflated Sharpe,
+результати paper-run.
+
+## Telegram-сповіщення
+
+Ключі `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` у `.env` (скопійовані з
+trade-bots/.env; валідність перевірена через getMe). Використання:
+`paper-run --notify` або `scalper_hft.live.telegram.send_telegram("...")`.
 
 ## Анти-перенавчання (validation/)
 

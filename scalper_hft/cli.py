@@ -335,12 +335,30 @@ def cmd_cscv(args: argparse.Namespace) -> None:
 
 def cmd_record_bookticker(args: argparse.Namespace) -> None:
     """Запис bookTicker у реальному часі (для OB-стратегій)."""
-    from scalper_hft.live.bookticker_recorder import record_bookticker
+    from scalper_hft.live.bookticker_recorder import record_bookticker, record_depth
 
-    symbols = (args.symbol or "BTCUSDT").split(",")
-    for sym in symbols:
-        n = record_bookticker(sym, minutes=args.minutes)
-        print(f"{sym}: записано {n} снапшотів")
+    for sym in (args.symbol or "BTCUSDT").split(","):
+        if args.depth:
+            n = record_depth(sym, minutes=args.minutes)
+            print(f"{sym}: записано {n} depth5 снапшотів")
+        else:
+            n = record_bookticker(sym, minutes=args.minutes)
+            print(f"{sym}: записано {n} bookTicker снапшотів")
+
+
+def cmd_paper_run(args: argparse.Namespace) -> None:
+    """Циклічний paper-прогін: кілька кроків з паузою, збереження угод."""
+    from scalper_hft.live.paper_runner import PaperRunner
+    from scalper_hft.strategies import get_strategy
+
+    strategy = get_strategy(args.strategy, **args.param_dict)
+    runner = PaperRunner(strategy, args.symbol, args.interval)
+    result = runner.run(iterations=args.iterations, sleep_sec=args.sleep)
+    print("\n" + result.summary())
+    if args.notify:
+        from scalper_hft.live.telegram import send_telegram
+
+        send_telegram(f"Paper-run {args.strategy} {args.symbol}: {result.actions[-1]}, equity={result.account.equity:.2f}")
 
 
 def _plot_equity(equity: pd.Series, strategy: str, symbol: str) -> None:
@@ -425,9 +443,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--max-combos", type=int, default=200, help="Обмеження комбінацій")
     p.set_defaults(func=cmd_cscv)
 
-    p = sub.add_parser("record-bookticker", help="Запис bookTicker (WS) у parquet")
+    p = sub.add_parser("record-bookticker", help="Запис bookTicker/depth5 (WS) у parquet")
     p.add_argument("--symbol", default="BTCUSDT", help="Символ(и) через кому")
     p.add_argument("--minutes", type=int, default=60, help="Тривалість запису, хв")
+    p.add_argument("--depth", action="store_true", help="Записувати depth5 (5 рівнів стакана) замість bookTicker")
     p.set_defaults(func=cmd_record_bookticker)
 
     p = sub.add_parser("ml", help="Walk-forward ML-класифікатор напрямку")
@@ -441,6 +460,13 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("paper", help="Один крок paper trading на останньому барі")
     add_common(p)
     p.set_defaults(func=cmd_paper)
+
+    p = sub.add_parser("paper-run", help="Циклічний paper-прогін (кілька кроків)")
+    add_common(p)
+    p.add_argument("--iterations", type=int, default=10)
+    p.add_argument("--sleep", type=int, default=60, help="Пауза між кроками, сек")
+    p.add_argument("--notify", action="store_true", help="Telegram-сповіщення після прогіну")
+    p.set_defaults(func=cmd_paper_run)
 
     p = sub.add_parser("report", help="Markdown-звіт у docs/reports/")
     add_common(p)

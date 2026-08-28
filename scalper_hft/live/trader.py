@@ -124,12 +124,8 @@ class LiveTrader:
         self.account.close_position(self.symbol, price, ts)
 
 
-def run_trader_once(trader: LiveTrader, df: pd.DataFrame) -> str:
-    """Один крок циклу: сигнал на останньому барі → виконання за close.
-
-    Повертає рядок результату дії.
-    """
-    signal = trader.compute_signal(df)
+def execute_signal(trader: LiveTrader, signal: int, df: pd.DataFrame) -> str:
+    """Рішення за сигналом на останньому барі → виконання. Повертає результат."""
     close = float(df["close"].iloc[-1])
     ts = df.index[-1]
     pos = trader.account.positions.get(trader.symbol)
@@ -155,3 +151,12 @@ def run_trader_once(trader: LiveTrader, df: pd.DataFrame) -> str:
     result = trader.execute(decision, close, ts)
     trader.last_signal = signal
     return result
+
+
+def run_trader_once(trader: LiveTrader, df: pd.DataFrame) -> str:
+    """Один крок циклу: сигнал на останньому барі → виконання за close.
+
+    Повертає рядок результату дії.
+    """
+    signal = trader.compute_signal(df)
+    return execute_signal(trader, signal, df)

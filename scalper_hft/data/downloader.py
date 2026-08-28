@@ -35,10 +35,17 @@ _S = 60_000
 _H = 3_600_000
 
 
+def _utc_now() -> pd.Timestamp:
+    """Поточний час як naive UTC Timestamp (збігається з індексами кешу)."""
+    return pd.Timestamp.now(tz="UTC").tz_localize(None)
+
+
 def _interval_ms(interval: str) -> int:
+    """Тривалість інтервалу в мілісекундах: '1s'=1000, '1m'=60000, '1h'=3.6M."""
     unit = interval[-1]
     num = int(interval[:-1])
-    return {"s": _S, "m": _S * 60, "h": _H, "d": _H * 24}[unit] * (num if unit != "s" else 1)
+    per_unit = {"s": 1_000, "m": 60_000, "h": 3_600_000, "d": 86_400_000}[unit]
+    return num * per_unit
 
 
 class Downloader:
@@ -66,9 +73,9 @@ class Downloader:
         """Завантажити klines за останні `days` днів, доповнюючи кеш."""
         path = klines_path(get_settings().data_dir_abs, symbol, interval)
         existing = load_klines(path)
-        start_ms = int((pd.Timestamp.utcnow().tz_localize(None) - pd.Timedelta(days=days)).timestamp() * _MS)
+        start_ms = int((_utc_now() - pd.Timedelta(days=days)).value // 1_000_000)
         if existing is not None and not existing.empty:
-            last_ts = int(existing.index[-1].timestamp() * _MS)
+            last_ts = int(existing.index[-1].value // 1_000_000)
             start_ms = min(start_ms, last_ts)
 
         frames: list[pd.DataFrame] = [existing] if existing is not None and not existing.empty else []
@@ -86,7 +93,7 @@ class Downloader:
             df["ts"] = pd.to_datetime(df["ts"], unit="ms")
             df = df.set_index("ts")
             frames.append(df)
-            since = int(df.index[-1].timestamp() * _MS) + interval_ms
+            since = int(df.index[-1].value // 1_000_000) + interval_ms
             if len(batch) < 1000:
                 break
         out = pd.concat(frames).sort_index()
@@ -103,12 +110,12 @@ class Downloader:
         """
         path = trades_path(get_settings().data_dir_abs, symbol)
         existing = load_trades(path)
-        end_ms = int(pd.Timestamp.utcnow().timestamp() * _MS)
+        end_ms = int(_utc_now().value // 1_000_000)
         max_window_ms = 2 * 24 * 3600 * 1000  # обмеження Binance: 2 доби
-        begin_ms = start_ms or int((pd.Timestamp.utcnow().tz_localize(None) - pd.Timedelta(days=days)).timestamp() * _MS)
+        begin_ms = start_ms or int((_utc_now() - pd.Timedelta(days=days)).value // 1_000_000)
         begin_ms = max(begin_ms, end_ms - max_window_ms)
         if existing is not None and not existing.empty:
-            begin_ms = min(begin_ms, max(existing.index[-1].timestamp() * _MS, end_ms - max_window_ms))
+            begin_ms = min(begin_ms, max(existing.index[-1].value // 1_000_000, end_ms - max_window_ms))
 
         frames: list[pd.DataFrame] = [existing] if existing is not None and not existing.empty else []
         since = begin_ms
@@ -137,7 +144,7 @@ class Downloader:
             df = df.set_index("ts").sort_index()
             frames.append(df)
             total_rows += len(df)
-            since = int(df.index[-1].timestamp() * _MS) + 1
+            since = int(df.index[-1].value // 1_000_000) + 1
             if guard % 200 == 0:
                 logger.info("aggTrades %s: %d батчів, %d трейдів (до %s)", symbol, guard, total_rows, df.index[-1])
             if len(batch) < 1000:
@@ -153,9 +160,9 @@ class Downloader:
         """Історія ставок фандінгу (зазвичай кожні 8 годин)."""
         path = funding_path(get_settings().data_dir_abs, symbol)
         existing = load_funding(path)
-        start_ms = int((pd.Timestamp.utcnow().tz_localize(None) - pd.Timedelta(days=days)).timestamp() * _MS)
+        start_ms = int((_utc_now() - pd.Timedelta(days=days)).value // 1_000_000)
         if existing is not None and not existing.empty:
-            start_ms = min(start_ms, int(existing.index[-1].timestamp() * _MS))
+            start_ms = min(start_ms, int(existing.index[-1].value // 1_000_000))
 
         frames: list[pd.DataFrame] = [existing] if existing is not None and not existing.empty else []
         since = start_ms
@@ -173,7 +180,7 @@ class Downloader:
             df["ts"] = pd.to_datetime(df["timestamp"], unit="ms")
             df = df.set_index("ts")
             frames.append(df[["fundingRate"]])
-            since = int(df.index[-1].timestamp() * _MS) + 1
+            since = int(df.index[-1].value // 1_000_000) + 1
             if len(batch) < 1000:
                 break
         if not frames:
@@ -186,17 +193,23 @@ class Downloader:
 
 # ── зручні функції верхнього рівня ───────────────────────────────────────────
 def download_klines(symbol: str, interval: str, days: int, force: bool = False) -> pd.DataFrame:
-    """Завантажити/оновити klines. Кеш повертається лише якщо покриває період."""
+    """Завантажити/оновити klines. Кеш повертається лише якщо покриває період
+    І свіжий (останній бар < 1 год тому); інакше — розширюється в обидва боки."""
     settings = get_settings()
     path = klines_path(settings.data_dir_abs, symbol, interval)
     cached = None if force else load_klines(path)
     if cached is not None and not cached.empty:
+        now = _utc_now()
         oldest = cached.index[0]
-        needed_from = pd.Timestamp.utcnow().tz_localize(None) - pd.Timedelta(days=days)
-        if oldest <= needed_from:
-            logger.info("Кеш klines %s %s покриває період: %d рядків (з %s)", symbol, interval, len(cached), oldest)
+        newest = cached.index[-1]
+        needed_from = now - pd.Timedelta(days=days)
+        # свіжість залежить від інтервалу: пропуск > 2 барів = stale (мін. 60 сек)
+        staleness = max(2 * _interval_ms(interval), 60_000)
+        stale = newest < now - pd.Timedelta(milliseconds=staleness)
+        if oldest <= needed_from and not stale:
+            logger.info("Кеш klines %s %s покриває період і свіжий: %d рядків (до %s)", symbol, interval, len(cached), newest)
             return cached
-        logger.info("Розширення кешу klines %s %s: було %d рядків з %s", symbol, interval, len(cached), oldest)
+        logger.info("Розширення кешу klines %s %s: %d рядків (до %s, stale=%s)", symbol, interval, len(cached), newest, stale)
     logger.info("Завантаження klines %s %s за %d днів", symbol, interval, days)
     return Downloader().klines(symbol, interval, days)
 
@@ -209,7 +222,7 @@ def download_agg_trades(symbol: str, days: int, force: bool = False) -> pd.DataF
         # REST може дістати лише останні ~2 доби — якщо кеш їх покриває,
         # повторне завантаження не потрібне (запобігає 10+ хв ре-фетчу)
         newest = cached.index[-1]
-        now = pd.Timestamp.utcnow().tz_localize(None)
+        now = _utc_now()
         if newest >= now - pd.Timedelta(days=2):
             logger.info("Кеш aggTrades %s актуальний (до %s): %d рядків", symbol, newest, len(cached))
             return cached
