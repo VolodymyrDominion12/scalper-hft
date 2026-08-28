@@ -1,0 +1,25 @@
+# secrets — ніколи в git
+.env
+*.key
+
+# середовище та кеш
+.venv/
+.uv-cache/
+__pycache__/
+*.pyc
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# дані (великі parquet — локально)
+data/*.parquet
+
+# звіти та графіки (генеруються)
+docs/reports/
+docs/plots/
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace
+.DS_Store

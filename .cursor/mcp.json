@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/volodymyr/PycharmProjects/scalper-hft"]
+    },
+    "python-scalper": {
+      "command": "/home/volodymyr/PycharmProjects/scalper-hft/.venv/bin/python",
+      "args": ["-m", "scalper_hft.cli"],
+      "env": {}
+    }
+  }
+}
