@@ -8,6 +8,7 @@
     - optimize       — Optuna-пошук параметрів з CV-цільовою функцією.
 """
 
+from scalper_hft.validation.cscv import CscvResult, combinatorial_splits, pbo_cscv, variant_returns
 from scalper_hft.validation.cv import purged_kfold_indices, time_series_split
 from scalper_hft.validation.deflated_sharpe import (
     deflated_sharpe_ratio,
@@ -19,6 +20,10 @@ from scalper_hft.validation.sensitivity import parameter_sensitivity
 from scalper_hft.validation.walk_forward import WalkForwardResult, run_walk_forward
 
 __all__ = [
+    "CscvResult",
+    "combinatorial_splits",
+    "pbo_cscv",
+    "variant_returns",
     "purged_kfold_indices",
     "time_series_split",
     "deflated_sharpe_ratio",

@@ -67,7 +67,18 @@ class LiveTrader:
         """Сигнал стратегії на останньому барі (без lookahead)."""
         if len(df) < 50:
             return 0
-        signal = self.strategy.generate_signals(df)
+        if self.strategy.needs_funding:
+            from scalper_hft.data.downloader import download_funding
+
+            funding = download_funding(self.symbol, days=30)
+            signal = self.strategy.generate_signals(df, funding=funding)
+        elif self.strategy.needs_trades:
+            from scalper_hft.data.downloader import download_agg_trades
+
+            trades = download_agg_trades(self.symbol, days=1)
+            signal = self.strategy.generate_signals(df, trades=trades)
+        else:
+            signal = self.strategy.generate_signals(df)
         return int(signal.iloc[-1]) if len(signal) else 0
 
     # ── ризик-контроль (книга, гл. 4) ────────────────────────────────────────

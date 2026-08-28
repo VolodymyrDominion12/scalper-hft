@@ -34,13 +34,16 @@ class BacktestMetrics:
     trades_per_day: float
     turnover: float
     risk_of_ruin: float
+    sharpe_hourly: float = 0.0  # per-period Sharpe (годинний), без ануалізації
+    sortino_hourly: float = 0.0
 
     def summary(self) -> str:
         lines = [
             f"Загальна дохідність:     {self.total_return:>10.2%}",
             f"CAGR:                    {self.cagr:>10.2%}",
             f"Річна волатильність:     {self.ann_vol:>10.2%}",
-            f"Sharpe:                  {self.sharpe:>10.3f}",
+            f"Sharpe (річний):         {self.sharpe:>10.3f}",
+            f"Sharpe (годинний):       {self.sharpe_hourly:>10.3f}  ← без ануалізації",
             f"Sortino:                 {self.sortino:>10.3f}",
             f"Calmar:                  {self.calmar:>10.3f}",
             f"Макс. просідання:        {self.max_drawdown:>10.2%}",
@@ -118,6 +121,19 @@ def compute_metrics(
     span_days = max((equity.index[-1] - equity.index[0]).total_seconds() / 86400.0, 1.0)
     trades_per_day = n_trades / span_days
 
+    # per-period метрики (годинні, БЕЗ ануалізації) — чесне порівняння між таймфреймами
+    sharpe_hourly = 0.0
+    sortino_hourly = 0.0
+    try:
+        hourly = equity.resample("1h").last().pct_change().dropna()
+        if len(hourly) >= 2 and hourly.std(ddof=0) > 0:
+            sharpe_hourly = float(hourly.mean() / hourly.std(ddof=0))
+            down = hourly[hourly < 0]
+            if len(down) >= 2 and down.std(ddof=0) > 0:
+                sortino_hourly = float(hourly.mean() / down.std(ddof=0))
+    except Exception:  # noqa: BLE001 — нерегулярний індекс, не критично
+        pass
+
     # імовірність розорення (спрощена формула для сталої частки ризику f):
     # P(ruin) ≈ ((1−b)/(1+b))^{D/f}, де b — перевага (edge), D — початковий капітал
     edge = avg_trade_return
@@ -144,4 +160,6 @@ def compute_metrics(
         trades_per_day=trades_per_day,
         turnover=turnover,
         risk_of_ruin=risk_of_ruin,
+        sharpe_hourly=sharpe_hourly,
+        sortino_hourly=sortino_hourly,
     )

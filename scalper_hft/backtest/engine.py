@@ -72,19 +72,27 @@ def run_backtest(
     cost: CostModel | None = None,
     position_pct: float = 0.01,
     trades: pd.DataFrame | None = None,
+    funding: pd.DataFrame | None = None,
     is_maker: bool = False,
 ) -> BacktestResult:
     """Запуск бектесту стратегії на свічкових даних.
 
     df: DataFrame з колонками open/high/low/close/volume.
-    strategy: екземпляр Strategy (generate_signals(df, trades)).
+    strategy: екземпляр Strategy (generate_signals(df, trades, funding)).
     trades: aggTrades DataFrame для стратегій, що потребують потоку заявок.
+    funding: DataFrame з 'fundingRate' (індекс — час ставки). Додає funding
+        грошовий потік: лонг платить позитивний фандінг, шорт отримує.
     is_maker: якщо True — використання maker-комісії (лімітні ордери).
     """
     if len(df) < 30:
         raise ValueError("Замало даних для бектесту")
     cost = cost or CostModel()
-    signals = strategy.generate_signals(df, trades) if strategy.needs_trades else strategy.generate_signals(df)
+    if getattr(strategy, "needs_trades", False):
+        signals = strategy.generate_signals(df, trades=trades)
+    elif getattr(strategy, "needs_funding", False):
+        signals = strategy.generate_signals(df, funding=funding)
+    else:
+        signals = strategy.generate_signals(df)
     if len(signals) != len(df):
         raise ValueError("Довжина сигналів не збігається з даними")
 
@@ -102,6 +110,12 @@ def run_backtest(
 
     # Прибуток за бар t = позиція, активна в t, × дохідність бару t, мінус комісії.
     strat_ret = pos * ret - fees
+
+    # Funding cash flow: ставка, вирівняна на бари; вплив = −позиція × ставка
+    # (лонг з позитивним фандінгом платить). Ставка відома зі свого періоду.
+    if funding is not None and not funding.empty:
+        fr = funding["fundingRate"].reindex(df.index, method="ffill").fillna(0.0)
+        strat_ret = strat_ret - pos * fr
 
     equity = (1.0 + strat_ret).cumprod() * initial_capital
 

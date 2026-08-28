@@ -1,26 +1,34 @@
-# TODO / Backlog (наступні ітерації циклу інвестігейт→реалізація→тест→аудит)
+# TODO / Backlog (стан після ітерації 2)
+
+## ✅ Зроблено в ітерації 2
+- [x] **funding_carry стратегія** — збір фандінгу на перекосах; DSR=1.0, PBO=0.000,
+      позитивна на BTC/ETH/SOL (90 днів 1m) — перша стратегія, що пройшла аудит
+- [x] **data.binance.vision** завантажувач історичних aggTrades (5.4M трейдів за тиждень)
+- [x] **Виправлена інфляція Sharpe**: додано годинний Sharpe/Sortino (без ануалізації)
+- [x] **Regime-фільтри** підключені до mean_reversion (trend_strength, volatility_regime)
+- [x] **Крос-символьний аудит** funding_carry: BTC/ETH/SOL
+- [x] **CSCV/PBO** (Combinatorial Purged CV, López de Prado) + CLI `cscv` + тести
+- [x] **Рекордер bookTicker** (WebSocket) + CLI `record-bookticker` — 7k снапшотів/хв
 
 ## Дані (data)
-- [ ] Історичні aggTrades > 2 діб через data.binance.vision (безкоштовні dumps)
-- [ ] Запис bookTicker (best bid/ask) у реальному часі → parquet, для OB-стратегій
 - [ ] 1s/5s свічки для реалістичних maker-філів
 - [ ] Tardis.dev tick-дані (опційно, для аудиту філів nautilus_trader)
+- [ ] Прогресивне збереження aggTrades під час завантаження (зараз — одним файлом)
 
 ## Стратегії
-- [ ] Налаштувати mean_reversion під 1m/5m (поточні дефолти надто консервативні)
-- [ ] CVD-стратегія: додати фільтр режиму (тренд/флет) через features/regimes.py
-- [ ] OB imbalance: перевірити на реальних снапшотах стакана (після запису)
+- [ ] funding_carry → paper-торгівля (LiveTrader вже підтримує funding)
+- [ ] Funding + price filter (не входити в шорт під час сильного аптренду — тренд-фільтр)
+- [ ] OB imbalance: перевірити на накопичених bookTicker снапшотах
 - [ ] Market maker: калібрування adverse_sel_haircut на L2-даних
-- [ ] Funding-rate стратегія (delta-neutral perp pair) — доступний retail-edge
+- [ ] Delta-neutral funding arb (перп + спот) — потребує спотового API
 
 ## Валідація
-- [ ] Combinatorial Purged CV (повна CSCV-оцінка PBO, не тільки бутстреп)
 - [ ] Triple-barrier labeling для ML (mlfinlab/mlfinlib)
 - [ ] Статистична значущість між стратегіями (множинне порівняння)
 
 ## Live
 - [ ] asyncio + ccxt.pro WebSocket-цикл (klines + bookTicker + user stream)
-- [ ] Maker-ордери post-only з контролем інвентаря (дослідження: maker edge)
+- [ ] Maker-ордери post-only з контролем інвентаря
 - [ ] Telegram-сповіщення (ключі є у trade-bots/.env)
 - [ ] Persistence угод у SQLite
 
@@ -30,6 +38,6 @@
 - [ ] .env з робочими ключами (поточні ключі невалідні — оновити на Binance)
 
 ## Відомі проблеми
-- [ ] Sharpe на 1m-даних сильно ануалізований (sqrt(525600)) — додати
-      "період-незалежний" варіант (напр. mean/std на годину)
-- [ ] AggTrades download повільний (rate limit) — прогресивне збереження батчів
+- [ ] AggTrades download через REST повільний (rate limit) — перевагу віддавати
+      data.binance.vision
+- [ ] market_maker використовує барові high/low для філів — потрібні справжні L2

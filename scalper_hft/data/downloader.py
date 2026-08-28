@@ -206,9 +206,12 @@ def download_agg_trades(symbol: str, days: int, force: bool = False) -> pd.DataF
     path = trades_path(settings.data_dir_abs, symbol)
     cached = None if force else load_trades(path)
     if cached is not None and not cached.empty:
+        # REST може дістати лише останні ~2 доби — якщо кеш їх покриває,
+        # повторне завантаження не потрібне (запобігає 10+ хв ре-фетчу)
         newest = cached.index[-1]
-        if newest >= pd.Timestamp.utcnow().tz_localize(None) - pd.Timedelta(minutes=10):
-            logger.info("Кеш aggTrades %s актуальний: %d рядків", symbol, len(cached))
+        now = pd.Timestamp.utcnow().tz_localize(None)
+        if newest >= now - pd.Timedelta(days=2):
+            logger.info("Кеш aggTrades %s актуальний (до %s): %d рядків", symbol, newest, len(cached))
             return cached
         logger.info("Оновлення aggTrades %s: було %d рядків до %s", symbol, len(cached), newest)
     logger.info("Завантаження aggTrades %s за %d днів", symbol, days)

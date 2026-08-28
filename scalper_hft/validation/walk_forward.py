@@ -68,6 +68,12 @@ def _sharpe_from_equity(equity: pd.Series) -> float:
     return float(ret.mean() / ret.std(ddof=0) * np.sqrt(len(ret)))
 
 
+def _slice_by_time(funding: pd.DataFrame, t0: pd.Timestamp, t1: pd.Timestamp) -> pd.DataFrame:
+    """Зріз funding за часовим діапазоном [t0, t1]."""
+    mask = (funding.index >= t0) & (funding.index <= t1)
+    return funding[mask]
+
+
 def run_walk_forward(
     df: pd.DataFrame,
     strategy: Strategy,
@@ -75,6 +81,7 @@ def run_walk_forward(
     test_bars: int,
     cost: CostModel | None = None,
     trades: pd.DataFrame | None = None,
+    funding: pd.DataFrame | None = None,
     initial_capital: float = 10_000.0,
     position_pct: float = 0.01,
 ) -> WalkForwardResult:
@@ -91,9 +98,12 @@ def run_walk_forward(
         te = df.iloc[start + train_bars : start + train_bars + test_bars]
         trades_tr = trades.iloc[start : start + train_bars] if trades is not None else None
         trades_te = trades.iloc[start + train_bars : start + train_bars + test_bars] if trades is not None else None
+        # funding має ВЛАСНИЙ (рідкісний) індекс — ріжемо за часом, не за позицією
+        funding_tr = _slice_by_time(funding, tr.index[0], tr.index[-1]) if funding is not None else None
+        funding_te = _slice_by_time(funding, te.index[0], te.index[-1]) if funding is not None else None
 
-        res_is = run_backtest(tr, strategy, initial_capital, cost, position_pct, trades_tr)
-        res_oos = run_backtest(te, strategy, initial_capital, cost, position_pct, trades_te)
+        res_is = run_backtest(tr, strategy, initial_capital, cost, position_pct, trades_tr, funding_tr)
+        res_oos = run_backtest(te, strategy, initial_capital, cost, position_pct, trades_te, funding_te)
 
         windows.append(
             WalkForwardWindow(

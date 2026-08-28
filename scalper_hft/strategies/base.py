@@ -25,6 +25,8 @@ class Strategy(abc.ABC):
     param_space: dict[str, tuple[float, float, float]] = {}
     # чи потребує стратегія тікових даних (aggTrades) для фіч
     needs_trades: bool = False
+    # чи потребує стратегія історії фандінгу
+    needs_funding: bool = False
 
     def __init__(self, **params: Any) -> None:
         self.params: dict[str, Any] = dict(params)
@@ -33,7 +35,7 @@ class Strategy(abc.ABC):
         return self.params.get(key, default)
 
     @abc.abstractmethod
-    def generate_signals(self, df: pd.DataFrame) -> pd.Series:
+    def generate_signals(self, df: pd.DataFrame, trades: pd.DataFrame | None = None, funding: pd.DataFrame | None = None) -> pd.Series:
         """Повертає Series позицій, індексовану як df.index."""
 
     def __repr__(self) -> str:

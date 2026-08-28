@@ -44,6 +44,7 @@ def parameter_sensitivity(
     secondary_values: list[float] | None = None,
     cost: CostModel | None = None,
     trades: pd.DataFrame | None = None,
+    funding: pd.DataFrame | None = None,
 ) -> SensitivityResult:
     """Прогін бектесту по сітці одного (або двох) параметрів.
 
@@ -61,7 +62,7 @@ def parameter_sensitivity(
                 p[secondary_param] = s
             strat = type(strategy)(**p)
             try:
-                res = run_backtest(df, strat, cost=cost, trades=trades)
+                res = run_backtest(df, strat, cost=cost, trades=trades, funding=funding)
                 row: dict = {param_name: v}
                 if secondary_param and s is not None:
                     row[secondary_param] = s

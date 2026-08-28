@@ -45,14 +45,16 @@ uv venv .venv && uv pip install -e ".[optim,ml,dev]"
 
 | Команда | Призначення |
 |---|---|
-| `download` | klines / aggTrades / funding у parquet-кеш |
-| `backtest` | бектест стратегії з комісіями та slippage |
+| `download` | klines / aggTrades / funding у parquet-кеш (`--trades-days` для aggTrades) |
+| `backtest` | бектест стратегії з комісіями та slippage (funding PnL для funding_carry) |
 | `walkforward` | ковзні IS/OOS вікна — середній OOS Sharpe |
 | `optimize` | Optuna-пошук параметрів з purged CV цільовою функцією |
 | `overfit` | аудит: WF + sensitivity (плато vs пік) + Deflated Sharpe |
+| `cscv` | **PBO через Combinatorial Purged CV** (López de Prado) |
 | `ml` | walk-forward LightGBM класифікатор напрямку |
 | `paper` | один крок paper-торгівлі на останньому барі |
 | `report` | повний markdown-звіт у `docs/reports/` |
+| `record-bookticker` | запис best bid/ask (WS) у parquet — для OB-стратегій |
 
 ## Анти-перенавчання (validation/)
 
@@ -86,10 +88,26 @@ Round-trip taker ≈ **0.10%** ноціоналу — це ~10 повних уг
 .venv/bin/python -m pytest tests/ -q   # 9 тестів: no-lookahead, метрики, DSR, CV, кеш, WF
 ```
 
+## Ітерація 2: результати аудиту стратегій
+
+Цикл інвестігейт → реалізація → тест → аудит (90 днів 1m-даних, комісії + slippage):
+
+| Стратегія | Результат | Вердикт аудиту |
+|---|---|---|
+| **funding_carry** (збір фандінгу) | BTC +3.3%, ETH +2.0%, SOL +3.3% (position 1%); OOS Sharpe BTC 5.4 / ETH 1.8 / SOL 2.7; 65–90% вікон OOS>0 | ✅ **DSR=1.0, PBO=0.000 — готова до paper** |
+| mean_reversion (з regime-фільтрами) | від'ємний на цьому періоді BTC | ⚠ відхилено (OOS<0, DSR=0) |
+| cvd_momentum (реальні aggTrades) | 1040 угод за тиждень, fee-drag з'їдає edge | ⚠ відхилено (PF 0.30) |
+| market_maker (спрощена модель) | adverse selection > спред | ⚠ потребує L2-даних |
+
+**Висновок ітерації 2**: funding-carry — перша стратегія, що пройшла весь аудит
+на 3 символах; це найдоступніший retail-edge на перп-ф'ючерсах (підтверджує RESEARCH.md).
+Наступний крок — paper-торгівля та maker-підхід з L2-даними.
+
 ## Roadmap (цикл інвестігейт → реалізація → тест → аудит → покращення)
 
-1. **Дані**: 1s/5s свічки + tick-запис bookTicker для OB-стратегій; data.binance.vision dumps.
+1. **Дані**: історичні aggTrades через `data.binance.vision` (✅ реалізовано),
+   1s/5s свічки, накопичення bookTicker (✅ рекордер), Tardis.dev для L2.
 2. **Тіки**: підключення nautilus_trader як альтернативного L2-рушія (порівняльний аудит філів).
-3. **Live**: asyncio + ccxt.pro WebSocket-цикл, котирування maker-ордерів, телеграм-сповіщення.
+3. **Live**: asyncio + ccxt.pro WebSocket-цикл, maker-ордери (post-only), телеграм-сповіщення.
 4. **ML**: triple-barrier labeling, hmmlearn regime, deflated Sharpe для ML-моделей.
 5. **Dashboard**: Streamlit для моніторингу стратегій і параметрів у реальному часі.

@@ -168,3 +168,39 @@ def test_walk_forward_runs():
     res = run_walk_forward(df, AlwaysLong(), train_bars=300, test_bars=100)
     assert len(res.windows) >= 4
     assert res.avg_oos_sharpe != float("nan")
+
+
+def test_cscv_pbo_math():
+    """CSCV: зі штучними даними, де edge є — PBO має бути низьким;
+    де edge немає (шум) — PBO високий."""
+    import numpy as np
+
+    from scalper_hft.validation.cscv import combinatorial_splits, pbo_cscv
+
+    n, s = 1600, 8
+    rng = np.random.default_rng(11)
+    # edge: перші 4 варіанти мають позитивний drift, решта — шум
+    rets = np.zeros((s, n))
+    for i in range(s):
+        drift = 0.0005 if i < 4 else 0.0
+        rets[i] = rng.normal(drift, 0.01, n)
+
+    res = pbo_cscv(rets, n_blocks=8, max_combos=200)
+    assert res.n_combos > 50
+    # у 100% комбінацій IS-кращий варіант (з drift) добре працює на OOS
+    assert res.pbo < 0.5, f"PBO має бути низьким, отримано {res.pbo}"
+
+    # чистий шум → PBO високий
+    noise = rng.normal(0.0, 0.01, (s, n))
+    res_noise = pbo_cscv(noise, n_blocks=8, max_combos=200)
+    assert res_noise.pbo > 0.3, f"PBO на шумі має бути високим, отримано {res_noise.pbo}"
+
+
+def test_combinatorial_splits_cover_all():
+    from scalper_hft.validation.cscv import combinatorial_splits
+
+    splits = combinatorial_splits(6, 3)
+    assert len(splits) == 20  # C(6,3)
+    for tr, te in splits:
+        assert len(set(tr) & set(te)) == 0
+        assert len(tr) == 3 and len(te) == 3

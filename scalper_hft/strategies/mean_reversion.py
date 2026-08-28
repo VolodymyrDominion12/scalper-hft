@@ -26,6 +26,7 @@ class MeanReversionScalper(Strategy):
         "bb_period": (10.0, 60.0, 5.0),
         "min_atr_pct": (0.0005, 0.005, 0.0005),
         "stop_atr_mult": (1.0, 4.0, 0.5),
+        "max_trend": (0.2, 1.0, 0.1),
     }
 
     def __init__(
@@ -36,6 +37,8 @@ class MeanReversionScalper(Strategy):
         bb_period: int = 20,
         min_atr_pct: float = 0.001,
         stop_atr_mult: float = 2.0,
+        max_trend: float = 0.6,
+        skip_high_vol: bool = True,
     ) -> None:
         super().__init__(
             rsi_period=int(rsi_period),
@@ -44,10 +47,13 @@ class MeanReversionScalper(Strategy):
             bb_period=int(bb_period),
             min_atr_pct=min_atr_pct,
             stop_atr_mult=stop_atr_mult,
+            max_trend=max_trend,
+            skip_high_vol=skip_high_vol,
         )
 
     def generate_signals(self, df: pd.DataFrame) -> pd.Series:
         from scalper_hft.features.indicators import atr, bollinger, rsi
+        from scalper_hft.features.regimes import trend_strength, volatility_regime
 
         f = add_standard_features(df)
         rsi_val = rsi(f["close"], int(self.get("rsi_period", 14)))
@@ -59,11 +65,20 @@ class MeanReversionScalper(Strategy):
         short_entry = (rsi_val > self.get("overbought", 70.0)) & (close > f["bb_up"])
         vol_ok = atr_pct >= self.get("min_atr_pct", 0.001)
 
+        # ── regime-фільтри (гл. 4/10 книги; features/regimes.py) ────────────
+        # mean reversion працює у флеті: входимо лише коли тренд слабкий
+        trend = trend_strength(close, 9, 50)
+        trend_ok = trend < float(self.get("max_trend", 0.6))
+        # і волатильність не в режимі 'high' (вибухові рухи ≠ реверсія)
+        if self.get("skip_high_vol", True):
+            regime = volatility_regime(close, lookback=60, percentile_window=500)
+            vol_ok = vol_ok & (regime != "high")
+
         # Патерн "вхід утримується до виходу": у sig лише входи, виходи
         # прив'язані до ПОПЕРЕДНЬОГО стану позиції (без lookahead).
         sig = pd.Series(float("nan"), index=df.index, dtype=float)
-        sig[long_entry & vol_ok] = 1.0
-        sig[short_entry & vol_ok] = -1.0
+        sig[long_entry & vol_ok & trend_ok] = 1.0
+        sig[short_entry & vol_ok & trend_ok] = -1.0
 
         prev_pos = sig.ffill().shift(1).fillna(0.0)
         stop = f["atr_14"] * self.get("stop_atr_mult", 2.0)

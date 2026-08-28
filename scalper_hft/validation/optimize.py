@@ -53,6 +53,7 @@ def _default_objective(
     params: dict,
     cost: CostModel,
     trades: pd.DataFrame | None,
+    funding: pd.DataFrame | None,
     n_splits: int,
     embargo: int,
     position_pct: float,
@@ -62,8 +63,9 @@ def _default_objective(
     for train_idx, test_idx in purged_kfold_indices(len(df), n_splits, purge=50, embargo=embargo):
         tr, te = df.iloc[train_idx], df.iloc[test_idx]
         trades_tr = trades.iloc[train_idx] if trades is not None else None
+        funding_tr = _slice_funding(funding, te.index[0], te.index[-1]) if funding is not None else None
         try:
-            res = run_backtest(te, strategy_cls(**params), cost=cost, trades=trades_tr, position_pct=position_pct)
+            res = run_backtest(te, strategy_cls(**params), cost=cost, trades=trades_tr, funding=funding_tr, position_pct=position_pct)
             sharpe = res.metrics.sharpe
         except Exception:  # noqa: BLE001
             sharpe = -1.0
@@ -73,12 +75,19 @@ def _default_objective(
     return float(np.mean(oos_sharpes)) if oos_sharpes else -1.0
 
 
+def _slice_funding(funding: pd.DataFrame, t0: pd.Timestamp, t1: pd.Timestamp) -> pd.DataFrame:
+    """Зріз funding за часовим вікном (індекс funding ≠ індекс барів)."""
+    mask = (funding.index >= t0) & (funding.index <= t1)
+    return funding[mask]
+
+
 def optimize_params(
     df: pd.DataFrame,
     strategy: Strategy,
     n_trials: int = 60,
     cost: CostModel | None = None,
     trades: pd.DataFrame | None = None,
+    funding: pd.DataFrame | None = None,
     n_splits: int = 4,
     embargo: int = 30,
     position_pct: float = 0.01,
@@ -104,7 +113,7 @@ def optimize_params(
             else:
                 params[pname] = trial.suggest_float(pname, float(lo), float(hi))
         return _default_objective(
-            df, strategy_cls, params, cost, trades, n_splits, embargo, position_pct
+            df, strategy_cls, params, cost, trades, funding, n_splits, embargo, position_pct
         )
 
     study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(seed=42) if sampler == "tpe" else optuna.samplers.RandomSampler(seed=42))
@@ -116,9 +125,11 @@ def optimize_params(
         for train_idx, test_idx in purged_kfold_indices(len(df), n_splits, purge=50, embargo=embargo):
             te = df.iloc[test_idx]
             trades_te = trades.iloc[test_idx] if trades is not None else None
+            funding_te = _slice_funding(funding, te.index[0], te.index[-1]) if funding is not None else None
             try:
                 res = run_backtest(
-                    te, strategy_cls(**study.best_params), cost=cost, trades=trades_te, position_pct=position_pct
+                    te, strategy_cls(**study.best_params), cost=cost, trades=trades_te,
+                    funding=funding_te, position_pct=position_pct,
                 )
                 score = res.metrics.sharpe
             except Exception:  # noqa: BLE001

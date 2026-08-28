@@ -69,7 +69,12 @@ def cmd_backtest(args: argparse.Namespace) -> None:
         from scalper_hft.data.downloader import download_agg_trades
 
         trades = download_agg_trades(args.symbol, args.days)
-    res = run_backtest(df, strategy, cost=cost, trades=trades, position_pct=settings.position_pct)
+    funding = None
+    if strategy.needs_funding:
+        from scalper_hft.data.downloader import download_funding
+
+        funding = download_funding(args.symbol, args.days)
+    res = run_backtest(df, strategy, cost=cost, trades=trades, funding=funding, position_pct=settings.position_pct)
     print("\n" + res.summary())
     _plot_equity(res.equity, args.strategy, args.symbol)
 
@@ -86,6 +91,11 @@ def cmd_walkforward(args: argparse.Namespace) -> None:
         from scalper_hft.data.downloader import download_agg_trades
 
         trades = download_agg_trades(args.symbol, args.days)
+    funding = None
+    if strategy.needs_funding:
+        from scalper_hft.data.downloader import download_funding
+
+        funding = download_funding(args.symbol, args.days)
     settings = get_settings()
     res = run_walk_forward(
         df,
@@ -93,6 +103,7 @@ def cmd_walkforward(args: argparse.Namespace) -> None:
         train_bars=args.train,
         test_bars=args.test,
         trades=trades,
+        funding=funding,
         position_pct=settings.position_pct,
     )
     print("\n" + res.summary())
@@ -137,6 +148,11 @@ def cmd_overfit(args: argparse.Namespace) -> None:
         from scalper_hft.data.downloader import download_agg_trades
 
         trades = download_agg_trades(args.symbol, args.days)
+    funding = None
+    if strategy.needs_funding:
+        from scalper_hft.data.downloader import download_funding
+
+        funding = download_funding(args.symbol, args.days)
 
     print("═" * 60)
     print(f"AUDIT: стратегія {args.strategy}, {args.symbol} {args.interval}, {len(df)} барів")
@@ -144,7 +160,8 @@ def cmd_overfit(args: argparse.Namespace) -> None:
 
     # 1) walk-forward
     res_wf = run_walk_forward(
-        df, strategy, train_bars=args.train, test_bars=args.test, trades=trades, position_pct=settings.position_pct
+        df, strategy, train_bars=args.train, test_bars=args.test, trades=trades, funding=funding,
+        position_pct=settings.position_pct,
     )
     print("\n[1] WALK-FORWARD")
     print(res_wf.summary())
@@ -154,12 +171,12 @@ def cmd_overfit(args: argparse.Namespace) -> None:
         pname = next(iter(strategy.param_space))
         lo, hi, step = strategy.param_space[pname]
         values = [lo + i * step for i in range(int((hi - lo) / step) + 1)][:15]
-        res_sens = parameter_sensitivity(df, strategy, pname, values, cost=cost, trades=trades)
+        res_sens = parameter_sensitivity(df, strategy, pname, values, cost=cost, trades=trades, funding=funding)
         print("\n[2] ЧУТЛИВІСТЬ ДО ПАРАМЕТРА", pname)
         print(res_sens.summary())
 
     # 3) deflated Sharpe на повному наборі
-    res_full = run_backtest(df, strategy, cost=cost, trades=trades, position_pct=settings.position_pct)
+    res_full = run_backtest(df, strategy, cost=cost, trades=trades, funding=funding, position_pct=settings.position_pct)
     equity = res_full.equity
     ret = equity.pct_change().dropna()
     n_trials = estimate_n_trials(
@@ -221,9 +238,17 @@ def cmd_report(args: argparse.Namespace) -> None:
         from scalper_hft.data.downloader import download_agg_trades
 
         trades = download_agg_trades(args.symbol, args.days)
+    funding = None
+    if strategy.needs_funding:
+        from scalper_hft.data.downloader import download_funding
 
-    res = run_backtest(df, strategy, cost=cost, trades=trades, position_pct=settings.position_pct)
-    wf = run_walk_forward(df, strategy, train_bars=args.train, test_bars=args.test, trades=trades, position_pct=settings.position_pct)
+        funding = download_funding(args.symbol, args.days)
+
+    res = run_backtest(df, strategy, cost=cost, trades=trades, funding=funding, position_pct=settings.position_pct)
+    wf = run_walk_forward(
+        df, strategy, train_bars=args.train, test_bars=args.test, trades=trades, funding=funding,
+        position_pct=settings.position_pct,
+    )
     ret = res.equity.pct_change().dropna()
     n_trials = estimate_n_trials(max(len(strategy.param_space), 1), args.trials or 1)
     dsr = deflated_sharpe_ratio(ret.values, n_trials=n_trials)
@@ -234,7 +259,7 @@ def cmd_report(args: argparse.Namespace) -> None:
         lo, hi, step = strategy.param_space[pname]
         values = [lo + i * step for i in range(int((hi - lo) / step) + 1)][:15]
         try:
-            sens = parameter_sensitivity(df, strategy, pname, values, cost=cost, trades=trades)
+            sens = parameter_sensitivity(df, strategy, pname, values, cost=cost, trades=trades, funding=funding)
             sens_md = f"\n## Sensitivity ({pname})\n\nsmoothness = {sens.smoothness:.3f}\n\n" + sens.grid.to_markdown(index=False)
         except Exception as exc:  # noqa: BLE001
             sens_md = f"\n## Sensitivity\n\nпомилка: {exc}"
@@ -275,6 +300,47 @@ def cmd_report(args: argparse.Namespace) -> None:
     out_path.write_text(md, encoding="utf-8")
     print(md)
     print(f"\nЗвіт збережено: {out_path}")
+
+
+def cmd_cscv(args: argparse.Namespace) -> None:
+    """PBO через Combinatorial Purged CV (López de Prado)."""
+    from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.config import get_settings
+    from scalper_hft.strategies import get_strategy
+    from scalper_hft.validation.cscv import pbo_cscv, variant_returns
+
+    df = _load_klines(args.symbol, args.interval, args.days)
+    strategy = get_strategy(args.strategy, **args.param_dict)
+    settings = get_settings()
+    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    trades = None
+    if strategy.needs_trades:
+        from scalper_hft.data.downloader import download_agg_trades
+
+        trades = download_agg_trades(args.symbol, args.days)
+    funding = None
+    if strategy.needs_funding:
+        from scalper_hft.data.downloader import download_funding
+
+        funding = download_funding(args.symbol, args.days)
+
+    print(f"Генерація {args.variants} випадкових варіантів параметрів {args.strategy}...")
+    returns = variant_returns(
+        df, strategy, n_variants=args.variants, cost=cost, trades=trades, funding=funding,
+        position_pct=settings.position_pct,
+    )
+    res = pbo_cscv(returns, n_blocks=args.blocks, threshold=0.0, max_combos=args.max_combos)
+    print("\n" + res.summary())
+
+
+def cmd_record_bookticker(args: argparse.Namespace) -> None:
+    """Запис bookTicker у реальному часі (для OB-стратегій)."""
+    from scalper_hft.live.bookticker_recorder import record_bookticker
+
+    symbols = (args.symbol or "BTCUSDT").split(",")
+    for sym in symbols:
+        n = record_bookticker(sym, minutes=args.minutes)
+        print(f"{sym}: записано {n} снапшотів")
 
 
 def _plot_equity(equity: pd.Series, strategy: str, symbol: str) -> None:
@@ -352,6 +418,18 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--trials", type=int, default=50, help="Оцінка кількості спроб для DSR")
     p.set_defaults(func=cmd_overfit)
 
+    p = sub.add_parser("cscv", help="PBO через Combinatorial Purged CV")
+    add_common(p)
+    p.add_argument("--variants", type=int, default=30, help="Кількість випадкових варіантів параметрів")
+    p.add_argument("--blocks", type=int, default=8, help="Кількість блоків для розбиття")
+    p.add_argument("--max-combos", type=int, default=200, help="Обмеження комбінацій")
+    p.set_defaults(func=cmd_cscv)
+
+    p = sub.add_parser("record-bookticker", help="Запис bookTicker (WS) у parquet")
+    p.add_argument("--symbol", default="BTCUSDT", help="Символ(и) через кому")
+    p.add_argument("--minutes", type=int, default=60, help="Тривалість запису, хв")
+    p.set_defaults(func=cmd_record_bookticker)
+
     p = sub.add_parser("ml", help="Walk-forward ML-класифікатор напрямку")
     add_common(p)
     p.add_argument("--horizon", type=int, default=3, help="Горизонт прогнозу, барів")
@@ -372,7 +450,7 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(func=cmd_report)
 
     args = parser.parse_args(argv)
-    args.param_dict = _parse_param_dict(args.param)
+    args.param_dict = _parse_param_dict(getattr(args, "param", []))
     args.func(args)
 
 
