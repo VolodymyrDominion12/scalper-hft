@@ -108,8 +108,14 @@ class BinanceClient:
         amount: float,
         price: float | None = None,
         params: dict[str, Any] | None = None,
+        post_only: bool = False,
     ) -> dict[str, Any]:
-        return self.exchange.create_order(symbol, order_type, side, amount, price, params or {})
+        """Створення ордера. post_only=True — лімітний maker-ордер (Binance:
+        відхиляється, якщо перетнув би спред) — для збору maker-комісій."""
+        params = dict(params or {})
+        if post_only:
+            params["postOnly"] = True
+        return self.exchange.create_order(symbol, order_type, side, amount, price, params)
 
     def cancel_order(self, order_id: str, symbol: str) -> dict[str, Any]:
         return self.exchange.cancel_order(order_id, symbol)

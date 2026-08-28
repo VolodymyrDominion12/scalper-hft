@@ -47,6 +47,7 @@ class Settings:
     maker_fee: float = field(default_factory=lambda: _env_float("MAKER_FEE", 0.0002))
     taker_fee: float = field(default_factory=lambda: _env_float("TAKER_FEE", 0.0005))
     slippage_bps: float = field(default_factory=lambda: _env_float("SLIPPAGE_BPS", 2.0))
+    maker_execution: bool = field(default_factory=lambda: _env_bool("MAKER_EXECUTION", True))
 
     # Risk model
     position_pct: float = field(default_factory=lambda: _env_float("POSITION_PCT", 0.01))

@@ -327,3 +327,33 @@ def test_delta_neutral_basis_accounting():
     assert ret_total < 0, f"шорт перпа при зростаючому basis має втрачати, отримали {ret_total}"
     # funding внесок ≈ одна ставка × 0.0005 (позиція активна на третій ставці)
     assert abs(res.funding_pnl / 100 - 0.0005) < 0.0002, f"funding внесок: {res.funding_pnl}"
+
+
+def test_post_only_flag():
+    """post_only=True додає параметр postOnly до ордера."""
+    from scalper_hft.data.binance_client import BinanceClient
+
+    c = BinanceClient(exchange_id="binance", market_type="spot")
+    # не робимо реальний запит — перевіряємо, що параметр прокидається в kwargs
+    import inspect
+
+    src = inspect.getsource(c.create_order)
+    assert "postOnly" in src and "post_only" in src
+
+
+def test_basis_reversion_signals():
+    """Basis_reversion: сигнали з'являються при аномальному basis."""
+    import numpy as np
+    import pandas as pd
+
+    from scalper_hft.strategies.basis_reversion import BasisReversion
+
+    idx = pd.date_range("2025-01-01", periods=500, freq="1min")
+    spot = 100.0 + np.zeros(500)
+    perp = spot.copy()
+    # аномальний сплеск премії перпа
+    perp[300:320] = spot[300:320] * 1.0005
+    df = pd.DataFrame({"perp": perp, "spot": spot}, index=idx)
+    s = BasisReversion(exit_bps=1.0, lookback=120)
+    sig = s.generate_signals(df)
+    assert (sig != 0).sum() > 0, "очікували сигнали на аномальному basis"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from scalper_hft.strategies.base import Strategy
+from scalper_hft.strategies.basis_reversion import BasisReversion
 from scalper_hft.strategies.cvd_momentum import CvdMomentumScalper
 from scalper_hft.strategies.funding_arb import FundingArb
 from scalper_hft.strategies.funding_carry import FundingCarryScalper
@@ -19,6 +20,7 @@ REGISTRY: dict[str, type[Strategy]] = {
         PassiveMarketMaker,
         FundingCarryScalper,
         FundingArb,
+        BasisReversion,
     )
 }
 
