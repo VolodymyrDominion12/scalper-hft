@@ -59,10 +59,14 @@ uv venv .venv && uv pip install -e ".[optim,ml,dev]"
 | `optimize` | Optuna-пошук параметрів з purged CV цільовою функцією |
 | `overfit` | аудит: WF + sensitivity (плато vs пік) + Deflated Sharpe |
 | `cscv` | **PBO через Combinatorial Purged CV** (López de Prado) |
-| `ml` | walk-forward LightGBM класифікатор напрямку |
+| `ml` | walk-forward LightGBM класифікатор напрямку (`--trades` micro, `--hmm`, `--garch`) |
 | `cohort` | **деградація edge за когортами угод** (Predictive Marketing: silent attrition) |
 | `lift` | **децильний lift-аналіз фіч** — які фічі реально зсувають PnL (uplift-концепт) |
 | `featimp` | **MDI/MDA/SFI feature importance** (AFML Ch.8) + PCA-перевірка |
+| `stress` | **стрес-тест**: crash / liquidity / vol_spike / funding_shock (Narang гл. 10) |
+| `capacity` | **capacity-тест**: Sharpe при масштабуванні позицій (share of wallet) |
+| `survival` | **Kaplan–Meier**: медіанний час утримання позиції (+ за бінами фічі) |
+| `mcp` | **MCP-сервер для трейдінгу** (stdio, JSON-RPC) — бектест/аналіз як інструменти для AI-асистента |
 | `paper` | один крок paper-торгівлі на останньому барі |
 | `paper-run` | **циклічний paper-прогін** (N кроків, збереження equity/угод у `results/`) |
 | `paper-replay` | відтворення історії через risk-трейдера (валiдація risk-шару) |
@@ -162,4 +166,13 @@ Round-trip taker ≈ **0.10%** ноціоналу — це ~10 повних уг
    (`features/volatility.py`), емпіричні витрати (vol-scaled slippage + Square-Root
    impact у `CostModel`), ERC-алокація (`portfolio/erc.py`, `pairs-portfolio --method erc`),
    MDI/MDA/SFI feature importance (`ml/feature_importance.py`, CLI `featimp`).
+   ✅ Спринт 3: стрес-тест (`validation/stress.py`, CLI `stress`), портфельний risk
+   budget (`portfolio/risk_budget.py`), сигмоїдний sizing + лімітна ціна
+   (`ml/bet_sizing.py`, AFML Ch.10.6), capacity-тест (`validation/capacity.py`, CLI
+   `capacity`), Kaplan–Meier (`validation/survival.py`, CLI `survival`), інтеграція
+   micro/HMM/GARCH у ML-фічі (`ml` CLI: `--trades --hmm --garch`).
+   ✅ Спринт 4: MCP-сервер для трейдінгу (`scalper_hft/mcp_trading.py`, CLI `mcp`,
+   конфіг `.mcp/mcp-config.md`), alpha-гіпотеза `hmm_reversion` (HMM-гейтований
+   mean reversion, повний цикл валідації), live-інтеграція (vol-scaled sizing +
+   HMM-блок у `live/trader.py`), дашборд §5 (cohort/stress/capacity).
 5. **Dashboard**: Streamlit для моніторингу стратегій і параметрів у реальному часі.

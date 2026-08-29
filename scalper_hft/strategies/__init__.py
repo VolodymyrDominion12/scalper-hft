@@ -8,6 +8,7 @@ from scalper_hft.strategies.cvd_momentum import CvdMomentumScalper
 from scalper_hft.strategies.ensemble import EnsembleStrategy
 from scalper_hft.strategies.funding_arb import FundingArb
 from scalper_hft.strategies.funding_carry import FundingCarryScalper
+from scalper_hft.strategies.hmm_reversion import HmmReversionScalper
 from scalper_hft.strategies.market_maker import PassiveMarketMaker
 from scalper_hft.strategies.mean_reversion import MeanReversionScalper
 from scalper_hft.strategies.ml_strategy import MLStrategy
@@ -27,6 +28,7 @@ REGISTRY: dict[str, type[Strategy]] = {
         PairsArb,
         MLStrategy,
         EnsembleStrategy,
+        HmmReversionScalper,
     )
 }
 

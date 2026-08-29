@@ -68,10 +68,12 @@ def apply_stress(
             idx = np.arange(max(0, worst_end - crash_bars + 1), worst_end + 1)
             out.iloc[idx] = out.iloc[idx] * crash_mult
 
-    # liquidity / funding: додаткові витрати на бар (еквівалент turnover ≈ 1)
+    # liquidity / funding: додаткові витрати лише на АКТИВНИХ барах
+    # (бар з нульовою позицією має strat_ret = 0 — заряджати його нечесно)
     if cost_mult != 1.0 or funding_rate != 0.0:
         extra = (cost_mult - 1.0) * cost_frac + funding_rate
-        out = out - extra
+        active = out != 0
+        out = out.where(~active, out - extra)
 
     return out
 

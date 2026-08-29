@@ -25,6 +25,7 @@
 | basis_reversion | basis надто вузький (1–2.4 bps) проти 2-leg витрат |
 | pairs_arb BTC/SOL | відносний тренд SOL (спред не ревертується) |
 | pairs_arb на 1m (будь-які) | овертрейдинг → fee-drag |
+| **hmm_reversion** (HMM-гейтований MR, 2026-08-29) | 1 угода/30д — гейт майже повністю вимикає входи; OOS SR −0.05, DSR=0 (звіт: docs/reports/hmm_reversion_BTCUSDT_5m.md) |
 
 ## ⏳ Очікують даних/інфраструктури
 

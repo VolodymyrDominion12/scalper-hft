@@ -33,6 +33,26 @@
 | ERC / risk-parity алокація + turnover tax | Narang Ch.6 | `portfolio/erc.py` (erc_weights, allocate_portfolio) + `run_pairs_portfolio(method='erc', turnover_rate=...)` + CLI `pairs-portfolio --method erc` | `tests/test_sprint2.py::TestErc` |
 | MDI / MDA / SFI + PCA-Kendall перевірка | AFML Ch.8 | `ml/feature_importance.py` + CLI `featimp` | `tests/test_sprint2.py::TestFeatureImportance` |
 
+## ✅ Реалізовано (Спринт 3, 2026-08-29)
+
+| Підхід | Книга/розділ | Реалізація | Тести |
+|---|---|---|---|
+| Стрес-тест: crash / liquidity / vol_spike / funding_shock | Narang Ch.4, 10 | `validation/stress.py` (apply_stress/stress_test/stress_report) + CLI `stress` | `tests/test_sprint3.py::TestStress` |
+| Портфельний risk budget: vol-targeting, VaR, розподіл ліміту збитків | Narang Ch.4, 10 | `portfolio/risk_budget.py` (vol_target_scale/portfolio_var/loss_budget_split) | `tests/test_sprint3.py::TestStress` |
+| Динамічний розмір + лімітна ціна (сигмоїда) | AFML Ch.10.6 | `ml/bet_sizing.py::sigmoid_size/calibrate_omega/target_size/limit_price` | `tests/test_sprint3.py::TestSigmoidSizing` |
+| Capacity-тест (share of wallet) | PM Ch.4 | `validation/capacity.py` (capacity_curve/saturation_scale/report) + CLI `capacity` | `tests/test_sprint3.py::TestCapacity` |
+| Survival / Kaplan–Meier (динамічний holding) | PM Ch.7, 12, 13 | `validation/survival.py` (trade_durations/kaplan_meier/median_survival_time/survival_by_feature) + CLI `survival` | `tests/test_sprint3.py::TestSurvival` |
+| Інтеграція micro/HMM/GARCH у ML-фічі | AFML Ch.19, FSPML Ch.4.5/7 | `ml/features.py::build_labeled_dataset(add_micro/add_hmm/add_garch)`; HMM — каузальна версія (`filtered_proba`, без lookahead) | `tests/test_sprint3.py::TestMlFeatureIntegration` |
+
+## ✅ Реалізовано (Спринт 4, 2026-08-29)
+
+| Підхід | Реалізація | Тести |
+|---|---|---|
+| MCP-сервер для трейдінгу | `scalper_hft/mcp_trading.py` (stdio, JSON-RPC, чистий stdlib): strategy_list / settings_summary / market_status / run_backtest / run_cohort / run_stress / run_capacity / paper_step; CLI `mcp`; конфіг `.mcp/mcp-config.md` (§4) | `tests/test_sprint4.py::TestMcpTrading` |
+| Alpha-гіпотеза: HMM-гейтований mean reversion | `strategies/hmm_reversion.py` (каузальний HMM-гейт «спокійного» стану, без lookahead) + повний цикл валідації (walk-forward + DSR + sensitivity) | `tests/test_sprint4.py::TestHmmReversion` |
+| Інтеграція фіч у live-шар | `live/trader.py`: `vol_scaled_size` (інверсне vol-масштабування розміру, кліп [0.25, 3]) + `hmm_blocked` (блок нових входів у «неспокійному» HMM-режимі; close ніколи не блокується) | `tests/test_sprint4.py::TestLiveSprint4` |
+| Дашборд: cohort/stress/capacity | `dashboard.py` §5: cohort decay, stress_report, capacity-крива (plotly) | py_compile |
+
 ## Що вже є в проєкті (не дублювати)
 
 - **AFML**: triple-barrier labeling (side-aware), sample weights (uniqueness + time-decay + sequential bootstrap), FFD + find_min_d, purged K-fold + embargo (label-aware), CPCV/PBO, Deflated Sharpe + estimate_n_trials, walk-forward, sensitivity, Optuna.
@@ -243,16 +263,22 @@ benchmark 1/K; як альтернатива Hedge-блендінгу (п. 10) �
 
 ---
 
-## Рекомендований порядок (Спринт 1–2 — ✅ виконано)
+## Рекомендований порядок (Спринти 1–4 — ✅ виконано)
 
-1. ~~**Спринт 1 (S-задачі):** мета-лейблінг + sizing, breakeven-поріг, cohort decay,
+1. ~~**Спринт 1 (S):** мета-лейблінг + sizing, breakeven-поріг, cohort decay,
    децильний lift, Hedge-блендінг~~ → зроблено 2026-08-29.
 2. ~~**Спринт 2 (M):** VPIN/Kyle λ/Roll фічі, HMM-режими, GARCH σ_{t+1}, емпіричний
-   CostModel (Square-Root impact), ERC-алокація з turnover tax, MDI/MDA/SFI~~ →
+   CostModel (Square-Root impact), ERC-алокація, MDI/MDA/SFI~~ → зроблено 2026-08-29.
+3. ~~**Спринт 3:** stress-test + risk budget, сигмоїдний sizing/лімітна ціна,
+   capacity-тест, survival/Kaplan–Meier, інтеграція micro/HMM/GARCH у ML-фічі~~ →
    зроблено 2026-08-29.
-3. **Спринт 3:** stress-test модуль + портфельний risk budget, динамічна лімітна ціна
-   (сигмоїда) в maker-рушії, capacity-тест, survival/Kaplan–Meier дослідження,
-   інтеграція micro/HMM/GARCH фіч у `ml/features.py`.
+4. ~~**Спринт 4:** MCP-сервер для трейдінгу, alpha-гіпотеза hmm_reversion через
+   повний цикл, live-інтеграція (vol-sizing + HMM-блок), дашборд cohort/stress/
+   capacity~~ → зроблено 2026-08-29.
+
+Подальші кроки (за потребою): нова alpha-гіпотеза через повний цикл (наступна —
+на основі VPIN-гейту для maker або ML з micro/HMM/GARCH фічами), використання
+MCP-сервера в асистенті, paper-валідація hmm_reversion при позитивному аудиті.
 
 Кожен підхід — через повний цикл: реалізація → тест → walk-forward + Deflated Sharpe →
 sensitivity → paper (AGENTS.md, `skills/overfitting-audit.md`).

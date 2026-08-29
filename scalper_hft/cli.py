@@ -823,6 +823,13 @@ def cmd_survival(args: argparse.Namespace) -> None:
         print(sb.to_string(index=False))
 
 
+def cmd_mcp(args: argparse.Namespace) -> None:
+    """Запуск MCP-сервера для трейдінгу (stdio, JSON-RPC)."""
+    from scalper_hft.mcp_trading import run_stdio
+
+    run_stdio()
+
+
 def _plot_equity(equity: pd.Series, strategy: str, symbol: str) -> None:
     try:
         import matplotlib
@@ -1060,6 +1067,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--feature", default=None, help="Фіча для survival_by_feature (напр. atr_14)")
     p.add_argument("--bins", type=int, default=3)
     p.set_defaults(func=cmd_survival)
+
+    p = sub.add_parser("mcp", help="Запуск MCP-сервера для трейдінгу (stdio)")
+    p.set_defaults(func=cmd_mcp)
 
     args = parser.parse_args(argv)
     args.param_dict = _parse_param_dict(getattr(args, "param", []))

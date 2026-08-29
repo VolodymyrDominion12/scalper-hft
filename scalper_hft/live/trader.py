@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
 
 from scalper_hft.backtest.execution import CostModel
@@ -67,7 +68,16 @@ class TradeDecision:
 
 
 class LiveTrader:
-    """Керує одним символом: свіжі klines → сигнал → ордер (paper/testnet/live)."""
+    """Керує одним символом: свіжі klines → сигнал → ордер (paper/testnet/live).
+
+    Розширення (Спринт 4):
+        vol_sizing  — розмір позиції масштабується волатильністю
+                      (менша позиція у високій волі): vol_ref/realized_vol;
+        hmm_block   — блокувати НОВІ входи у «неспокійному» HMM-режимі
+                      (каузальна модель, без lookahead);
+        breakeven   — використовуйте strategy.use_breakeven_gate через
+                      get_strategy(..., breakeven_gate=True).
+    """
 
     def __init__(
         self,
@@ -76,6 +86,11 @@ class LiveTrader:
         interval: str = "1m",
         account: PaperAccount | None = None,
         client: BinanceClient | None = None,
+        vol_sizing: bool = False,
+        vol_ref: float | None = None,
+        hmm_block: bool = False,
+        hmm_states: int = 3,
+        hmm_threshold: float = 0.5,
     ) -> None:
         self.settings = get_settings()
         self.strategy = strategy
@@ -94,6 +109,11 @@ class LiveTrader:
             taker_fee=self.settings.taker_fee,
             slippage_frac=self.settings.slippage_frac,
         )
+        self.vol_sizing = vol_sizing
+        self.vol_ref = vol_ref
+        self.hmm_block = hmm_block
+        self.hmm_states = hmm_states
+        self.hmm_threshold = hmm_threshold
         self.last_signal: int = 0
 
     # ── сигнал ───────────────────────────────────────────────────────────────
@@ -115,6 +135,53 @@ class LiveTrader:
         else:
             signal = self.strategy.generate_signals(closed)
         return int(signal.iloc[-1]) if len(signal) else 0
+
+    # ── волатильність-залежний розмір (Спринт 4: GARCH/realized-vol sizing) ──
+    def _realized_vol(self, df: pd.DataFrame, window: int = 60) -> float:
+        """Поточна реалізована волатильність (частка ціни) на останньому барі."""
+        ret = df["close"].pct_change().dropna()
+        if len(ret) < 10:
+            return 0.0
+        return float(ret.tail(window).std(ddof=0))
+
+    def vol_scaled_size(self, base_size: float, df: pd.DataFrame, window: int = 60) -> float:
+        """Розмір позиції з інверсним vol-масштабуванням.
+
+        scale = vol_ref / realized_vol, обмежений [0.25, 3.0]. Якщо
+        vol_sizing вимкнено або vol_ref не задано — base_size без змін.
+        """
+        if not self.vol_sizing or self.vol_ref is None or self.vol_ref <= 0:
+            return base_size
+        vol = self._realized_vol(df, window)
+        if vol <= 0:
+            return base_size
+        scale = min(max(self.vol_ref / vol, 0.25), 3.0)
+        return base_size * scale
+
+    # ── HMM-режимний блок нових входів (Спринт 4, без lookahead) ────────────
+    def hmm_blocked(self, df: pd.DataFrame) -> bool:
+        """True, якщо поточний HMM-стан «неспокійний» (висока волатильність).
+
+        Модель навчається на перших 2000 барах, поточна ймовірність —
+        фільтрована (forward-only) → без lookahead.
+        """
+        if not self.hmm_block:
+            return False
+        try:
+            from scalper_hft.features.hmm_regime import GaussianHMM
+
+            close = df["close"]
+            ret = close.pct_change().fillna(0.0)
+            vol = ret.rolling(20, min_periods=10).std().fillna(0.0)
+            obs = pd.DataFrame({"ret": ret, "abs_ret": ret.abs(), "vol": vol}).iloc[20:]
+            if len(obs) < self.hmm_states * 20:
+                return False
+            model = GaussianHMM(n_states=self.hmm_states, seed=42).fit(obs.iloc[:2000].values)
+            calm = int(np.argmin(model.covars_[:, 2]))  # стан з найменшою vol
+            post = model.filtered_proba(obs.values)
+            return bool(post[-1, calm] < self.hmm_threshold)
+        except Exception:  # noqa: BLE001
+            return False
 
     # ── ризик-контроль (книга, гл. 4) ────────────────────────────────────────
     def risk_check(self, decision: TradeDecision, mark_price: float | None = None) -> tuple[bool, str]:
@@ -222,13 +289,19 @@ def execute_signal(
     elif want == have:
         parts.append(trader.execute(TradeDecision("hold", trader.symbol, 0.0, "вже в позиції"), close, ts))
     else:
+        # close-before-flip: закриття ніколи не блокується (зменшення ризику)
         if have != 0:
             parts.append(trader.execute(TradeDecision("close", trader.symbol, 0.0, "реверс"), close, ts))
-        size = trader.settings.position_pct * trader.account.equity / close
-        action = "open_long" if want > 0 else "open_short"
-        parts.append(
-            trader.execute(TradeDecision(action, trader.symbol, size, f"сигнал={signal}"), close, ts)
-        )
+        # HMM-режимний блок: нові входи лише у «спокійному» стані
+        if trader.hmm_blocked(closed):
+            parts.append("blocked:hmm_regime")
+        else:
+            base_size = trader.settings.position_pct * trader.account.equity / close
+            size = trader.vol_scaled_size(base_size, closed)
+            action = "open_long" if want > 0 else "open_short"
+            parts.append(
+                trader.execute(TradeDecision(action, trader.symbol, size, f"сигнал={signal}"), close, ts)
+            )
 
     trader.last_signal = signal
     return " | ".join(parts)

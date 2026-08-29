@@ -40,11 +40,7 @@ def capacity_curve(
     cost = cost or CostModel()
     scales = scales or [1.0, 2.0, 5.0, 10.0, 20.0]
     k = estimate_impact_k_from_bars(df)
-    # середньоденний ADV (ноціонал) — для оцінки частки Q/ADV
-    adv = float((df["volume"] * df["close"]).rolling(288).mean().median()) or float(
-        (df["volume"] * df["close"]).median()
-    )
-    sigma = float((df["close"].pct_change().rolling(288).std().median())) or 0.01
+    sigma = float(df["close"].pct_change().rolling(288).std().median()) or 0.01
 
     rows: dict[str, list] = {"scale": [], "total_return": [], "sharpe": [],
                              "max_drawdown": [], "impact_bps": []}
@@ -113,7 +109,7 @@ def capacity_report(df, strategy, **kwargs) -> str:
         curve.round(4).to_string(index=False),
         "",
         f"Точка насичення: ×{sat:g}",
-        "→ edge зберігається до ×{:.0f} капіталу".format(sat),
+        f"→ edge зберігається до ×{sat:.0f} капіталу",
     ]
     return "\n".join(lines)
 

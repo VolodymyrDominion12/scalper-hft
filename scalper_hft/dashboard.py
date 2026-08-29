@@ -150,3 +150,45 @@ if results_dir.exists():
         st.info("Немає CSV paper-run.")
 else:
     st.info("Немає results/")
+
+st.header("5. Cohort / Stress / Capacity (Спринт 4)")
+run_diag = st.sidebar.button("Запустити діагностику (cohort+stress+capacity)")
+if run_diag:
+    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    try:
+        strategy = get_strategy(strategy_name)
+        if is_pairs:
+            st.warning("Діагностика працює для одиночних стратегій (не pairs_arb).")
+        else:
+            df = load_klines(klines_path(data_dir, symbol, interval))
+            if df is None or len(df) < 100:
+                st.warning(f"Немає даних {symbol} {interval} — download спершу")
+            else:
+                trades = load_trades(data_dir / f"{symbol}_aggTrades.parquet") if getattr(strategy, "needs_trades", False) else None
+                funding = load_funding(data_dir / f"{symbol}_funding.parquet") if getattr(strategy, "needs_funding", False) else None
+                res = run_backtest(df, strategy, cost=cost, trades=trades, funding=funding, position_pct=settings.position_pct)
+                ret = res.equity.pct_change().dropna()
+
+                with st.expander("Cohort decay (Predictive Marketing)", expanded=False):
+                    from scalper_hft.validation.cohort import cohort_report
+
+                    st.text(cohort_report(res.trades))
+                with st.expander("Стрес-тест (Narang гл. 10)", expanded=False):
+                    from scalper_hft.validation.stress import stress_report
+
+                    rep = stress_report(ret)
+                    st.dataframe(rep.round(4), use_container_width=True)
+                    st.caption("crash = найгірше вікно ×2; liquidity = витрати ×10; "
+                               "vol_spike = волатильність ×2; funding_shock = per-bar 0.1%")
+                with st.expander("Capacity (share of wallet)", expanded=False):
+                    from scalper_hft.validation.capacity import capacity_curve, saturation_scale
+
+                    curve = capacity_curve(df, strategy, scales=[1.0, 2.0, 5.0, 10.0],
+                                           cost=cost, position_pct=settings.position_pct)
+                    fig = go.Figure(go.Bar(x=curve["scale"], y=curve["sharpe"]))
+                    fig.update_layout(title=f"Sharpe при масштабі позицій ×(1..10) — насичення ×{saturation_scale(curve):g}",
+                                      xaxis_title="scale", yaxis_title="Sharpe", height=320)
+                    st.plotly_chart(fig, use_container_width=True)
+                    st.dataframe(curve.round(4), use_container_width=True)
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"Діагностика не вдалася: {exc}")
