@@ -60,7 +60,32 @@ def cmd_backtest(args: argparse.Namespace) -> None:
     from scalper_hft.config import get_settings
     from scalper_hft.strategies import get_strategy
 
-    df = _load_klines(args.symbol, args.interval, args.days)
+    bar_type = getattr(args, "bar_type", "time")
+    
+    if bar_type == "time":
+        df = _load_klines(args.symbol, args.interval, args.days)
+    else:
+        from scalper_hft.data.downloader import download_agg_trades
+        from scalper_hft.data.bars import create_dollar_bars, create_volume_bars
+        
+        logger.info("Завантаження aggTrades для генерації %s барів...", bar_type)
+        trades = download_agg_trades(args.symbol, args.days)
+        if trades is None or trades.empty:
+            logger.error("Немає даних aggTrades для формування барів")
+            sys.exit(1)
+            
+        threshold = getattr(args, "bar_threshold", 100000.0)
+        logger.info("Генерація %s барів (threshold=%f)...", bar_type, threshold)
+        
+        if bar_type == "dollar":
+            df = create_dollar_bars(trades, threshold)
+        elif bar_type == "volume":
+            df = create_volume_bars(trades, threshold)
+        else:
+            raise ValueError(f"Unknown bar type: {bar_type}")
+            
+        logger.info("Згенеровано %d барів", len(df))
+
     params = dict(args.param_dict)
     if getattr(args, "breakeven_gate", False):
         params["breakeven_gate"] = True
@@ -70,7 +95,6 @@ def cmd_backtest(args: argparse.Namespace) -> None:
     trades = None
     if strategy.needs_trades:
         from scalper_hft.data.downloader import download_agg_trades
-
         trades = download_agg_trades(args.symbol, args.days)
     funding = None
     if strategy.needs_funding:
@@ -886,6 +910,10 @@ def main(argv: list[str] | None = None) -> None:
     add_common(p)
     p.add_argument("--breakeven-gate", action="store_true",
                    help="Вимикати сигнали, де очікуваний рух (ATR) < round-trip витрат")
+    p.add_argument("--bar-type", default="time", choices=["time", "dollar", "volume"],
+                   help="Тип барів для бектесту (time, dollar, volume). Для не-time використовується aggTrades")
+    p.add_argument("--bar-threshold", type=float, default=100000.0,
+                   help="Поріг для об'ємних або доларових барів")
     p.set_defaults(func=cmd_backtest)
 
     p = sub.add_parser("walkforward", help="Walk-forward аналіз")
