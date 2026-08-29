@@ -14,10 +14,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-import numpy as np
 import pandas as pd
 
-from scalper_hft.backtest.execution import CostModel
+from scalper_hft.backtest.execution import CostModel, apply_breakeven_gate
 from scalper_hft.backtest.metrics import BacktestMetrics, compute_metrics
 from scalper_hft.strategies.base import Strategy
 
@@ -95,6 +94,10 @@ def run_backtest(
         signals = strategy.generate_signals(df)
     if len(signals) != len(df):
         raise ValueError("Довжина сигналів не збігається з даними")
+
+    # Breakeven-гейт: не торгуємо, якщо очікуваний рух < round-trip витрат
+    if getattr(strategy, "use_breakeven_gate", False):
+        signals = apply_breakeven_gate(signals, df, cost, is_maker=is_maker)
 
     close = df["close"]
     ret = close.pct_change().fillna(0.0)

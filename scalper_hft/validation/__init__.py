@@ -8,15 +8,25 @@
     - optimize       — Optuna-пошук параметрів з CV-цільовою функцією.
 """
 
+from scalper_hft.validation.capacity import capacity_curve, capacity_report, saturation_scale
+from scalper_hft.validation.cohort import cohort_decay, cohort_metrics, cohort_report
 from scalper_hft.validation.cscv import CscvResult, combinatorial_splits, pbo_cscv, variant_returns
-from scalper_hft.validation.cv import purged_kfold_indices, time_series_split, PurgedKFold
+from scalper_hft.validation.cv import PurgedKFold, purged_kfold_indices, time_series_split
 from scalper_hft.validation.deflated_sharpe import (
     deflated_sharpe_ratio,
     estimate_n_trials,
     probability_of_backtest_overfitting,
 )
+from scalper_hft.validation.lift import decile_lift, feature_lift_report, lift_summary
 from scalper_hft.validation.optimize import optimize_params
 from scalper_hft.validation.sensitivity import parameter_sensitivity
+from scalper_hft.validation.stress import SCENARIOS, apply_stress, stress_report, stress_test
+from scalper_hft.validation.survival import (
+    kaplan_meier,
+    median_survival_time,
+    survival_by_feature,
+    trade_durations,
+)
 from scalper_hft.validation.walk_forward import WalkForwardResult, run_walk_forward
 
 __all__ = [
@@ -27,11 +37,28 @@ __all__ = [
     "purged_kfold_indices",
     "time_series_split",
     "PurgedKFold",
+    "cohort_metrics",
+    "cohort_decay",
+    "cohort_report",
     "deflated_sharpe_ratio",
     "estimate_n_trials",
     "probability_of_backtest_overfitting",
+    "decile_lift",
+    "feature_lift_report",
+    "lift_summary",
     "optimize_params",
     "parameter_sensitivity",
+    "SCENARIOS",
+    "apply_stress",
+    "stress_test",
+    "stress_report",
+    "capacity_curve",
+    "capacity_report",
+    "saturation_scale",
+    "kaplan_meier",
+    "median_survival_time",
+    "survival_by_feature",
+    "trade_durations",
     "WalkForwardResult",
     "run_walk_forward",
 ]

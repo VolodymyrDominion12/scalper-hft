@@ -49,13 +49,21 @@ def run_pairs_portfolio(
     cost: CostModel | None = None,
     initial_capital: float = 10_000.0,
     maker_execution: bool = True,
+    method: str = "equal",
+    turnover_rate: float = 0.0,
+    rebalance: str | None = "ME",
 ) -> PairsPortfolioResult:
     """Портфель пар на спільному часовому індексі.
 
     data: {symbol: klines_df}.
     pair_configs: [{leg1, leg2, strategy, funding1?, funding2?}, ...].
-    weights: ваги алокації (за замовч. рівні).
+    weights: явні ваги алокації (пріоритет над method).
+    method: 'equal' (за замовч.) | 'erc' (Equal Risk Contribution, Narang гл. 6).
+    turnover_rate: штраф за зміну ваг при ребалансі (частка капіталу).
+    rebalance: частота ребалансу ваг ('ME' = місяць; None = без ребалансу).
     """
+    from scalper_hft.portfolio.erc import allocate_portfolio, erc_weights
+
     cost = cost or CostModel()
     if weights is None:
         weights = [1.0 / len(pair_configs)] * len(pair_configs)
@@ -63,9 +71,9 @@ def run_pairs_portfolio(
         raise ValueError("weights і pair_configs мають бути однієї довжини")
 
     pair_equities: dict[str, pd.Series] = {}
-    returns: list[pd.Series] = []
+    raw_returns: list[pd.Series] = []
 
-    for cfg, w in zip(pair_configs, weights):
+    for cfg in pair_configs:
         leg1, leg2 = cfg["leg1"], cfg["leg2"]
         strategy: Strategy = cfg["strategy"]
         f1 = cfg.get("funding1")
@@ -76,14 +84,21 @@ def run_pairs_portfolio(
         )
         name = f"{leg1}/{leg2}"
         pair_equities[name] = res.equity
-        returns.append((res.equity.pct_change().fillna(0.0)) * w)
+        raw_returns.append(res.equity.pct_change().fillna(0.0))
 
-    common_idx = returns[0].index
-    for r in returns[1:]:
-        common_idx = common_idx.intersection(r.index)
-    port_ret = pd.Series(0.0, index=common_idx)
-    for r in returns:
-        port_ret = port_ret + r.reindex(common_idx).fillna(0.0)
+    returns_df = pd.concat(raw_returns, axis=1, keys=list(pair_equities.keys()))
+    returns_df = returns_df.dropna(how="all").fillna(0.0)
+
+    if method == "erc":
+        w_arr = erc_weights(returns_df.values)
+        weights = [float(w) for w in w_arr]
+
+    port_ret = allocate_portfolio(
+        returns_df,
+        weights=np.asarray(weights, dtype=float),
+        turnover_rate=turnover_rate,
+        rebalance=rebalance,
+    )
 
     equity = (1.0 + port_ret).cumprod() * initial_capital
     metrics = compute_metrics(equity, exposure=0.0, turnover=0.0)
@@ -91,5 +106,6 @@ def run_pairs_portfolio(
         equity=equity,
         pair_equities=pair_equities,
         metrics=metrics,
-        details={"weights": weights, "position_pct": position_pct},
+        details={"weights": weights, "position_pct": position_pct,
+                 "method": method, "turnover_rate": turnover_rate},
     )

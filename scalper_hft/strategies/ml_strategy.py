@@ -2,7 +2,8 @@
 
 Архітектура (Inside the Black Box, Narang):
     Data → Features (frac_diff + micro) → Triple-Barrier Label → LightGBM
-    → сигнал +1/-1 з мета-лейблінгом (опціонально)
+    → сигнал +1/-1, опціонально з confidence-фільтром, sizing із імовірностей
+    та повним мета-лейблінгом (AFML Ch.3.6–3.7, Ch.10.3).
 
 Walk-forward схема:
     Модель навчається на `train_bars` барах до поточного моменту,
@@ -13,8 +14,10 @@ Walk-forward схема:
     - sample_weight = uniqueness + time-decay (AFML Ch.4)
     - frac_diff фічі для збереження пам'яті ряду (AFML Ch.5)
     - regime_filter: відключає торгівлю у несприятливих режимах
-    - meta_filter: другий ML-шар що фільтрує слабкі сигнали
-    - Сигнал 0 при впевненості < confidence_threshold
+    - confidence_thr: сигнал 0 при впевненості < порога (працює через proba)
+    - prob_size: розмір позиції ∝ |prob_to_size(p)| (AFML Ch.10.3)
+    - meta_filter: повний мета-лейблінг — primary задає сторону, мета-модель
+      задає розмір P(meta=1) (AFML Ch.3.7 + Ch.10.3)
 """
 
 from __future__ import annotations
@@ -25,15 +28,17 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from scalper_hft.features.regimes import volatility_regime, trend_strength
+from scalper_hft.features.regimes import trend_strength, volatility_regime
+from scalper_hft.ml.bet_sizing import meta_size, prob_to_size
 from scalper_hft.ml.features import build_labeled_dataset
-from scalper_hft.ml.trainer import train_walk_forward, MlResult
+from scalper_hft.ml.trainer import MlResult, train_walk_forward, train_walk_forward_meta
 from scalper_hft.strategies.base import Strategy
 
 logger = logging.getLogger(__name__)
 
 try:
     from lightgbm import LGBMClassifier  # type: ignore
+
     _HAS_LGBM = True
 except ImportError:
     LGBMClassifier = None  # type: ignore
@@ -51,10 +56,12 @@ class MLStrategy(Strategy):
         holding_bars    : вертикальний бар'єр (default 10)
         decay           : time-decay для ваг (default 0.9)
         frac_d          : ступінь fractional diff (default 0.4)
-        confidence_thr  : мін. впевненість для сигналу (default 0.52)
+        confidence_thr  : мін. впевненість для сигналу (default 0.50 = без фільтра)
         regime_filter   : 'none' | 'vol' | 'trend' (default 'none')
         vol_regime_ok   : 'low,normal' | 'normal' | 'high,normal' (default 'normal')
-        meta_filter     : bool, чи застосовувати мета-лейблінг (default False)
+        prob_size       : sizing ∝ впевненості primary (AFML Ch.10.3), default False
+        meta_filter     : повний мета-лейблінг + sizing (default False)
+        meta_scale      : множник розміру мета-ставки (default 1.0)
     """
 
     name = "ml_strategy"
@@ -82,13 +89,13 @@ class MLStrategy(Strategy):
         trades: pd.DataFrame | None = None,
         funding: pd.DataFrame | None = None,
     ) -> pd.Series:
-        """Генерує сигнали позиції [-1, 0, +1] для всього df.
+        """Генерує сигнали позиції [-1, 0, +1] (або безперервні у [-1, 1]).
 
         Walk-forward: модель навчається на перших `train_bars` барах,
         далі прогнозує rolling кроками по `test_bars`.
 
         Returns:
-            Series positions {-1, 0, 1} з індексом df.index.
+            Series позицій у [-1, 1] з індексом df.index.
         """
         if not _HAS_LGBM:
             raise ImportError("Встановіть lightgbm: uv add --optional ml lightgbm scikit-learn")
@@ -100,10 +107,15 @@ class MLStrategy(Strategy):
         holding_bars = int(self.get("holding_bars", 10))
         decay = float(self.get("decay", 0.9))
         frac_d = float(self.get("frac_d", 0.4))
-        confidence_thr = float(self.get("confidence_thr", 0.52))
+        confidence_thr = float(self.get("confidence_thr", 0.5))
         regime_filter = str(self.get("regime_filter", "none"))
         vol_regime_ok = str(self.get("vol_regime_ok", "normal")).split(",")
+        prob_size = bool(self.get("prob_size", False))
         meta_filter = bool(self.get("meta_filter", False))
+        meta_scale = float(self.get("meta_scale", 1.0))
+        add_hmm = bool(self.get("add_hmm", False))
+        add_garch = bool(self.get("add_garch", False))
+        hmm_states = int(self.get("hmm_states", 3))
 
         # Будуємо labeled dataset
         try:
@@ -117,6 +129,9 @@ class MLStrategy(Strategy):
                 decay=decay,
                 frac_d=frac_d,
                 add_frac_diff=True,
+                add_hmm=add_hmm,
+                add_garch=add_garch,
+                hmm_states=hmm_states,
             )
         except ValueError as e:
             logger.warning("MLStrategy: %s — повертаю нульові сигнали", e)
@@ -129,37 +144,51 @@ class MLStrategy(Strategy):
             )
             return pd.Series(0, index=df.index)
 
-        # Walk-forward тренування
-        result = train_walk_forward(
-            X=X, y=y,
-            train_size=train_bars,
-            test_size=test_bars,
-            sample_weights=w,
-            close=df["close"],
-        )
-        preds = result.predictions  # {-1, +1} на OOS-індексах
-
-        # Confidence-фільтр: якщо немає proba — використовуємо raw pred
-        signals = self._apply_confidence_filter(preds, confidence_thr)
-
-        # Meta-лейблінг (другий ML-шар)
         if meta_filter:
-            signals = self._apply_meta_filter(X, y, w, signals, train_bars, test_bars)
+            # ── Повний мета-лейблінг: primary → сторона, мета → розмір ──
+            side, p_meta = train_walk_forward_meta(
+                X=X, y=y,
+                train_size=train_bars,
+                test_size=test_bars,
+                sample_weights=w,
+            )
+            size = meta_size(p_meta.values) * meta_scale
+            signals = side.astype(float) * size
+        else:
+            # ── Primary walk-forward ──
+            result = train_walk_forward(
+                X=X, y=y,
+                train_size=train_bars,
+                test_size=test_bars,
+                sample_weights=w,
+                close=df["close"],
+            )
+            side = result.predictions  # {-1, +1} на OOS-індексах
+            p_side = result.probabilities  # P(клас +1)
+
+            # Confidence-фільтр через proba (раніше був no-op без proba)
+            side = self._apply_confidence_filter(side, p_side, confidence_thr)
+
+            if prob_size:
+                size = np.abs(prob_to_size(p_side.values))
+                signals = side.astype(float) * size
+            else:
+                signals = side.astype(float)
 
         # Режимний фільтр
         if regime_filter == "vol":
             regime = volatility_regime(df["close"])
             ok = regime.isin(vol_regime_ok).reindex(signals.index, fill_value=False)
-            signals = signals.where(ok, other=0)
+            signals = signals.where(ok, other=0.0)
         elif regime_filter == "trend":
             ts = trend_strength(df["close"])
             # торгуємо лише коли тренд слабкий (mean-reversion умови)
             ok = (ts < 0.3).reindex(signals.index, fill_value=False)
-            signals = signals.where(ok, other=0)
+            signals = signals.where(ok, other=0.0)
 
         # Вирівнюємо на весь df.index (де немає прогнозу → 0)
-        full = pd.Series(0, index=df.index, dtype=int)
-        full.update(signals.astype(int))
+        full = pd.Series(0.0, index=df.index, dtype=float)
+        full.update(signals.astype(float))
         return full
 
     def get_last_result(self) -> MlResult | None:
@@ -168,60 +197,15 @@ class MLStrategy(Strategy):
 
     # ── Private ───────────────────────────────────────────────────────────────
 
+    @staticmethod
     def _apply_confidence_filter(
-        self, preds: pd.Series, threshold: float
+        side: pd.Series, p_side: pd.Series | None, threshold: float
     ) -> pd.Series:
         """При threshold > 0.5 залишаємо лише 'впевнені' сигнали.
 
-        Оскільки predict_proba недоступна тут безпосередньо,
-        використовуємо preds як є (вони вже {-1, +1}).
-        Для більш тонкого фільтру — використовуй train_from_ohlcv напряму.
+        Впевненість = max(p, 1−p). Без proba (p_side=None) — повертаємо як є.
         """
-        if threshold <= 0.5:
-            return preds
-        # без proba — повертаємо всі сигнали (threshold не впливає на binary)
-        return preds
-
-    def _apply_meta_filter(
-        self,
-        X: pd.DataFrame,
-        y: pd.Series,
-        w: pd.Series | None,
-        primary_signals: pd.Series,
-        train_bars: int,
-        test_bars: int,
-    ) -> pd.Series:
-        """Мета-лейблінг: другий класифікатор передбачає P(primary correct).
-
-        1. Беремо primary_signals як feature (side)
-        2. Навчаємо бінарний метакласифікатор: чи збіглася primary з реальним y?
-        3. Множимо сигнал на мета-прогноз (≥ 0.5 → залишаємо, < 0.5 → нуль)
-        """
-        # Мета-таргет: 1 якщо primary вгадав, 0 — якщо ні
-        meta_y_aligned = y.reindex(primary_signals.index)
-        meta_target = (primary_signals == meta_y_aligned).astype(int)
-
-        # Додаємо primary сигнал як фічу
-        X_meta = X.reindex(primary_signals.index).copy()
-        X_meta["primary_signal"] = primary_signals.values
-
-        if len(X_meta) < train_bars + test_bars:
-            return primary_signals
-
-        try:
-            meta_result = train_walk_forward(
-                X=X_meta,
-                y=meta_target,
-                train_size=train_bars,
-                test_size=test_bars,
-                sample_weights=w,
-            )
-            meta_preds = meta_result.predictions  # 0 або 1
-            # застосовуємо: якщо мета передбачає 0 → скасовуємо сигнал
-            filtered = primary_signals.copy()
-            cancel_idx = meta_preds[meta_preds == 0].index
-            filtered.loc[filtered.index.intersection(cancel_idx)] = 0
-            return filtered
-        except Exception as e:
-            logger.warning("Meta-filter failed: %s", e)
-            return primary_signals
+        if p_side is None or threshold <= 0.5:
+            return side
+        conf = pd.concat([p_side, 1.0 - p_side], axis=1).max(axis=1)
+        return side.where(conf >= threshold, other=0)

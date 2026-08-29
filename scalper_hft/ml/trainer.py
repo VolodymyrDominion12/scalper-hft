@@ -30,16 +30,11 @@ logger = logging.getLogger(__name__)
 
 try:
     from lightgbm import LGBMClassifier  # type: ignore
+
     _HAS_LGBM = True
 except ImportError:  # pragma: no cover
     LGBMClassifier = None  # type: ignore
     _HAS_LGBM = False
-
-try:
-    from sklearn.metrics import log_loss  # type: ignore
-    _HAS_SKLEARN = True
-except ImportError:  # pragma: no cover
-    _HAS_SKLEARN = False
 
 
 # ── Результат ─────────────────────────────────────────────────────────────────
@@ -54,6 +49,7 @@ class MlResult:
     n_test: int
     n_windows: int
     feature_importance: pd.Series | None = None
+    probabilities: pd.Series | None = None  # P(клас +1) на OOS, вирівняна з predictions
     details: dict = field(default_factory=dict)
 
     def summary(self) -> str:
@@ -162,7 +158,9 @@ def train_walk_forward(
         else:
             p_pos = np.full(len(X_te), 0.5)
 
-        pred = pd.Series(np.where(p_pos >= 0.5, 1, -1), index=X_te.index)
+        # Універсальне мапування: {−1,+1} (primary) або {0,1} (мета-лейблінг)
+        other = classes[0]
+        pred = pd.Series(np.where(p_pos >= 0.5, 1, other), index=X_te.index)
         oos_preds.append(pred)
         oos_proba.append(p_pos.astype(float))
 
@@ -182,6 +180,7 @@ def train_walk_forward(
     preds = pd.concat(oos_preds).sort_index()
     y_oos = y.reindex(preds.index)
     p_pos_all = np.concatenate(oos_proba)
+    proba_series = pd.Series(p_pos_all, index=preds.index).sort_index()
 
     acc = float((preds == y_oos).mean())
     ll = _logloss(y_oos.values.astype(int), p_pos_all)
@@ -204,6 +203,7 @@ def train_walk_forward(
         n_test=len(preds),
         n_windows=windows,
         feature_importance=feat_importance,
+        probabilities=proba_series,
     )
 
 
@@ -222,6 +222,10 @@ def train_from_ohlcv(
     add_frac_diff: bool = True,
     params: dict | None = None,
     trades: pd.DataFrame | None = None,
+    add_micro: bool = True,
+    add_hmm: bool = False,
+    add_garch: bool = False,
+    hmm_states: int = 3,
 ) -> MlResult:
     """End-to-end: OHLCV → triple-barrier labels → walk-forward LightGBM.
 
@@ -238,7 +242,10 @@ def train_from_ohlcv(
         frac_d: ступінь fractional differencing.
         add_frac_diff: включити FFD фічі.
         params: LightGBM параметри.
-        trades: aggTrades для CVD фіч.
+        trades: aggTrades для CVD/micro-фіч.
+        add_micro/add_hmm/add_garch: фічі Спринту 2–3 (micro — з trades;
+            HMM/GARCH — каузальні, без lookahead).
+        hmm_states: кількість HMM-станів.
 
     Returns:
         MlResult з усіма метриками.
@@ -253,6 +260,10 @@ def train_from_ohlcv(
         decay=decay,
         frac_d=frac_d,
         add_frac_diff=add_frac_diff,
+        add_micro=add_micro,
+        add_hmm=add_hmm,
+        add_garch=add_garch,
+        hmm_states=hmm_states,
     )
     logger.info(
         "Dataset: %d зразків | labels: %s | frac_diff: %s",
@@ -271,11 +282,127 @@ def train_from_ohlcv(
     )
 
 
+# ── Walk-forward мета-лейблінг (AFML Ch.3.6–3.7) ─────────────────────────────
+
+def _oof_primary_predictions(
+    X: pd.DataFrame,
+    y: pd.Series,
+    w: np.ndarray | None,
+    params: dict,
+    n_splits: int = 3,
+    gap: int = 10,
+) -> np.ndarray:
+    """Чесні (OOF) прогнози primary на train-вікні через time-series split.
+
+    Потрібно, щоб мета-мітки y_meta = (primary вгадав) не були зашумлені
+    IS-оптимізмом: primary на власних train-даних майже завжди «правий»,
+    що робить y_meta однокласовим і мета-модель дегенеративною (p≈0.5).
+    """
+    preds = np.zeros(len(X), dtype=int)
+    from scalper_hft.validation.cv import time_series_split
+
+    folds = list(time_series_split(len(X), n_splits=n_splits, gap=gap))
+    for tr, te in folds:
+        if len(te) == 0 or len(tr) < 2:
+            continue
+        m = LGBMClassifier(**params)
+        w_tr = w[tr] if w is not None else None
+        m.fit(X.iloc[tr], y.iloc[tr], sample_weight=w_tr)
+        preds[te] = _predict_binary(m, X.iloc[te])
+    return preds
+
+
+def train_walk_forward_meta(
+    X: pd.DataFrame,
+    y: pd.Series,
+    train_size: int = 2000,
+    test_size: int = 500,
+    sample_weights: pd.Series | None = None,
+    params: dict | None = None,
+) -> tuple[pd.Series, pd.Series]:
+    """Walk-forward мета-лейблінг: primary задає сторону, мета — «торгувати чи ні».
+
+    У кожному вікні:
+      1. primary-модель навчається на (X_tr, y_tr);
+      2. чесні OOF-прогнози primary на X_tr (time-series split, без IS-оптимізму)
+         → мета-мітки y_meta = (primary_pred_oof == y) ∈ {0, 1};
+      3. мета-модель навчається на (X_tr + 'primary_pred' як фіча, y_meta);
+      4. на OOS: side = primary-прогноз, p_meta = P(meta=1).
+
+    Без lookahead: і primary, і мета навчаються лише на train-вікні.
+
+    Returns:
+        (side, p_meta): Series, вирівняні на OOS-індексі X.
+            side ∈ {−1, +1}; p_meta ∈ [0, 1] — імовірність, що угода прибуткова.
+    """
+    if not _HAS_LGBM:
+        raise ImportError("Встановіть lightgbm: uv add --optional ml lightgbm scikit-learn")
+
+    params = params or _default_lgbm_params()
+    oos_side: list[pd.Series] = []
+    oos_pmeta: list[np.ndarray] = []
+    start = 0
+
+    while start + train_size + test_size <= len(X):
+        idx_tr = slice(start, start + train_size)
+        idx_te = slice(start + train_size, start + train_size + test_size)
+        X_tr = X.iloc[idx_tr]
+        y_tr = y.iloc[idx_tr]
+        X_te = X.iloc[idx_te]
+
+        w_tr = None
+        if sample_weights is not None:
+            w_tr = sample_weights.reindex(X_tr.index).fillna(0.0).values
+            s = w_tr.sum()
+            w_tr = w_tr / s if s > 0 else np.ones(len(w_tr)) / len(w_tr)
+
+        # 1) primary: fit на train
+        primary = LGBMClassifier(**params)
+        primary.fit(X_tr, y_tr, sample_weight=w_tr)
+        side_te = _predict_binary(primary, X_te)  # OOS side (сигнал)
+
+        # 2) чесні OOF-прогнози primary на train → мета-мітки
+        side_tr_oof = _oof_primary_predictions(X_tr, y_tr, w_tr, params)
+        y_meta_tr = (side_tr_oof == y_tr.values).astype(int)
+
+        # 3) мета: P(primary правий | фічі + side)
+        meta = None
+        if np.unique(y_meta_tr).size < 2:
+            p_meta_te = np.full(len(X_te), 0.5)
+        else:
+            X_meta_tr = X_tr.copy()
+            X_meta_tr["primary_pred"] = side_tr_oof
+            X_meta_te = X_te.copy()
+            X_meta_te["primary_pred"] = side_te
+            meta = LGBMClassifier(**params)
+            meta.fit(X_meta_tr, y_meta_tr, sample_weight=w_tr)
+            proba = meta.predict_proba(X_meta_te)
+            classes = list(meta.classes_)
+            p_meta_te = proba[:, classes.index(1)] if 1 in classes else np.full(len(X_te), 0.5)
+
+        oos_side.append(pd.Series(side_te, index=X_te.index))
+        oos_pmeta.append(np.asarray(p_meta_te, dtype=float))
+        start += test_size
+
+    if not oos_side:
+        raise ValueError("Не вийшло жодного вікна для мета-лейблінгу")
+
+    side = pd.concat(oos_side).sort_index()
+    p_meta = pd.Series(np.concatenate(oos_pmeta), index=side.index).sort_index()
+    return side, p_meta
+
+
+def _predict_binary(model: object, X: pd.DataFrame) -> np.ndarray:
+    """Прогноз класів {−1, +1} або {0, 1} відповідно до model.classes_."""
+    proba = model.predict_proba(X)  # type: ignore[attr-defined]
+    classes = list(model.classes_)  # type: ignore[attr-defined]
+    p_pos = proba[:, classes.index(1)] if 1 in classes else np.full(len(X), 0.5)
+    other = classes[0]
+    return np.where(p_pos >= 0.5, 1, other)
+
+
 # ── Inference ─────────────────────────────────────────────────────────────────
 
 def predict(model: object, X: pd.DataFrame) -> np.ndarray:
     """Прогноз напрямку (+1/-1) для нових даних."""
-    proba = model.predict_proba(X)  # type: ignore[attr-defined]
-    classes = list(model.classes_)  # type: ignore[attr-defined]
-    p_pos = proba[:, classes.index(1)] if 1 in classes else np.full(len(X), 0.5)
-    return np.where(p_pos >= 0.5, 1, -1)
+    return _predict_binary(model, X)

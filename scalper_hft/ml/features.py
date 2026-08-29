@@ -45,12 +45,22 @@ _FEATURE_COLS_BASE = [
 # frac_diff фічі додаються динамічно (fd_close, fd_volume)
 _FRAC_DIFF_COLS = ["fd_close", "fd_volume"]
 
+# Спринт 2–3: мікроструктура (AFML Ch.19), HMM-режими (FSPML Ch.4.5), GARCH (FSPML Ch.7)
+_MICRO_COLS = ["vpin", "kyle_t", "roll_spread", "amihud", "parkinson_vol",
+               "corwin_schultz_spread", "signed_flow_ac"]
+_HMM_COLS = ["hmm_state", "hmm_p0", "hmm_p1", "hmm_p2", "hmm_p3", "hmm_p4"]
+_GARCH_COLS = ["garch_sigma"]
+
 
 def _build_features(
     df: pd.DataFrame,
     trades: pd.DataFrame | None,
     add_frac: bool,
     frac_d: float,
+    add_micro: bool = True,
+    add_hmm: bool = False,
+    add_garch: bool = False,
+    hmm_states: int = 3,
 ) -> pd.DataFrame:
     """Будує матрицю фіч (без lookahead)."""
     f = add_standard_features(df)
@@ -64,6 +74,32 @@ def _build_features(
     else:
         f["cvd_mom"] = 0.0
         f["buy_ratio"] = 0.5
+
+    # Мікроструктурні фічі (AFML Ch.19) — лише з потоком угод
+    if add_micro and trades is not None and not trades.empty:
+        from scalper_hft.features.microstructure import add_microstructure_features
+
+        micro = add_microstructure_features(df, trades, resample=_infer(df))
+        for col in _MICRO_COLS:
+            if col in micro.columns:
+                f[col] = micro[col].reindex(f.index).ffill().fillna(0.0)
+
+    # HMM-режими (FSPML Ch.4.5) — каузальна версія (без lookahead)
+    if add_hmm:
+        from scalper_hft.features.hmm_regime import hmm_regime_features
+
+        hmm = hmm_regime_features(df["close"], n_states=hmm_states, causal=True, fit_window=2000)
+        for col in _HMM_COLS:
+            if col in hmm.columns:
+                f[col] = hmm[col].reindex(f.index).fillna(0.0)
+
+    # GARCH σ_{t+1} (FSPML Ch.7–8) — rolling прогноз (без lookahead)
+    if add_garch:
+        from scalper_hft.features.volatility import garch_forecast
+
+        f["garch_sigma"] = garch_forecast(
+            f["close"].pct_change().fillna(0.0), window=500, refit_every=100, warmup=50
+        ).reindex(f.index).fillna(0.0)
 
     # Fractional Differentiation (AFML Ch.5)
     if add_frac:
@@ -91,6 +127,11 @@ def build_labeled_dataset(
     # frac diff
     add_frac_diff: bool = True,
     frac_d: float = 0.4,
+    # Спринт 3: micro/HMM/GARCH фічі
+    add_micro: bool = True,
+    add_hmm: bool = False,
+    add_garch: bool = False,
+    hmm_states: int = 3,
 ) -> tuple[pd.DataFrame, pd.Series, pd.Series | None]:
     """Будує (X, y, sample_weights) для ML навчання.
 
@@ -98,7 +139,7 @@ def build_labeled_dataset(
         df: OHLCV DataFrame з DatetimeIndex.
         horizon: горизонт для 'horizon' режиму (барів).
         noise_threshold: поріг фільтрації шуму для 'horizon' режиму.
-        trades: aggTrades для CVD-фіч (опціонально).
+        trades: aggTrades для CVD/micro-фіч (опціонально).
         mode: 'triple_barrier' (AFML) або 'horizon' (legacy).
         pt: profit-take множник (× ATR) для triple_barrier.
         sl: stop-loss множник (× ATR) для triple_barrier.
@@ -107,6 +148,10 @@ def build_labeled_dataset(
         decay: time-decay коефіцієнт для ваг (1.0 = без decay).
         add_frac_diff: чи додавати FFD фічі.
         frac_d: ступінь frac diff.
+        add_micro: мікроструктурні фічі VPIN/Kyle/Roll/... (AFML Ch.19; з trades).
+        add_hmm: HMM-режими (каузальні, без lookahead).
+        add_garch: GARCH σ_{t+1} (без lookahead).
+        hmm_states: кількість HMM-станів (якщо add_hmm).
 
     Returns:
         (X, y, w):
@@ -117,7 +162,12 @@ def build_labeled_dataset(
     if holding_bars is None:
         holding_bars = horizon
 
-    f = _build_features(df, trades, add_frac=add_frac_diff, frac_d=frac_d)
+    f = _build_features(
+        df, trades,
+        add_frac=add_frac_diff, frac_d=frac_d,
+        add_micro=add_micro, add_hmm=add_hmm, add_garch=add_garch,
+        hmm_states=hmm_states,
+    )
 
     if mode == "triple_barrier":
         return _build_triple_barrier(
@@ -196,9 +246,9 @@ def _build_horizon(
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _get_feat_cols(f: pd.DataFrame) -> list[str]:
-    """Повертає доступні фічі з пріоритетом frac_diff."""
+    """Повертає доступні фічі з пріоритетом frac_diff/micro/HMM/GARCH."""
     cols = list(_FEATURE_COLS_BASE)
-    for c in _FRAC_DIFF_COLS:
+    for c in _FRAC_DIFF_COLS + _MICRO_COLS + _HMM_COLS + _GARCH_COLS:
         if c in f.columns:
             cols.append(c)
     return [c for c in cols if c in f.columns]

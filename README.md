@@ -34,8 +34,16 @@ uv venv .venv && uv pip install -e ".[optim,ml,dev]"
 # 4. бектест
 .venv/bin/python -m scalper_hft.cli backtest --strategy mean_reversion --symbol BTCUSDT --interval 1m --days 30
 
+```bash
 # 5. повний аудит на перенавчання (WF + sensitivity + Deflated Sharpe)
 .venv/bin/python -m scalper_hft.cli overfit --strategy mean_reversion --symbol BTCUSDT --interval 5m --days 30
+
+# 5b. бектест з breakeven-гейтом (не торгуємо, якщо ATR < round-trip витрат)
+.venv/bin/python -m scalper_hft.cli backtest --strategy mean_reversion --symbol BTCUSDT --interval 5m --days 60 --breakeven-gate
+
+# 5c. cohort decay + децильний lift-аналіз фіч
+.venv/bin/python -m scalper_hft.cli cohort --strategy pairs_arb --symbol BTCUSDT --interval 1h --days 90
+.venv/bin/python -m scalper_hft.cli lift --strategy pairs_arb --symbol BTCUSDT --interval 1h --days 90 --top 10
 
 # 6. markdown-звіт → docs/reports/
 .venv/bin/python -m scalper_hft.cli report --strategy mean_reversion --symbol BTCUSDT --interval 5m --days 60
@@ -52,10 +60,14 @@ uv venv .venv && uv pip install -e ".[optim,ml,dev]"
 | `overfit` | аудит: WF + sensitivity (плато vs пік) + Deflated Sharpe |
 | `cscv` | **PBO через Combinatorial Purged CV** (López de Prado) |
 | `ml` | walk-forward LightGBM класифікатор напрямку |
+| `cohort` | **деградація edge за когортами угод** (Predictive Marketing: silent attrition) |
+| `lift` | **децильний lift-аналіз фіч** — які фічі реально зсувають PnL (uplift-концепт) |
+| `featimp` | **MDI/MDA/SFI feature importance** (AFML Ch.8) + PCA-перевірка |
 | `paper` | один крок paper-торгівлі на останньому барі |
 | `paper-run` | **циклічний paper-прогін** (N кроків, збереження equity/угод у `results/`) |
 | `paper-replay` | відтворення історії через risk-трейдера (валiдація risk-шару) |
 | `arb` | **delta-neutral funding arb** (перп+спот): бектест + walk-forward, `--maker` |
+| `pairs-portfolio` | портфель валідованих пар; `--method erc` (Equal Risk Contribution), `--turnover-rate` |
 | `report` | повний markdown-звіт у `docs/reports/` |
 | `record-bookticker` | запис best bid/ask (WS) у parquet — для OB-стратегій (`--depth` — 5 рівнів) |
 
@@ -142,4 +154,12 @@ Round-trip taker ≈ **0.10%** ноціоналу — це ~10 повних уг
 2. **Тіки**: підключення nautilus_trader як альтернативного L2-рушія (порівняльний аудит філів).
 3. **Live**: asyncio + ccxt.pro WebSocket-цикл, maker-ордери (post-only), телеграм-сповіщення.
 4. **ML**: triple-barrier labeling, hmmlearn regime, deflated Sharpe для ML-моделей.
+   ✅ Спринт 1 (docs/book_approaches_synthesis.md): bet sizing із імовірностей,
+   мета-лейблінг, confidence-фільтр через proba, Hedge-блендінг (ensemble mode='hedge'),
+   breakeven-гейт, cohort/lift аналіз.
+   ✅ Спринт 2: мікроструктурні фічі VPIN/Kyle λ/Roll/Amihud/Corwin–Schultz
+   (`features/microstructure.py`), HMM-режими (`features/hmm_regime.py`), GARCH σ_{t+1}
+   (`features/volatility.py`), емпіричні витрати (vol-scaled slippage + Square-Root
+   impact у `CostModel`), ERC-алокація (`portfolio/erc.py`, `pairs-portfolio --method erc`),
+   MDI/MDA/SFI feature importance (`ml/feature_importance.py`, CLI `featimp`).
 5. **Dashboard**: Streamlit для моніторингу стратегій і параметрів у реальному часі.

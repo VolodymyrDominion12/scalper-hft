@@ -27,9 +27,14 @@ class Strategy(abc.ABC):
     needs_trades: bool = False
     # чи потребує стратегія історії фандінгу
     needs_funding: bool = False
+    # якщо True — рушій вимикає сигнали, де очікуваний рух < round-trip витрат
+    # (Narang гл. 5: edge має покривати транзакційні витрати)
+    use_breakeven_gate: bool = False
 
     def __init__(self, **params: Any) -> None:
         self.params: dict[str, Any] = dict(params)
+        if "breakeven_gate" in params:
+            self.use_breakeven_gate = bool(params["breakeven_gate"])
 
     def get(self, key: str, default: Any) -> Any:
         return self.params.get(key, default)

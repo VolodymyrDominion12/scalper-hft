@@ -12,15 +12,38 @@ AFML-розширення (Marcos López de Prado):
     - frac_diff: Fractional Differentiation FFD (Ch.5)
 """
 
+from scalper_hft.ml.bet_sizing import (
+    calibrate_omega,
+    discretize,
+    limit_price,
+    meta_size,
+    prob_to_size,
+    sigmoid_size,
+    target_size,
+)
+from scalper_hft.ml.feature_importance import (
+    feature_importance_report,
+    mda,
+    mdi,
+    pca_importance_corr,
+    sfi,
+)
 from scalper_hft.ml.features import build_labeled_dataset
-from scalper_hft.ml.trainer import train_walk_forward, train_from_ohlcv, predict, MlResult
-from scalper_hft.ml.labeling import label_from_ohlcv, get_events, get_labels
-from scalper_hft.ml.sample_weights import compute_sample_weights, seq_bootstrap, get_ind_matrix
-from scalper_hft.ml.frac_diff import frac_diff_ffd, find_min_d, add_frac_diff, frac_diff_features
+from scalper_hft.ml.frac_diff import add_frac_diff, find_min_d, frac_diff_features, frac_diff_ffd
+from scalper_hft.ml.labeling import get_events, get_labels, label_from_ohlcv
+from scalper_hft.ml.sample_weights import compute_sample_weights, get_ind_matrix, seq_bootstrap
+from scalper_hft.ml.trainer import (
+    MlResult,
+    predict,
+    train_from_ohlcv,
+    train_walk_forward,
+    train_walk_forward_meta,
+)
 
 __all__ = [
     "build_labeled_dataset",
     "train_walk_forward",
+    "train_walk_forward_meta",
     "train_from_ohlcv",
     "predict",
     "MlResult",
@@ -35,4 +58,18 @@ __all__ = [
     "find_min_d",
     "add_frac_diff",
     "frac_diff_features",
+    # Bet sizing (AFML Ch.10.3, 10.6)
+    "prob_to_size",
+    "discretize",
+    "meta_size",
+    "sigmoid_size",
+    "calibrate_omega",
+    "target_size",
+    "limit_price",
+    # Feature importance (AFML Ch.8)
+    "mdi",
+    "mda",
+    "sfi",
+    "pca_importance_corr",
+    "feature_importance_report",
 ]

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
-import pandas as pd
 import logging
+from typing import Any
+
+import pandas as pd
 
 from scalper_hft.strategies.base import Strategy
 
@@ -12,8 +13,12 @@ logger = logging.getLogger(__name__)
 class EnsembleStrategy(Strategy):
     """Ensemble кількох стратегій (Portfolio Construction).
 
-    Комбінує сигнали кількох суб-стратегій через усереднення або голосування.
-    Зменшує дисперсію результату (Portfolio Construction, Narang).
+    Комбінує сигнали кількох суб-стратегій:
+        - 'mean'  — усереднення (за замовчуванням);
+        - 'vote'  — входимо лише при згоді всіх;
+        - 'hedge' — онлайн-зважування Hedge/EWA за історією прибутковостей
+          (Gofer 2014, Ch.2): ваги адаптуються до концепт-дрейфу без
+          перетренування; сигнал = Σ p_i,t · sig_i,t.
     """
 
     name = "ensemble"
@@ -22,7 +27,7 @@ class EnsembleStrategy(Strategy):
     def __init__(self, **params: Any) -> None:
         super().__init__(**params)
         strat_names = str(self.get("strategies", "mean_reversion,ml_strategy")).split(",")
-        self.mode = str(self.get("mode", "mean"))  # "mean" або "vote"
+        self.mode = str(self.get("mode", "mean"))  # "mean" | "vote" | "hedge"
 
         from scalper_hft.strategies import get_strategy
 
@@ -70,6 +75,11 @@ class EnsembleStrategy(Strategy):
                 signals.append(pd.Series(0.0, index=df.index))
 
         sig_df = pd.concat(signals, axis=1)
+
+        if self.mode == "hedge":
+            from scalper_hft.strategies.blend import hedge_blend_signals
+
+            return hedge_blend_signals(sig_df, df["close"])
 
         if self.mode == "vote":
             # Входимо тільки якщо всі стратегії мають однаковий знак (або більшість)

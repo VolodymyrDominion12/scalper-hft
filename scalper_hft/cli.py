@@ -61,7 +61,10 @@ def cmd_backtest(args: argparse.Namespace) -> None:
     from scalper_hft.strategies import get_strategy
 
     df = _load_klines(args.symbol, args.interval, args.days)
-    strategy = get_strategy(args.strategy, **args.param_dict)
+    params = dict(args.param_dict)
+    if getattr(args, "breakeven_gate", False):
+        params["breakeven_gate"] = True
+    strategy = get_strategy(args.strategy, **params)
     settings = get_settings()
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
     trades = None
@@ -234,6 +237,9 @@ def cmd_ml(args: argparse.Namespace) -> None:
     decay    = float(getattr(args, "decay", 0.9))
     frac_d   = float(getattr(args, "frac_d", 0.4))
     no_frac  = bool(getattr(args, "no_frac_diff", False))
+    add_hmm  = bool(getattr(args, "hmm", False))
+    add_garch = bool(getattr(args, "garch", False))
+    hmm_states = int(getattr(args, "hmm_states", 3))
 
     try:
         res = train_from_ohlcv(
@@ -248,6 +254,9 @@ def cmd_ml(args: argparse.Namespace) -> None:
             frac_d=frac_d,
             add_frac_diff=not no_frac,
             trades=trades,
+            add_hmm=add_hmm,
+            add_garch=add_garch,
+            hmm_states=hmm_states,
         )
     except ValueError as e:
         logger.error("ML тренування: %s", e)
@@ -539,7 +548,9 @@ def cmd_pairs_portfolio(args: argparse.Namespace) -> None:
         )
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
     res = run_pairs_portfolio(
-        data, configs, position_pct=args.position_pct or 0.3, cost=cost, maker_execution=True
+        data, configs, position_pct=args.position_pct or 0.3, cost=cost, maker_execution=True,
+        method=args.method, turnover_rate=args.turnover_rate,
+        rebalance=None if args.no_rebalance else "ME",
     )
     print(res.summary())
     _plot_equity(res.equity, "pairs_portfolio", "validated")
@@ -603,6 +614,215 @@ def cmd_paper_replay_pairs(args: argparse.Namespace) -> None:
         send_telegram(result.summary())
 
 
+def cmd_cohort(args: argparse.Namespace) -> None:
+    """Cohort analysis: деградація edge за когортами угод (Predictive Marketing)."""
+    from scalper_hft.backtest.engine import run_backtest
+    from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.config import get_settings
+    from scalper_hft.strategies import get_strategy
+    from scalper_hft.validation.cohort import cohort_report
+
+    df = _load_klines(args.symbol, args.interval, args.days)
+    strategy = get_strategy(args.strategy, **args.param_dict)
+    settings = get_settings()
+    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    trades = None
+    if strategy.needs_trades:
+        from scalper_hft.data.downloader import download_agg_trades
+
+        trades = download_agg_trades(args.symbol, args.days)
+    funding = None
+    if strategy.needs_funding:
+        from scalper_hft.data.downloader import download_funding
+
+        funding = download_funding(args.symbol, args.days)
+    res = run_backtest(df, strategy, cost=cost, trades=trades, funding=funding, position_pct=settings.position_pct)
+    print(f"\nCohort: {args.strategy} · {args.symbol} · {args.interval} · {len(res.trades)} угод\n")
+    print(cohort_report(res.trades, freq=args.freq))
+
+
+def cmd_lift(args: argparse.Namespace) -> None:
+    """Децильний lift-аналіз фіч (uplift-концепт, Predictive Marketing Ch.2/9)."""
+    from scalper_hft.backtest.engine import run_backtest
+    from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.config import get_settings
+    from scalper_hft.features.indicators import add_standard_features
+    from scalper_hft.strategies import get_strategy
+    from scalper_hft.validation.lift import feature_lift_report, lift_summary
+
+    df = _load_klines(args.symbol, args.interval, args.days)
+    strategy = get_strategy(args.strategy, **args.param_dict)
+    settings = get_settings()
+    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    trades = None
+    if strategy.needs_trades:
+        from scalper_hft.data.downloader import download_agg_trades
+
+        trades = download_agg_trades(args.symbol, args.days)
+    funding = None
+    if strategy.needs_funding:
+        from scalper_hft.data.downloader import download_funding
+
+        funding = download_funding(args.symbol, args.days)
+    res = run_backtest(df, strategy, cost=cost, trades=trades, funding=funding, position_pct=settings.position_pct)
+
+    feats = add_standard_features(df)
+    report = feature_lift_report(res.trades, feats, pnl_col="ret", n_bins=args.bins)
+    if not report:
+        print("Немає угод для lift-аналізу (спробуйте більше даних або іншу стратегію).")
+        return
+    summary = lift_summary(report, top_k=args.top)
+    print(f"\nLift-аналіз фіч: {args.strategy} · {args.symbol} · {args.interval} · {len(res.trades)} угод")
+    print("\nТоп-фіч за |lift| (max_abs_lift далекий від 0 = інформативна; slope = монотонність):")
+    print(summary.to_string(index=False))
+    if args.detail:
+        for col in summary["feature"].head(args.top).tolist():
+            print(f"\n— {col} —")
+            print(report[col].to_string(index=False))
+
+
+def cmd_featimp(args: argparse.Namespace) -> None:
+    """MDI/MDA/SFI feature importance (AFML Ch.8) з purged CV."""
+    from scalper_hft.ml.feature_importance import feature_importance_report
+    from scalper_hft.ml.features import build_labeled_dataset
+    from scalper_hft.validation.cv import PurgedKFold
+
+    df = _load_klines(args.symbol, args.interval, args.days)
+    trades = None
+    if args.trades:
+        from scalper_hft.data.downloader import download_agg_trades
+
+        trades = download_agg_trades(args.symbol, args.days)
+    try:
+        X, y, w = build_labeled_dataset(
+            df, trades=trades, mode="triple_barrier",
+            pt=args.pt, sl=args.sl, holding_bars=args.holding,
+            decay=args.decay, frac_d=args.frac_d, add_frac_diff=not args.no_frac_diff,
+        )
+    except ValueError as e:
+        logger.error("featimp: %s", e)
+        sys.exit(1)
+
+    def clf_factory():
+        from lightgbm import LGBMClassifier
+
+        return LGBMClassifier(n_estimators=100, learning_rate=0.05, num_leaves=31,
+                              min_child_samples=50, subsample=0.8, colsample_bytree=0.8,
+                              class_weight="balanced", verbosity=-1)
+
+    pkf = PurgedKFold(n_splits=args.splits, embargo_pct=args.embargo)
+    print(f"\nFeature importance (AFML Ch.8): {args.symbol} {args.interval}, "
+          f"{len(X)} зразків, {X.shape[1]} фіч\n")
+    rep = feature_importance_report(X, y, clf_factory, pkf, sample_weights=w, score="neg_log_loss")
+    print(rep.round(4).to_string())
+    tau = rep["pca_tau"].iloc[0] if not rep.empty else 0.0
+    print(f"\nPCA-перевірка (weighted Kendall τ MDI vs PCA-ранг): {tau:.3f} "
+          f"{'✅ патерн не випадковий (>0.8)' if tau > 0.8 else '⚠ слабка узгодженість'}")
+
+
+def cmd_stress(args: argparse.Namespace) -> None:
+    """Стрес-тестування: crash / liquidity / vol_spike / funding_shock."""
+    from scalper_hft.backtest.engine import run_backtest
+    from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.config import get_settings
+    from scalper_hft.strategies import get_strategy
+    from scalper_hft.validation.stress import SCENARIOS, stress_report
+
+    df = _load_klines(args.symbol, args.interval, args.days)
+    strategy = get_strategy(args.strategy, **args.param_dict)
+    settings = get_settings()
+    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    trades = None
+    if strategy.needs_trades:
+        from scalper_hft.data.downloader import download_agg_trades
+
+        trades = download_agg_trades(args.symbol, args.days)
+    funding = None
+    if strategy.needs_funding:
+        from scalper_hft.data.downloader import download_funding
+
+        funding = download_funding(args.symbol, args.days)
+    res = run_backtest(df, strategy, cost=cost, trades=trades, funding=funding, position_pct=settings.position_pct)
+    ret = res.equity.pct_change().dropna()
+    scenarios = [s.strip() for s in args.scenarios.split(",")] if args.scenarios else list(SCENARIOS)
+    rep = stress_report(ret, scenarios=scenarios)
+    print(f"\nСтрес-тест: {args.strategy} · {args.symbol} · {args.interval}\n")
+    print(rep.round(4).to_string())
+    print("\n⚠ liquidity = витрати ×10; crash = найгірше вікно ×2;"
+          "\n  vol_spike = волатильність ×2; funding_shock = додаткова per-bar ставка 0.1%")
+
+
+def cmd_capacity(args: argparse.Namespace) -> None:
+    """Capacity-тест: Sharpe при масштабуванні позицій (share of wallet)."""
+    from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.config import get_settings
+    from scalper_hft.strategies import get_strategy
+    from scalper_hft.validation.capacity import capacity_report
+
+    df = _load_klines(args.symbol, args.interval, args.days)
+    strategy = get_strategy(args.strategy, **args.param_dict)
+    settings = get_settings()
+    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    trades = None
+    if strategy.needs_trades:
+        from scalper_hft.data.downloader import download_agg_trades
+
+        trades = download_agg_trades(args.symbol, args.days)
+    funding = None
+    if strategy.needs_funding:
+        from scalper_hft.data.downloader import download_funding
+
+        funding = download_funding(args.symbol, args.days)
+    scales = [float(s) for s in args.scales.split(",")] if args.scales else [1.0, 2.0, 5.0, 10.0, 20.0]
+    print(capacity_report(
+        df, strategy, scales=scales, cost=cost, trades=trades, funding=funding,
+        position_pct=settings.position_pct, is_maker=args.maker,
+    ))
+
+
+def cmd_survival(args: argparse.Namespace) -> None:
+    """Survival analysis: медіанний час утримання позиції (Kaplan–Meier)."""
+    from scalper_hft.backtest.engine import run_backtest
+    from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.config import get_settings
+    from scalper_hft.strategies import get_strategy
+    from scalper_hft.validation.survival import kaplan_meier, median_survival_time, trade_durations
+
+    df = _load_klines(args.symbol, args.interval, args.days)
+    strategy = get_strategy(args.strategy, **args.param_dict)
+    settings = get_settings()
+    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    trades = None
+    if strategy.needs_trades:
+        from scalper_hft.data.downloader import download_agg_trades
+
+        trades = download_agg_trades(args.symbol, args.days)
+    funding = None
+    if strategy.needs_funding:
+        from scalper_hft.data.downloader import download_funding
+
+        funding = download_funding(args.symbol, args.days)
+    res = run_backtest(df, strategy, cost=cost, trades=trades, funding=funding, position_pct=settings.position_pct)
+    if res.trades is None or res.trades.empty:
+        print("Немає угод для survival-аналізу.")
+        return
+    dur = trade_durations(res.trades, freq=args.interval)
+    km = kaplan_meier(dur["duration"], dur["event"], max_time=args.max_time)
+    median = median_survival_time(km)
+    print(f"\nSurvival analysis: {args.strategy} · {args.symbol} · {args.interval} · {len(dur)} угод")
+    print(f"Медіанний час утримання: {median:.0f} барів\n")
+    print(km.head(args.top).round(4).to_string(index=False))
+    if args.feature:
+        from scalper_hft.features.indicators import add_standard_features
+        from scalper_hft.validation.survival import survival_by_feature
+
+        feats = add_standard_features(df)
+        feat = feats[args.feature].reindex(pd.to_datetime(res.trades["entry_ts"]))
+        sb = survival_by_feature(res.trades, feat, n_bins=args.bins, freq=args.interval)
+        print(f"\nМедіанний час утримання за бінами фічі '{args.feature}':")
+        print(sb.to_string(index=False))
+
+
 def _plot_equity(equity: pd.Series, strategy: str, symbol: str) -> None:
     try:
         import matplotlib
@@ -657,6 +877,8 @@ def main(argv: list[str] | None = None) -> None:
 
     p = sub.add_parser("backtest", help="Запустити бектест")
     add_common(p)
+    p.add_argument("--breakeven-gate", action="store_true",
+                   help="Вимикати сигнали, де очікуваний рух (ATR) < round-trip витрат")
     p.set_defaults(func=cmd_backtest)
 
     p = sub.add_parser("walkforward", help="Walk-forward аналіз")
@@ -727,6 +949,11 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("pairs-portfolio", help="Бектест портфеля валідованих пар")
     add_common(p)
     p.add_argument("--position-pct", type=float, default=0.3)
+    p.add_argument("--method", default="equal", choices=["equal", "erc"],
+                   help="Алокація: рівні ваги або Equal Risk Contribution (Narang гл. 6)")
+    p.add_argument("--turnover-rate", type=float, default=0.0,
+                   help="Штраф за зміну ваг при місячному ребалансі (частка капіталу)")
+    p.add_argument("--no-rebalance", action="store_true", help="Без ребалансу ваг")
     p.set_defaults(func=cmd_pairs_portfolio, interval="1h")
 
     p = sub.add_parser("paper-run-pairs", help="Paper pairs (maker, 2 ноги) або --portfolio")
@@ -760,7 +987,10 @@ def main(argv: list[str] | None = None) -> None:
                    help="Вимкнути frac_diff фічі")
     p.add_argument("--train", type=int, default=2000)
     p.add_argument("--test", type=int, default=500)
-    p.add_argument("--trades", action="store_true", help="Використати aggTrades (CVD фічі)")
+    p.add_argument("--trades", action="store_true", help="Використати aggTrades (CVD + micro фічі)")
+    p.add_argument("--hmm", action="store_true", help="Додати HMM-режими (каузальні, без lookahead)")
+    p.add_argument("--garch", action="store_true", help="Додати GARCH σ_{t+1} (без lookahead)")
+    p.add_argument("--hmm-states", type=int, default=3, dest="hmm_states")
     p.set_defaults(func=cmd_ml)
 
     p = sub.add_parser("paper", help="Один крок paper trading на останньому барі")
@@ -786,6 +1016,50 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--test", type=int, default=500)
     p.add_argument("--trials", type=int, default=50)
     p.set_defaults(func=cmd_report)
+
+    p = sub.add_parser("cohort", help="Cohort analysis: деградація edge за когортами угод")
+    add_common(p)
+    p.add_argument("--freq", default="ME", help="Частота когорт: ME (місяць), W (тиждень), D")
+    p.set_defaults(func=cmd_cohort)
+
+    p = sub.add_parser("lift", help="Децильний lift-аналіз фіч (відбір/фільтри входу)")
+    add_common(p)
+    p.add_argument("--bins", type=int, default=10, help="Кількість бінів (децилів)")
+    p.add_argument("--top", type=int, default=10, help="Скільки топ-фіч показати")
+    p.add_argument("--detail", action="store_true", help="Показати повні таблиці lift по фічах")
+    p.set_defaults(func=cmd_lift)
+
+    p = sub.add_parser("featimp", help="MDI/MDA/SFI feature importance (AFML Ch.8)")
+    add_common(p)
+    p.add_argument("--pt", type=float, default=1.0)
+    p.add_argument("--sl", type=float, default=1.0)
+    p.add_argument("--holding", type=int, default=10)
+    p.add_argument("--decay", type=float, default=0.9)
+    p.add_argument("--frac-d", type=float, default=0.4, dest="frac_d")
+    p.add_argument("--no-frac-diff", action="store_true", dest="no_frac_diff")
+    p.add_argument("--splits", type=int, default=4)
+    p.add_argument("--embargo", type=float, default=0.01)
+    p.add_argument("--trades", action="store_true", help="Використати aggTrades (CVD фічі)")
+    p.set_defaults(func=cmd_featimp)
+
+    p = sub.add_parser("stress", help="Стрес-тест: crash / liquidity / vol_spike / funding_shock")
+    add_common(p)
+    p.add_argument("--scenarios", default=None, help="Через кому: crash,liquidity,vol_spike,funding_shock")
+    p.set_defaults(func=cmd_stress)
+
+    p = sub.add_parser("capacity", help="Capacity-тест: Sharpe при масштабуванні позицій")
+    add_common(p)
+    p.add_argument("--scales", default=None, help="Масштаби через кому (напр. 1,2,5,10,20)")
+    p.add_argument("--maker", action="store_true", help="Комісії maker")
+    p.set_defaults(func=cmd_capacity)
+
+    p = sub.add_parser("survival", help="Survival analysis: час утримання позиції (Kaplan–Meier)")
+    add_common(p)
+    p.add_argument("--max-time", type=int, default=None, help="Обмежити горизонт (барів)")
+    p.add_argument("--top", type=int, default=10, help="Скільки рядків кривої показати")
+    p.add_argument("--feature", default=None, help="Фіча для survival_by_feature (напр. atr_14)")
+    p.add_argument("--bins", type=int, default=3)
+    p.set_defaults(func=cmd_survival)
 
     args = parser.parse_args(argv)
     args.param_dict = _parse_param_dict(getattr(args, "param", []))
