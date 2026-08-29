@@ -247,6 +247,28 @@ def add_microstructure_features(df: pd.DataFrame, trades: pd.DataFrame, resample
     return out
 
 
+# ── Order Book Imbalance (OBI) ───────────────────────────────────────────────
+
+def order_book_imbalance(bookticker: pd.DataFrame) -> pd.Series:
+    """Обчислює Order Book Imbalance (OBI) на основі best bid/ask.
+    
+    OBI = (bid_qty - ask_qty) / (bid_qty + ask_qty)
+    bookticker: DataFrame з колонками ['bid_qty', 'ask_qty']
+    
+    Returns:
+        pd.Series значень OBI від -1 до 1.
+    """
+    if bookticker is None or bookticker.empty:
+        return pd.Series(dtype=float)
+        
+    bid_qty = bookticker.get("bid_qty", pd.Series(0, index=bookticker.index))
+    ask_qty = bookticker.get("ask_qty", pd.Series(0, index=bookticker.index))
+    
+    total_qty = bid_qty + ask_qty
+    obi = (bid_qty - ask_qty) / total_qty.replace(0, np.nan)
+    return obi.fillna(0.0)
+
+
 __all__ = [
     "volume_bars",
     "vpin",
@@ -259,4 +281,5 @@ __all__ = [
     "parkinson_vol",
     "signed_flow_autocorr",
     "add_microstructure_features",
+    "order_book_imbalance",
 ]
