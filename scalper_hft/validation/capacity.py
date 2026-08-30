@@ -42,8 +42,7 @@ def capacity_curve(
     k = estimate_impact_k_from_bars(df)
     sigma = float(df["close"].pct_change().rolling(288).std().median()) or 0.01
 
-    rows: dict[str, list] = {"scale": [], "total_return": [], "sharpe": [],
-                             "max_drawdown": [], "impact_bps": []}
+    rows: dict[str, list] = {"scale": [], "total_return": [], "sharpe": [], "max_drawdown": [], "impact_bps": []}
     for s in scales:
         cost_s = CostModel(
             maker_fee=cost.maker_fee,
@@ -58,14 +57,22 @@ def capacity_curve(
         impact = k * sigma * np.sqrt(share)
         # impact сплачується на turnover — наближено: на кожну зміну позиції
         cost_s = CostModel(
-            maker_fee=cost.maker_fee, taker_fee=cost.taker_fee,
+            maker_fee=cost.maker_fee,
+            taker_fee=cost.taker_fee,
             slippage_frac=cost.slippage_frac,
             impact_frac=float(impact) if s > 1.0 else 0.0,
-            impact_k=cost.impact_k, vol_ref=cost.vol_ref, vol_exp=cost.vol_exp,
+            impact_k=cost.impact_k,
+            vol_ref=cost.vol_ref,
+            vol_exp=cost.vol_exp,
         )
         res = run_backtest(
-            df, strategy, cost=cost_s, trades=trades, funding=funding,
-            position_pct=position_pct * s, is_maker=is_maker,
+            df,
+            strategy,
+            cost=cost_s,
+            trades=trades,
+            funding=funding,
+            position_pct=position_pct * s,
+            is_maker=is_maker,
         )
         rows["scale"].append(s)
         rows["total_return"].append(res.metrics.total_return)

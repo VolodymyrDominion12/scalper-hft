@@ -52,56 +52,52 @@ def cmd_download(args: argparse.Namespace) -> None:
         if args.funding:
             fu = download_funding(sym, args.days, force=args.force)
             logger.info("funding %s: %d точок", sym, len(fu) if fu is not None else 0)
+        if getattr(args, "vision", False):
+            from datetime import date, timedelta
+
+            from scalper_hft.data.binance_vision import download_agg_trades_vision
+
+            start = (
+                date.fromisoformat(args.vision_start) if args.vision_start else date.today() - timedelta(days=args.days)
+            )
+            tr = download_agg_trades_vision(sym, start=start, freq=args.vision_freq)
+            logger.info("vision aggTrades %s: %d трейдів", sym, len(tr) if tr is not None else 0)
 
 
 def cmd_backtest(args: argparse.Namespace) -> None:
-    from scalper_hft.backtest.engine import run_backtest
     from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.backtest.router import run_strategy_backtest
     from scalper_hft.config import get_settings
+    from scalper_hft.data.research import load_research_data
     from scalper_hft.strategies import get_strategy
-
-    bar_type = getattr(args, "bar_type", "time")
-    
-    if bar_type == "time":
-        df = _load_klines(args.symbol, args.interval, args.days)
-    else:
-        from scalper_hft.data.downloader import download_agg_trades
-        from scalper_hft.data.bars import create_dollar_bars, create_volume_bars
-        
-        logger.info("Завантаження aggTrades для генерації %s барів...", bar_type)
-        trades = download_agg_trades(args.symbol, args.days)
-        if trades is None or trades.empty:
-            logger.error("Немає даних aggTrades для формування барів")
-            sys.exit(1)
-            
-        threshold = getattr(args, "bar_threshold", 100000.0)
-        logger.info("Генерація %s барів (threshold=%f)...", bar_type, threshold)
-        
-        if bar_type == "dollar":
-            df = create_dollar_bars(trades, threshold)
-        elif bar_type == "volume":
-            df = create_volume_bars(trades, threshold)
-        else:
-            raise ValueError(f"Unknown bar type: {bar_type}")
-            
-        logger.info("Згенеровано %d барів", len(df))
 
     params = dict(args.param_dict)
     if getattr(args, "breakeven_gate", False):
         params["breakeven_gate"] = True
     strategy = get_strategy(args.strategy, **params)
     settings = get_settings()
-    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
-    trades = None
-    if strategy.needs_trades:
+    bar_type = getattr(args, "bar_type", "time")
+    bundle = load_research_data(args.symbol, args.interval, args.days, strategy)
+    df = bundle.klines
+    trades = bundle.trades
+    funding = bundle.funding
+    if bar_type in {"dollar", "volume"}:
+        from scalper_hft.data.bars import create_dollar_bars, create_volume_bars
         from scalper_hft.data.downloader import download_agg_trades
-        trades = download_agg_trades(args.symbol, args.days)
-    funding = None
-    if strategy.needs_funding:
-        from scalper_hft.data.downloader import download_funding
 
-        funding = download_funding(args.symbol, args.days)
-    res = run_backtest(df, strategy, cost=cost, trades=trades, funding=funding, position_pct=settings.position_pct)
+        trades = trades if trades is not None else download_agg_trades(args.symbol, args.days)
+        if trades is None or trades.empty:
+            logger.error("Немає даних aggTrades для формування барів")
+            sys.exit(1)
+        threshold = getattr(args, "bar_threshold", 100000.0)
+        df = create_dollar_bars(trades, threshold) if bar_type == "dollar" else create_volume_bars(trades, threshold)
+        logger.info("Згенеровано %d %s-барів", len(df), bar_type)
+    if bundle.quality is not None and not bundle.quality.ok:
+        logger.warning("Якість барів: %s", bundle.quality.summary())
+    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    res = run_strategy_backtest(
+        df, strategy, cost=cost, trades=trades, funding=funding, position_pct=settings.position_pct
+    )
     print("\n" + res.summary())
     _plot_equity(res.equity, args.strategy, args.symbol)
 
@@ -164,6 +160,7 @@ def cmd_ml_opt(args: argparse.Namespace) -> None:
     trades = None
     if args.trades:
         from scalper_hft.data.downloader import download_agg_trades
+
         trades = download_agg_trades(args.symbol, args.days)
 
     res = optimize_ml_params(
@@ -213,7 +210,12 @@ def cmd_overfit(args: argparse.Namespace) -> None:
 
     # 1) walk-forward
     res_wf = run_walk_forward(
-        df, strategy, train_bars=args.train, test_bars=args.test, trades=trades, funding=funding,
+        df,
+        strategy,
+        train_bars=args.train,
+        test_bars=args.test,
+        trades=trades,
+        funding=funding,
         position_pct=settings.position_pct,
     )
     print("\n[1] WALK-FORWARD")
@@ -252,16 +254,17 @@ def cmd_ml(args: argparse.Namespace) -> None:
     trades = None
     if args.trades:
         from scalper_hft.data.downloader import download_agg_trades
+
         trades = download_agg_trades(args.symbol, args.days)
 
     mode = getattr(args, "mode", "triple_barrier")
-    pt   = float(getattr(args, "pt", 1.0))
-    sl   = float(getattr(args, "sl", 1.0))
+    pt = float(getattr(args, "pt", 1.0))
+    sl = float(getattr(args, "sl", 1.0))
     holding = int(getattr(args, "holding", 10))
-    decay    = float(getattr(args, "decay", 0.9))
-    frac_d   = float(getattr(args, "frac_d", 0.4))
-    no_frac  = bool(getattr(args, "no_frac_diff", False))
-    add_hmm  = bool(getattr(args, "hmm", False))
+    decay = float(getattr(args, "decay", 0.9))
+    frac_d = float(getattr(args, "frac_d", 0.4))
+    no_frac = bool(getattr(args, "no_frac_diff", False))
+    add_hmm = bool(getattr(args, "hmm", False))
     add_garch = bool(getattr(args, "garch", False))
     hmm_states = int(getattr(args, "hmm_states", 3))
 
@@ -303,7 +306,9 @@ def cmd_paper(args: argparse.Namespace) -> None:
     result = run_trader_once(trader, df)
     print(f"Останній бар: {df.index[-1]}")
     print(f"Дія: {result}")
-    print(f"Капітал: {trader.account.equity:.2f} | позиції: {len(trader.account.positions)} | угод: {len(trader.account.trades)}")
+    print(
+        f"Капітал: {trader.account.equity:.2f} | позиції: {len(trader.account.positions)} | угод: {len(trader.account.trades)}"
+    )
 
 
 def cmd_report(args: argparse.Namespace) -> None:
@@ -333,7 +338,12 @@ def cmd_report(args: argparse.Namespace) -> None:
 
     res = run_backtest(df, strategy, cost=cost, trades=trades, funding=funding, position_pct=settings.position_pct)
     wf = run_walk_forward(
-        df, strategy, train_bars=args.train, test_bars=args.test, trades=trades, funding=funding,
+        df,
+        strategy,
+        train_bars=args.train,
+        test_bars=args.test,
+        trades=trades,
+        funding=funding,
         position_pct=settings.position_pct,
     )
     ret = res.equity.pct_change().dropna()
@@ -347,7 +357,9 @@ def cmd_report(args: argparse.Namespace) -> None:
         values = [lo + i * step for i in range(int((hi - lo) / step) + 1)][:15]
         try:
             sens = parameter_sensitivity(df, strategy, pname, values, cost=cost, trades=trades, funding=funding)
-            sens_md = f"\n## Sensitivity ({pname})\n\nsmoothness = {sens.smoothness:.3f}\n\n" + sens.grid.to_markdown(index=False)
+            sens_md = f"\n## Sensitivity ({pname})\n\nsmoothness = {sens.smoothness:.3f}\n\n" + sens.grid.to_markdown(
+                index=False
+            )
         except Exception as exc:  # noqa: BLE001
             sens_md = f"\n## Sensitivity\n\nпомилка: {exc}"
 
@@ -372,14 +384,14 @@ def cmd_report(args: argparse.Namespace) -> None:
 
 - raw Sharpe: {res.metrics.sharpe:.3f}
 - trials: {n_trials}
-- **DSR: {dsr:.3f}** {'✅ edge значущий' if dsr > 0.95 else '⚠ edge не підтверджено'}
+- **DSR: {dsr:.3f}** {"✅ edge значущий" if dsr > 0.95 else "⚠ edge не підтверджено"}
 {sens_md}
 
 ## Висновок
 
 - OOS Sharpe: {wf.avg_oos_sharpe:.3f} ({wf.positive_windows_frac:.0%} вікон > 0)
 - DSR: {dsr:.3f}
-- {'Стратегія готова до paper trading' if wf.avg_oos_sharpe > 0.3 and dsr > 0.9 else 'Стратегія потребує доопрацювання'}
+- {"Стратегія готова до paper trading" if wf.avg_oos_sharpe > 0.3 and dsr > 0.9 else "Стратегія потребує доопрацювання"}
 """
     out_dir = Path("docs/reports")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -413,7 +425,12 @@ def cmd_cscv(args: argparse.Namespace) -> None:
 
     print(f"Генерація {args.variants} випадкових варіантів параметрів {args.strategy}...")
     returns = variant_returns(
-        df, strategy, n_variants=args.variants, cost=cost, trades=trades, funding=funding,
+        df,
+        strategy,
+        n_variants=args.variants,
+        cost=cost,
+        trades=trades,
+        funding=funding,
         position_pct=settings.position_pct,
     )
     res = pbo_cscv(returns, n_blocks=args.blocks, threshold=0.0, max_combos=args.max_combos)
@@ -445,7 +462,9 @@ def cmd_paper_run(args: argparse.Namespace) -> None:
     if args.notify:
         from scalper_hft.live.telegram import send_telegram
 
-        send_telegram(f"Paper-run {args.strategy} {args.symbol}: {result.actions[-1]}, equity={result.account.equity:.2f}")
+        send_telegram(
+            f"Paper-run {args.strategy} {args.symbol}: {result.actions[-1]}, equity={result.account.equity:.2f}"
+        )
 
 
 def cmd_paper_replay(args: argparse.Namespace) -> None:
@@ -487,7 +506,12 @@ def cmd_arb(args: argparse.Namespace) -> None:
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
 
     res = run_delta_neutral_backtest(
-        perp, spot, strategy, funding, position_pct=args.position_pct or 0.1, cost=cost,
+        perp,
+        spot,
+        strategy,
+        funding,
+        position_pct=args.position_pct or 0.1,
+        cost=cost,
         maker_execution=args.maker,
     )
     print("\n" + res.summary())
@@ -495,7 +519,12 @@ def cmd_arb(args: argparse.Namespace) -> None:
 
     if args.walkforward:
         wf = run_dn_walk_forward(
-            perp, spot, strategy, funding, train_bars=args.train, test_bars=args.test,
+            perp,
+            spot,
+            strategy,
+            funding,
+            train_bars=args.train,
+            test_bars=args.test,
             position_pct=args.position_pct or 0.1,
         )
         print(
@@ -524,8 +553,14 @@ def cmd_pairs(args: argparse.Namespace) -> None:
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
 
     res = run_pairs_backtest(
-        df1, df2, strategy, f1, f2,
-        position_pct=args.position_pct or 0.1, cost=cost, maker_execution=args.maker,
+        df1,
+        df2,
+        strategy,
+        f1,
+        f2,
+        position_pct=args.position_pct or 0.1,
+        cost=cost,
+        maker_execution=args.maker,
     )
     print(f"\nПара: {leg1} / {leg2} ({args.interval}, {len(res.spread)} спільних барів)")
     print(res.summary())
@@ -535,9 +570,15 @@ def cmd_pairs(args: argparse.Namespace) -> None:
         from scalper_hft.backtest.pairs import run_pairs_walk_forward
 
         wf = run_pairs_walk_forward(
-            df1, df2, strategy, f1, f2,
-            train_bars=args.train, test_bars=args.test,
-            position_pct=args.position_pct or 0.1, maker_execution=args.maker,
+            df1,
+            df2,
+            strategy,
+            f1,
+            f2,
+            train_bars=args.train,
+            test_bars=args.test,
+            position_pct=args.position_pct or 0.1,
+            maker_execution=args.maker,
         )
         print(
             f"\nWalk-forward: {wf['n_windows']} вікон | IS SRh={wf['avg_is_sharpe']:+.3f} | "
@@ -572,8 +613,13 @@ def cmd_pairs_portfolio(args: argparse.Namespace) -> None:
         )
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
     res = run_pairs_portfolio(
-        data, configs, position_pct=args.position_pct or 0.3, cost=cost, maker_execution=True,
-        method=args.method, turnover_rate=args.turnover_rate,
+        data,
+        configs,
+        position_pct=args.position_pct or 0.3,
+        cost=cost,
+        maker_execution=True,
+        method=args.method,
+        turnover_rate=args.turnover_rate,
         rebalance=None if args.no_rebalance else "ME",
     )
     print(res.summary())
@@ -625,10 +671,16 @@ def cmd_paper_replay_pairs(args: argparse.Namespace) -> None:
     strategy = get_strategy(args.strategy or "pairs_arb", **args.param_dict)
     store = PaperStore()
     result = replay_pairs(
-        leg1, leg2, df1, df2, strategy=strategy, store=store,
+        leg1,
+        leg2,
+        df1,
+        df2,
+        strategy=strategy,
+        store=store,
         funding1=download_funding(leg1, args.days),
         funding2=download_funding(leg2, args.days),
-        is_maker=True, interval=interval,
+        is_maker=True,
+        interval=interval,
     )
     print("\n" + result.summary())
     _plot_equity(result.equity, "paper_pairs", f"{leg1}_{leg2}")
@@ -719,9 +771,15 @@ def cmd_featimp(args: argparse.Namespace) -> None:
         trades = download_agg_trades(args.symbol, args.days)
     try:
         X, y, w = build_labeled_dataset(
-            df, trades=trades, mode="triple_barrier",
-            pt=args.pt, sl=args.sl, holding_bars=args.holding,
-            decay=args.decay, frac_d=args.frac_d, add_frac_diff=not args.no_frac_diff,
+            df,
+            trades=trades,
+            mode="triple_barrier",
+            pt=args.pt,
+            sl=args.sl,
+            holding_bars=args.holding,
+            decay=args.decay,
+            frac_d=args.frac_d,
+            add_frac_diff=not args.no_frac_diff,
         )
     except ValueError as e:
         logger.error("featimp: %s", e)
@@ -730,18 +788,26 @@ def cmd_featimp(args: argparse.Namespace) -> None:
     def clf_factory():
         from lightgbm import LGBMClassifier
 
-        return LGBMClassifier(n_estimators=100, learning_rate=0.05, num_leaves=31,
-                              min_child_samples=50, subsample=0.8, colsample_bytree=0.8,
-                              class_weight="balanced", verbosity=-1)
+        return LGBMClassifier(
+            n_estimators=100,
+            learning_rate=0.05,
+            num_leaves=31,
+            min_child_samples=50,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            class_weight="balanced",
+            verbosity=-1,
+        )
 
     pkf = PurgedKFold(n_splits=args.splits, embargo_pct=args.embargo)
-    print(f"\nFeature importance (AFML Ch.8): {args.symbol} {args.interval}, "
-          f"{len(X)} зразків, {X.shape[1]} фіч\n")
+    print(f"\nFeature importance (AFML Ch.8): {args.symbol} {args.interval}, {len(X)} зразків, {X.shape[1]} фіч\n")
     rep = feature_importance_report(X, y, clf_factory, pkf, sample_weights=w, score="neg_log_loss")
     print(rep.round(4).to_string())
     tau = rep["pca_tau"].iloc[0] if not rep.empty else 0.0
-    print(f"\nPCA-перевірка (weighted Kendall τ MDI vs PCA-ранг): {tau:.3f} "
-          f"{'✅ патерн не випадковий (>0.8)' if tau > 0.8 else '⚠ слабка узгодженість'}")
+    print(
+        f"\nPCA-перевірка (weighted Kendall τ MDI vs PCA-ранг): {tau:.3f} "
+        f"{'✅ патерн не випадковий (>0.8)' if tau > 0.8 else '⚠ слабка узгодженість'}"
+    )
 
 
 def cmd_stress(args: argparse.Namespace) -> None:
@@ -772,8 +838,10 @@ def cmd_stress(args: argparse.Namespace) -> None:
     rep = stress_report(ret, scenarios=scenarios)
     print(f"\nСтрес-тест: {args.strategy} · {args.symbol} · {args.interval}\n")
     print(rep.round(4).to_string())
-    print("\n⚠ liquidity = витрати ×10; crash = найгірше вікно ×2;"
-          "\n  vol_spike = волатильність ×2; funding_shock = додаткова per-bar ставка 0.1%")
+    print(
+        "\n⚠ liquidity = витрати ×10; crash = найгірше вікно ×2;"
+        "\n  vol_spike = волатильність ×2; funding_shock = додаткова per-bar ставка 0.1%"
+    )
 
 
 def cmd_capacity(args: argparse.Namespace) -> None:
@@ -798,10 +866,18 @@ def cmd_capacity(args: argparse.Namespace) -> None:
 
         funding = download_funding(args.symbol, args.days)
     scales = [float(s) for s in args.scales.split(",")] if args.scales else [1.0, 2.0, 5.0, 10.0, 20.0]
-    print(capacity_report(
-        df, strategy, scales=scales, cost=cost, trades=trades, funding=funding,
-        position_pct=settings.position_pct, is_maker=args.maker,
-    ))
+    print(
+        capacity_report(
+            df,
+            strategy,
+            scales=scales,
+            cost=cost,
+            trades=trades,
+            funding=funding,
+            position_pct=settings.position_pct,
+            is_maker=args.maker,
+        )
+    )
 
 
 def cmd_survival(args: argparse.Namespace) -> None:
@@ -847,6 +923,73 @@ def cmd_survival(args: argparse.Namespace) -> None:
         print(sb.to_string(index=False))
 
 
+def cmd_time_decay(args: argparse.Namespace) -> None:
+    from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.data.research import load_research_data
+    from scalper_hft.strategies import get_strategy
+    from scalper_hft.validation.time_decay import time_decay_test
+
+    strategy = get_strategy(args.strategy, **args.param_dict)
+    bundle = load_research_data(args.symbol, args.interval, args.days, strategy)
+    settings = get_settings()
+    res = time_decay_test(
+        bundle.klines,
+        strategy,
+        max_lag=args.max_lag,
+        cost=CostModel(
+            maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac
+        ),
+        trades=bundle.trades,
+        funding=bundle.funding,
+        position_pct=settings.position_pct,
+    )
+    print(res.summary())
+
+
+def cmd_quintile(args: argparse.Namespace) -> None:
+    import numpy as np
+
+    from scalper_hft.data.research import load_research_data
+    from scalper_hft.validation.quintile import quintile_spread_study
+
+    b1 = load_research_data(args.leg1, args.interval, args.days)
+    b2 = load_research_data(args.leg2, args.interval, args.days)
+    common = (
+        b1.klines[["close"]]
+        .rename(columns={"close": "l1"})
+        .join(b2.klines[["close"]].rename(columns={"close": "l2"}), how="inner")
+        .dropna()
+    )
+    ratio = np.log(common["l1"] / common["l2"])
+    lb = int(args.lookback)
+    z = (ratio - ratio.rolling(lb).mean()) / ratio.rolling(lb).std(ddof=0)
+    fwd = -ratio.diff().shift(-1)
+    print(quintile_spread_study(z, fwd).summary())
+
+
+def cmd_coint_scan(args: argparse.Namespace) -> None:
+    from scalper_hft.data.research import load_research_data
+    from scalper_hft.validation.coint_scan import scan_pairs
+
+    settings = get_settings()
+    symbols = (args.symbols or ",".join(settings.default_symbols)).split(",")
+    closes = {}
+    for sym in symbols:
+        closes[sym.strip()] = load_research_data(sym.strip(), args.interval, args.days).klines["close"]
+    for row in scan_pairs(closes):
+        print(row.summary())
+
+
+def cmd_hedge_ratio(args: argparse.Namespace) -> None:
+    from scalper_hft.data.research import load_research_data
+    from scalper_hft.validation.hedge_ratio import compare_hedge_oos
+
+    b1 = load_research_data(args.leg1, args.interval, args.days)
+    b2 = load_research_data(args.leg2, args.interval, args.days)
+    res = compare_hedge_oos(b1.klines["close"], b2.klines["close"], lookback=int(args.lookback))
+    print(res.summary())
+
+
 def cmd_mcp(args: argparse.Namespace) -> None:
     """Запуск MCP-сервера для трейдінгу (stdio, JSON-RPC)."""
     from scalper_hft.mcp_trading import run_stdio
@@ -888,13 +1031,19 @@ def _parse_param_dict(args: list[str]) -> dict:
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(prog="scalper-hft", description="Високочастотна скальпінг-система (Binance USDT-M)")
+    parser = argparse.ArgumentParser(
+        prog="scalper-hft", description="Високочастотна скальпінг-система (Binance USDT-M)"
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     def add_common(p: argparse.ArgumentParser) -> None:
         p.add_argument("--symbol", default=None, help="Символ, e.g. BTCUSDT (за замовч. з .env)")
         p.add_argument("--interval", default=None, help="Таймфрейм: 1s/5s/1m/5m/15m/1h")
-        p.add_argument("--strategy", default="mean_reversion", help="Стратегія з реєстру: mean_reversion, cvd_momentum, pairs_arb, ...")
+        p.add_argument(
+            "--strategy",
+            default="mean_reversion",
+            help="Стратегія з реєстру: mean_reversion, cvd_momentum, pairs_arb, ...",
+        )
         p.add_argument("--days", type=int, default=60, help="Глибина історії, днів")
         p.add_argument("-p", "--param", action="append", default=[], help="Параметр стратегії: key=value")
 
@@ -904,16 +1053,23 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--trades-days", type=int, default=None, help="Глибина aggTrades (Binance обмежує 2 доби)")
     p.add_argument("--funding", action="store_true", help="Також funding")
     p.add_argument("--force", action="store_true", help="Ігнорувати кеш")
+    p.add_argument("--vision", action="store_true", help="Історичні aggTrades з data.binance.vision")
+    p.add_argument("--vision-start", default=None, help="YYYY-MM-DD початок Vision-дампів")
+    p.add_argument("--vision-freq", default="daily", choices=["daily", "monthly"])
     p.set_defaults(func=cmd_download)
 
     p = sub.add_parser("backtest", help="Запустити бектест")
     add_common(p)
-    p.add_argument("--breakeven-gate", action="store_true",
-                   help="Вимикати сигнали, де очікуваний рух (ATR) < round-trip витрат")
-    p.add_argument("--bar-type", default="time", choices=["time", "dollar", "volume"],
-                   help="Тип барів для бектесту (time, dollar, volume). Для не-time використовується aggTrades")
-    p.add_argument("--bar-threshold", type=float, default=100000.0,
-                   help="Поріг для об'ємних або доларових барів")
+    p.add_argument(
+        "--breakeven-gate", action="store_true", help="Вимикати сигнали, де очікуваний рух (ATR) < round-trip витрат"
+    )
+    p.add_argument(
+        "--bar-type",
+        default="time",
+        choices=["time", "dollar", "volume"],
+        help="Тип барів для бектесту (time, dollar, volume). Для не-time використовується aggTrades",
+    )
+    p.add_argument("--bar-threshold", type=float, default=100000.0, help="Поріг для об'ємних або доларових барів")
     p.set_defaults(func=cmd_backtest)
 
     p = sub.add_parser("walkforward", help="Walk-forward аналіз")
@@ -984,10 +1140,15 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("pairs-portfolio", help="Бектест портфеля валідованих пар")
     add_common(p)
     p.add_argument("--position-pct", type=float, default=0.3)
-    p.add_argument("--method", default="equal", choices=["equal", "erc"],
-                   help="Алокація: рівні ваги або Equal Risk Contribution (Narang гл. 6)")
-    p.add_argument("--turnover-rate", type=float, default=0.0,
-                   help="Штраф за зміну ваг при місячному ребалансі (частка капіталу)")
+    p.add_argument(
+        "--method",
+        default="equal",
+        choices=["equal", "erc"],
+        help="Алокація: рівні ваги або Equal Risk Contribution (Narang гл. 6)",
+    )
+    p.add_argument(
+        "--turnover-rate", type=float, default=0.0, help="Штраф за зміну ваг при місячному ребалансі (частка капіталу)"
+    )
     p.add_argument("--no-rebalance", action="store_true", help="Без ребалансу ваг")
     p.set_defaults(func=cmd_pairs_portfolio, interval="1h")
 
@@ -1010,16 +1171,18 @@ def main(argv: list[str] | None = None) -> None:
 
     p = sub.add_parser("ml", help="Walk-forward ML-класифікатор: Triple-Barrier + LightGBM + AFML")
     add_common(p)
-    p.add_argument("--mode", default="triple_barrier", choices=["triple_barrier", "horizon"],
-                   help="Режим лейблінгу: triple_barrier (AFML, default) або horizon")
+    p.add_argument(
+        "--mode",
+        default="triple_barrier",
+        choices=["triple_barrier", "horizon"],
+        help="Режим лейблінгу: triple_barrier (AFML, default) або horizon",
+    )
     p.add_argument("--pt", type=float, default=1.0, help="Profit-take множник (× ATR)")
     p.add_argument("--sl", type=float, default=1.0, help="Stop-loss множник (× ATR)")
     p.add_argument("--holding", type=int, default=10, help="Вертикальний бар'єр (барів)")
     p.add_argument("--decay", type=float, default=0.9, help="Time-decay для sample weights")
-    p.add_argument("--frac-d", type=float, default=0.4, dest="frac_d",
-                   help="Ступінь fractional differencing")
-    p.add_argument("--no-frac-diff", action="store_true", dest="no_frac_diff",
-                   help="Вимкнути frac_diff фічі")
+    p.add_argument("--frac-d", type=float, default=0.4, dest="frac_d", help="Ступінь fractional differencing")
+    p.add_argument("--no-frac-diff", action="store_true", dest="no_frac_diff", help="Вимкнути frac_diff фічі")
     p.add_argument("--train", type=int, default=2000)
     p.add_argument("--test", type=int, default=500)
     p.add_argument("--trades", action="store_true", help="Використати aggTrades (CVD + micro фічі)")
@@ -1095,6 +1258,30 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--feature", default=None, help="Фіча для survival_by_feature (напр. atr_14)")
     p.add_argument("--bins", type=int, default=3)
     p.set_defaults(func=cmd_survival)
+
+    p = sub.add_parser("time-decay", help="Time-decay: Sharpe при лагу входу 0..N барів")
+    add_common(p)
+    p.add_argument("--max-lag", type=int, default=3)
+    p.set_defaults(func=cmd_time_decay)
+
+    p = sub.add_parser("quintile", help="Квінтилі z-score спреду (пари)")
+    add_common(p)
+    p.add_argument("--leg1", default="BTCUSDT")
+    p.add_argument("--leg2", default="ETHUSDT")
+    p.add_argument("--lookback", type=int, default=240)
+    p.set_defaults(func=cmd_quintile, interval="1h")
+
+    p = sub.add_parser("coint-scan", help="Скан коінтеграції символів")
+    add_common(p)
+    p.add_argument("--symbols", default=None, help="Через кому; інакше DEFAULT_SYMBOLS")
+    p.set_defaults(func=cmd_coint_scan, interval="1h")
+
+    p = sub.add_parser("hedge-ratio", help="OOS порівняння 1:1 vs OLS/Johansen hedge")
+    add_common(p)
+    p.add_argument("--leg1", default="BTCUSDT")
+    p.add_argument("--leg2", default="ETHUSDT")
+    p.add_argument("--lookback", type=int, default=240)
+    p.set_defaults(func=cmd_hedge_ratio, interval="1h")
 
     p = sub.add_parser("mcp", help="Запуск MCP-сервера для трейдінгу (stdio)")
     p.set_defaults(func=cmd_mcp)

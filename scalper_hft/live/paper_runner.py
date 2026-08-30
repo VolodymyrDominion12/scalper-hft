@@ -65,7 +65,9 @@ def _fetch_recent(symbol: str, interval: str, limit: int = _RECENT_BARS) -> pd.D
 class PaperRunner:
     """Циклічний paper-трейдер."""
 
-    def __init__(self, strategy: Strategy, symbol: str, interval: str = "5m", account: PaperAccount | None = None) -> None:
+    def __init__(
+        self, strategy: Strategy, symbol: str, interval: str = "5m", account: PaperAccount | None = None
+    ) -> None:
         self.strategy = strategy
         self.symbol = symbol
         self.interval = interval
@@ -80,6 +82,7 @@ class PaperRunner:
     def step(self) -> str:
         """Один крок: свіжі дані → сигнал на закритому барі → виконання."""
         df = _fetch_recent(self.symbol, self.interval)
+        self.trader.maybe_roll_day()
         return run_trader_once(self.trader, df)
 
     def run(self, iterations: int = 10, sleep_sec: int = 60, out_dir: Path | None = None) -> PaperRunResult:
@@ -96,7 +99,14 @@ class PaperRunner:
                 action = f"error:{exc}"
             result.actions.append(action)
             result.equity_points.append((pd.Timestamp.utcnow().tz_localize(None), self.account.equity))
-            logger.info("[%d/%d] %s | equity=%.2f | positions=%d", i + 1, iterations, action, self.account.equity, len(self.account.positions))
+            logger.info(
+                "[%d/%d] %s | equity=%.2f | positions=%d",
+                i + 1,
+                iterations,
+                action,
+                self.account.equity,
+                len(self.account.positions),
+            )
             if i < iterations - 1:
                 time.sleep(sleep_sec)
 

@@ -45,8 +45,7 @@ _FEATURE_COLS_BASE = [
 _FRAC_DIFF_COLS = ["fd_close", "fd_volume"]
 
 # Спринт 2–3: мікроструктура (AFML Ch.19), HMM-режими (FSPML Ch.4.5), GARCH (FSPML Ch.7)
-_MICRO_COLS = ["vpin", "kyle_t", "roll_spread", "amihud", "parkinson_vol",
-               "corwin_schultz_spread", "signed_flow_ac"]
+_MICRO_COLS = ["vpin", "kyle_t", "roll_spread", "amihud", "parkinson_vol", "corwin_schultz_spread", "signed_flow_ac"]
 _HMM_COLS = ["hmm_state", "hmm_p0", "hmm_p1", "hmm_p2", "hmm_p3", "hmm_p4"]
 _GARCH_COLS = ["garch_sigma"]
 
@@ -96,9 +95,11 @@ def _build_features(
     if add_garch:
         from scalper_hft.features.volatility import garch_forecast
 
-        f["garch_sigma"] = garch_forecast(
-            f["close"].pct_change().fillna(0.0), window=500, refit_every=100, warmup=50
-        ).reindex(f.index).fillna(0.0)
+        f["garch_sigma"] = (
+            garch_forecast(f["close"].pct_change().fillna(0.0), window=500, refit_every=100, warmup=50)
+            .reindex(f.index)
+            .fillna(0.0)
+        )
 
     # Fractional Differentiation (AFML Ch.5)
     if add_frac:
@@ -131,6 +132,10 @@ def build_labeled_dataset(
     add_hmm: bool = False,
     add_garch: bool = False,
     hmm_states: int = 3,
+    event_filter: str = "all",
+    cusum_threshold: float = 0.005,
+    bar_type: str = "time",
+    bar_threshold: float = 100_000.0,
 ) -> tuple[pd.DataFrame, pd.Series, pd.Series | None]:
     """Будує (X, y, sample_weights) для ML навчання.
 
@@ -161,17 +166,38 @@ def build_labeled_dataset(
     if holding_bars is None:
         holding_bars = horizon
 
+    if bar_type in {"dollar", "volume"} and trades is not None and not trades.empty:
+        from scalper_hft.data.bars import create_dollar_bars, create_volume_bars
+
+        if bar_type == "dollar":
+            df = create_dollar_bars(trades, bar_threshold)
+        else:
+            df = create_volume_bars(trades, bar_threshold)
+        if df is None or df.empty:
+            raise ValueError(f"Не вдалося побудувати {bar_type} бари")
+
     f = _build_features(
-        df, trades,
-        add_frac=add_frac_diff, frac_d=frac_d,
-        add_micro=add_micro, add_hmm=add_hmm, add_garch=add_garch,
+        df,
+        trades,
+        add_frac=add_frac_diff,
+        frac_d=frac_d,
+        add_micro=add_micro,
+        add_hmm=add_hmm,
+        add_garch=add_garch,
         hmm_states=hmm_states,
     )
 
     if mode == "triple_barrier":
         return _build_triple_barrier(
-            df=df, f=f, pt=pt, sl=sl,
-            holding_bars=holding_bars, vol_span=vol_span, decay=decay,
+            df=df,
+            f=f,
+            pt=pt,
+            sl=sl,
+            holding_bars=holding_bars,
+            vol_span=vol_span,
+            decay=decay,
+            event_filter=event_filter,
+            cusum_threshold=cusum_threshold,
         )
     elif mode == "horizon":
         return _build_horizon(df=df, f=f, horizon=horizon, noise_threshold=noise_threshold)
@@ -181,6 +207,7 @@ def build_labeled_dataset(
 
 # ── Triple Barrier (AFML) ────────────────────────────────────────────────────
 
+
 def _build_triple_barrier(
     df: pd.DataFrame,
     f: pd.DataFrame,
@@ -189,10 +216,18 @@ def _build_triple_barrier(
     holding_bars: int,
     vol_span: int,
     decay: float,
+    event_filter: str = "all",
+    cusum_threshold: float = 0.005,
 ) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
     close = df["close"]
     events = label_from_ohlcv(
-        df, pt=pt, sl=sl, holding_bars=holding_bars, vol_span=vol_span
+        df,
+        pt=pt,
+        sl=sl,
+        holding_bars=holding_bars,
+        vol_span=vol_span,
+        event_filter=event_filter,
+        cusum_threshold=cusum_threshold,
     )
     # відкидаємо timeout-події (label=0) — занадто невизначені
     events = events[events["label"] != 0].dropna(subset=["label"])
@@ -223,6 +258,7 @@ def _build_triple_barrier(
 
 # ── Horizon (legacy) ─────────────────────────────────────────────────────────
 
+
 def _build_horizon(
     df: pd.DataFrame,
     f: pd.DataFrame,
@@ -243,6 +279,7 @@ def _build_horizon(
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _get_feat_cols(f: pd.DataFrame) -> list[str]:
     """Повертає доступні фічі з пріоритетом frac_diff/micro/HMM/GARCH."""

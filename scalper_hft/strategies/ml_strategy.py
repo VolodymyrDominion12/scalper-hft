@@ -140,14 +140,16 @@ class MLStrategy(Strategy):
         if len(X) < train_bars + test_bars:
             logger.warning(
                 "MLStrategy: замало зразків (%d < %d). Збільшіть датасет.",
-                len(X), train_bars + test_bars,
+                len(X),
+                train_bars + test_bars,
             )
             return pd.Series(0, index=df.index)
 
         if meta_filter:
             # ── Повний мета-лейблінг: primary → сторона, мета → розмір ──
             side, p_meta = train_walk_forward_meta(
-                X=X, y=y,
+                X=X,
+                y=y,
                 train_size=train_bars,
                 test_size=test_bars,
                 sample_weights=w,
@@ -157,7 +159,8 @@ class MLStrategy(Strategy):
         else:
             # ── Primary walk-forward ──
             result = train_walk_forward(
-                X=X, y=y,
+                X=X,
+                y=y,
                 train_size=train_bars,
                 test_size=test_bars,
                 sample_weights=w,
@@ -198,9 +201,7 @@ class MLStrategy(Strategy):
     # ── Private ───────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _apply_confidence_filter(
-        side: pd.Series, p_side: pd.Series | None, threshold: float
-    ) -> pd.Series:
+    def _apply_confidence_filter(side: pd.Series, p_side: pd.Series | None, threshold: float) -> pd.Series:
         """При threshold > 0.5 залишаємо лише 'впевнені' сигнали.
 
         Впевненість = max(p, 1−p). Без proba (p_side=None) — повертаємо як є.

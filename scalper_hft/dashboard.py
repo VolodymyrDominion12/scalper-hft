@@ -31,7 +31,9 @@ _SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "LINKUSDT"]
 _PAIR_CHOICES = ["XRPUSDT/BTCUSDT", "BTCUSDT/ETHUSDT", "LINKUSDT/BTCUSDT", "LINKUSDT/ETHUSDT"]
 
 st.sidebar.header("Параметри")
-strategy_name = st.sidebar.selectbox("Стратегія", sorted(REGISTRY), index=sorted(REGISTRY).index("pairs_arb") if "pairs_arb" in REGISTRY else 0)
+strategy_name = st.sidebar.selectbox(
+    "Стратегія", sorted(REGISTRY), index=sorted(REGISTRY).index("pairs_arb") if "pairs_arb" in REGISTRY else 0
+)
 is_pairs = strategy_name == "pairs_arb"
 if is_pairs:
     pair_sel = st.sidebar.selectbox("Пара", _PAIR_CHOICES)
@@ -65,7 +67,9 @@ st.dataframe(pd.DataFrame(rows), use_container_width=True)
 st.header("2. Бектест")
 if run_bt:
     with st.spinner("Бектест..."):
-        cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+        cost = CostModel(
+            maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac
+        )
         strategy = get_strategy(strategy_name)
         if is_pairs:
             d1 = load_klines(klines_path(data_dir, leg1, interval))
@@ -76,8 +80,14 @@ if run_bt:
                 f1 = load_funding(data_dir / f"{leg1}_funding.parquet")
                 f2 = load_funding(data_dir / f"{leg2}_funding.parquet")
                 res = run_pairs_backtest(
-                    d1, d2, strategy, f1, f2,
-                    position_pct=settings.pair_notional_pct, cost=cost, maker_execution=True,
+                    d1,
+                    d2,
+                    strategy,
+                    f1,
+                    f2,
+                    position_pct=settings.pair_notional_pct,
+                    cost=cost,
+                    maker_execution=True,
                 )
                 m = res.metrics
                 c1, c2, c3, c4 = st.columns(4)
@@ -95,9 +105,19 @@ if run_bt:
             if df is None or len(df) < 100:
                 st.warning(f"Немає даних {symbol} {interval} — запустіть download спершу")
             else:
-                trades = load_trades(data_dir / f"{symbol}_aggTrades.parquet") if getattr(strategy, "needs_trades", False) else None
-                funding = load_funding(data_dir / f"{symbol}_funding.parquet") if getattr(strategy, "needs_funding", False) else None
-                res = run_backtest(df, strategy, cost=cost, trades=trades, funding=funding, position_pct=settings.position_pct)
+                trades = (
+                    load_trades(data_dir / f"{symbol}_aggTrades.parquet")
+                    if getattr(strategy, "needs_trades", False)
+                    else None
+                )
+                funding = (
+                    load_funding(data_dir / f"{symbol}_funding.parquet")
+                    if getattr(strategy, "needs_funding", False)
+                    else None
+                )
+                res = run_backtest(
+                    df, strategy, cost=cost, trades=trades, funding=funding, position_pct=settings.position_pct
+                )
                 m = res.metrics
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("Дохідність", f"{m.total_return:.2%}")
@@ -164,9 +184,19 @@ if run_diag:
             if df is None or len(df) < 100:
                 st.warning(f"Немає даних {symbol} {interval} — download спершу")
             else:
-                trades = load_trades(data_dir / f"{symbol}_aggTrades.parquet") if getattr(strategy, "needs_trades", False) else None
-                funding = load_funding(data_dir / f"{symbol}_funding.parquet") if getattr(strategy, "needs_funding", False) else None
-                res = run_backtest(df, strategy, cost=cost, trades=trades, funding=funding, position_pct=settings.position_pct)
+                trades = (
+                    load_trades(data_dir / f"{symbol}_aggTrades.parquet")
+                    if getattr(strategy, "needs_trades", False)
+                    else None
+                )
+                funding = (
+                    load_funding(data_dir / f"{symbol}_funding.parquet")
+                    if getattr(strategy, "needs_funding", False)
+                    else None
+                )
+                res = run_backtest(
+                    df, strategy, cost=cost, trades=trades, funding=funding, position_pct=settings.position_pct
+                )
                 ret = res.equity.pct_change().dropna()
 
                 with st.expander("Cohort decay (Predictive Marketing)", expanded=False):
@@ -178,16 +208,23 @@ if run_diag:
 
                     rep = stress_report(ret)
                     st.dataframe(rep.round(4), use_container_width=True)
-                    st.caption("crash = найгірше вікно ×2; liquidity = витрати ×10; "
-                               "vol_spike = волатильність ×2; funding_shock = per-bar 0.1%")
+                    st.caption(
+                        "crash = найгірше вікно ×2; liquidity = витрати ×10; "
+                        "vol_spike = волатильність ×2; funding_shock = per-bar 0.1%"
+                    )
                 with st.expander("Capacity (share of wallet)", expanded=False):
                     from scalper_hft.validation.capacity import capacity_curve, saturation_scale
 
-                    curve = capacity_curve(df, strategy, scales=[1.0, 2.0, 5.0, 10.0],
-                                           cost=cost, position_pct=settings.position_pct)
+                    curve = capacity_curve(
+                        df, strategy, scales=[1.0, 2.0, 5.0, 10.0], cost=cost, position_pct=settings.position_pct
+                    )
                     fig = go.Figure(go.Bar(x=curve["scale"], y=curve["sharpe"]))
-                    fig.update_layout(title=f"Sharpe при масштабі позицій ×(1..10) — насичення ×{saturation_scale(curve):g}",
-                                      xaxis_title="scale", yaxis_title="Sharpe", height=320)
+                    fig.update_layout(
+                        title=f"Sharpe при масштабі позицій ×(1..10) — насичення ×{saturation_scale(curve):g}",
+                        xaxis_title="scale",
+                        yaxis_title="Sharpe",
+                        height=320,
+                    )
                     st.plotly_chart(fig, use_container_width=True)
                     st.dataframe(curve.round(4), use_container_width=True)
     except Exception as exc:  # noqa: BLE001

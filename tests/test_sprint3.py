@@ -40,6 +40,7 @@ def _make_trades(n: int = 2000, seed: int = 32) -> pd.DataFrame:
 
 # ── 1. Стрес-тест + risk budget ──────────────────────────────────────────────
 
+
 class TestStress:
     def test_crash_amplifies_worst_window(self):
         from scalper_hft.validation.stress import apply_stress
@@ -93,6 +94,7 @@ class TestStress:
 
 # ── 2. Сигмоїдний sizing + лімітна ціна (AFML Ch.10.6) ───────────────────────
 
+
 class TestSigmoidSizing:
     def test_sigmoid_size_bounds_and_monotone(self):
         from scalper_hft.ml.bet_sizing import sigmoid_size
@@ -132,6 +134,7 @@ class TestSigmoidSizing:
 
 # ── 3. Capacity-тест ─────────────────────────────────────────────────────────
 
+
 class TestCapacity:
     def test_capacity_curve_structure(self):
         from scalper_hft.strategies.mean_reversion import MeanReversionScalper
@@ -155,13 +158,13 @@ class TestCapacity:
 
 # ── 4. Survival / Kaplan–Meier ────────────────────────────────────────────────
 
+
 class TestSurvival:
     def _trades(self):
         idx = pd.date_range("2025-01-01", periods=40, freq="1min")
         rows = []
         for i, t in enumerate(idx):
-            rows.append({"entry_ts": t, "exit_ts": t + pd.Timedelta(minutes=1 + i % 5),
-                         "side": 1, "ret": 0.01})
+            rows.append({"entry_ts": t, "exit_ts": t + pd.Timedelta(minutes=1 + i % 5), "side": 1, "ret": 0.01})
         return pd.DataFrame(rows)
 
     def test_trade_durations(self):
@@ -192,21 +195,22 @@ class TestSurvival:
         from scalper_hft.validation.survival import survival_by_feature
 
         trades = self._trades()
-        feat = pd.Series(np.random.default_rng(6).normal(0, 1, len(trades)),
-                         index=pd.to_datetime(trades["entry_ts"]))
+        feat = pd.Series(np.random.default_rng(6).normal(0, 1, len(trades)), index=pd.to_datetime(trades["entry_ts"]))
         sb = survival_by_feature(trades, feat, n_bins=3, freq="1min")
         assert "median_hold" in sb.columns and len(sb) >= 2
 
 
 # ── 5. Інтеграція micro/HMM/GARCH у ML-фічі ──────────────────────────────────
 
+
 class TestMlFeatureIntegration:
     def test_garch_and_hmm_features_added(self):
         from scalper_hft.ml.features import build_labeled_dataset
 
         df = _make_df(600)
-        X, y, w = build_labeled_dataset(df, mode="triple_barrier", holding_bars=8,
-                                        add_hmm=True, add_garch=True, hmm_states=3)
+        X, y, w = build_labeled_dataset(
+            df, mode="triple_barrier", holding_bars=8, add_hmm=True, add_garch=True, hmm_states=3
+        )
         assert "garch_sigma" in X.columns
         assert "hmm_state" in X.columns
         assert any(c.startswith("hmm_p") for c in X.columns)

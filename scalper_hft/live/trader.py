@@ -115,6 +115,7 @@ class LiveTrader:
         self.hmm_states = hmm_states
         self.hmm_threshold = hmm_threshold
         self.last_signal: int = 0
+        self._last_roll_day: object | None = None
 
     # ── сигнал ───────────────────────────────────────────────────────────────
     def compute_signal(self, df: pd.DataFrame, now: pd.Timestamp | None = None) -> int:
@@ -183,6 +184,25 @@ class LiveTrader:
         except Exception:  # noqa: BLE001
             return False
 
+    def maybe_roll_day(self, now: pd.Timestamp | None = None) -> bool:
+        """Скинути денний ліміт збитків при зміні UTC-доби.
+
+        Повертає True, якщо відбувся roll. Перший виклик лише запам'ятовує день.
+        """
+        from scalper_hft.data.downloader import _utc_now
+
+        ts = _as_naive_utc(now if now is not None else _utc_now())
+        day = ts.date()
+        if self._last_roll_day is None:
+            self._last_roll_day = day
+            return False
+        if day != self._last_roll_day:
+            self.account.roll_to_new_day(self.account.equity)
+            self._last_roll_day = day
+            logger.info("Новий день %s: day_start_equity=%.2f", day, self.account.day_start_equity)
+            return True
+        return False
+
     # ── ризик-контроль (книга, гл. 4) ────────────────────────────────────────
     def risk_check(self, decision: TradeDecision, mark_price: float | None = None) -> tuple[bool, str]:
         """Перевірка ризик-лімітів. Повертає (дозволено?, причина відмови).
@@ -204,6 +224,7 @@ class LiveTrader:
 
     # ── виконання ────────────────────────────────────────────────────────────
     def execute(self, decision: TradeDecision, price: float, ts: pd.Timestamp) -> str:
+        self.maybe_roll_day(ts)
         self.account.mark({self.symbol: price})
         allowed, reason = self.risk_check(decision, mark_price=price)
         if not allowed:
@@ -212,48 +233,73 @@ class LiveTrader:
         if decision.action == "hold":
             return "hold"
         if decision.action == "close":
-            self._close(price, ts)
-            return "closed"
+            ok = self._close(price, ts)
+            return "closed" if ok else "submit_failed:close"
         side = "long" if decision.action == "open_long" else "short"
-        self._open(side, decision.size, price, ts)
+        ok = self._open(side, decision.size, price, ts)
+        if not ok:
+            return "submit_failed:open"
         return f"opened {side} {decision.size:.6f} @ {price}"
 
-    def _submit_order(self, side: str, size: float, price: float, *, reduce_only: bool = False) -> None:
-        """Live-ордер: maker → limit+postOnly; інакше market. Paper (dry_run) — no-op."""
+    def _submit_order(self, side: str, size: float, price: float, *, reduce_only: bool = False) -> bool:
+        """Live-ордер: maker → limit+postOnly; інакше market.
+
+        Paper (dry_run) — успішний no-op. Live: fail-closed — False при відмові
+        біржі, локальний рахунок не змінюється.
+        """
         if self.settings.dry_run:
-            return
+            return True
         params: dict = {}
         if reduce_only:
             params["reduceOnly"] = True
-        if self.settings.maker_execution:
-            self.client.create_order(
-                self.symbol,
-                "limit",
+        try:
+            from scalper_hft.live.orders import next_client_order_id
+
+            coid = next_client_order_id("sh")
+            if self.settings.maker_execution:
+                self.client.create_order(
+                    self.symbol,
+                    "limit",
+                    side,
+                    size,
+                    price=price,
+                    params=params,
+                    post_only=True,
+                    client_order_id=coid,
+                )
+            else:
+                self.client.create_order(self.symbol, "market", side, size, params=params, client_order_id=coid)
+        except Exception as exc:
+            logger.error(
+                "Ордер відхилено (стан рахунку не змінено): %s %s %s reduce_only=%s err=%s",
                 side,
+                self.symbol,
                 size,
-                price=price,
-                params=params,
-                post_only=True,
+                reduce_only,
+                exc,
             )
-        else:
-            self.client.create_order(self.symbol, "market", side, size, params=params)
+            return False
         logger.info("LIVE ордер: %s %s %s reduce_only=%s", side, self.symbol, size, reduce_only)
+        return True
 
-    def _open(self, side: str, size: float, price: float, ts: pd.Timestamp) -> None:
+    def _open(self, side: str, size: float, price: float, ts: pd.Timestamp) -> bool:
         if self.symbol in self.account.positions:
-            self._close(price, ts)
-        self._submit_order("buy" if side == "long" else "sell", size, price, reduce_only=False)
-        self.account.open_position(
-            self.symbol, side, size, price, ts, is_maker=self.settings.maker_execution
-        )
+            if not self._close(price, ts):
+                return False
+        if not self._submit_order("buy" if side == "long" else "sell", size, price, reduce_only=False):
+            return False
+        self.account.open_position(self.symbol, side, size, price, ts, is_maker=self.settings.maker_execution)
+        return True
 
-    def _close(self, price: float, ts: pd.Timestamp) -> None:
+    def _close(self, price: float, ts: pd.Timestamp) -> bool:
         if self.symbol not in self.account.positions:
-            return
+            return True
         pos = self.account.positions[self.symbol]
         side = "sell" if pos.side == "long" else "buy"
-        self._submit_order(side, pos.size, price, reduce_only=True)
+        if not self._submit_order(side, pos.size, price, reduce_only=True):
+            return False
         self.account.close_position(self.symbol, price, ts, is_maker=self.settings.maker_execution)
+        return True
 
 
 def execute_signal(
@@ -270,6 +316,7 @@ def execute_signal(
     closed = closed_klines(df, trader.interval, now=now)
     if closed is None or closed.empty:
         return "hold:no_closed_bar"
+    trader.maybe_roll_day(now if now is not None else closed.index[-1])
     close = float(closed["close"].iloc[-1])
     ts = closed.index[-1]
     trader.account.mark({trader.symbol: close})
@@ -299,9 +346,7 @@ def execute_signal(
             base_size = trader.settings.position_pct * trader.account.equity / close
             size = trader.vol_scaled_size(base_size, closed)
             action = "open_long" if want > 0 else "open_short"
-            parts.append(
-                trader.execute(TradeDecision(action, trader.symbol, size, f"сигнал={signal}"), close, ts)
-            )
+            parts.append(trader.execute(TradeDecision(action, trader.symbol, size, f"сигнал={signal}"), close, ts))
 
     trader.last_signal = signal
     return " | ".join(parts)

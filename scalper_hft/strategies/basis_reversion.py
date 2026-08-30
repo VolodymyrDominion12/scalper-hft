@@ -41,7 +41,9 @@ class BasisReversion(Strategy):
             lookback=int(lookback),
         )
 
-    def generate_signals(self, df: pd.DataFrame, trades: pd.DataFrame | None = None, funding: pd.DataFrame | None = None) -> pd.Series:
+    def generate_signals(
+        self, df: pd.DataFrame, trades: pd.DataFrame | None = None, funding: pd.DataFrame | None = None
+    ) -> pd.Series:
         """Сигнал пари на основі z-оцінки basis.
 
         df має містити perp/spot (об'єднаний DataFrame з delta-neutral рушія).

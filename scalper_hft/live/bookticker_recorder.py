@@ -39,8 +39,6 @@ async def _record_symbol(
     flush_every: int = 500,
 ) -> int:
     """Записує bookTicker у parquet (батчами). Повертає кількість записів."""
-    import pyarrow as pa
-    import pyarrow.parquet as pq
 
     if not _HAS_WS:
         raise ImportError("Встановіть websockets: uv pip install websockets")
@@ -57,7 +55,7 @@ async def _record_symbol(
                 while time.monotonic() - start < duration_sec:
                     try:
                         msg = await asyncio.wait_for(ws.recv(), timeout=10.0)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logger.warning("Таймаут стріму — продовжую")
                         continue
                     except websockets.ConnectionClosed:
@@ -153,7 +151,7 @@ async def _record_depth(
             while time.monotonic() - start < duration_sec:
                 try:
                     msg = await asyncio.wait_for(ws.recv(), timeout=10.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
                 except websockets.ConnectionClosed:
                     logger.warning("Стрім depth закрито — перепідключення")
@@ -166,11 +164,11 @@ async def _record_depth(
                 asks = [(float(p), float(q)) for p, q in asks_raw][:5]
                 row: dict = {"ts": pd.Timestamp.now(tz="UTC").tz_localize(None)}
                 for i, (px, q) in enumerate(bids):
-                    row[f"bid{i+1}"] = px
-                    row[f"bid{i+1}_qty"] = q
+                    row[f"bid{i + 1}"] = px
+                    row[f"bid{i + 1}_qty"] = q
                 for i, (px, q) in enumerate(asks):
-                    row[f"ask{i+1}"] = px
-                    row[f"ask{i+1}_qty"] = q
+                    row[f"ask{i + 1}"] = px
+                    row[f"ask{i + 1}_qty"] = q
                 rows.append(row)
                 if len(rows) >= flush_every:
                     _flush(rows, out_path)

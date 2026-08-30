@@ -13,7 +13,6 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 from scalper_hft.features.indicators import cvd_from_trades, zscore

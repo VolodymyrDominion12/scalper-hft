@@ -164,7 +164,7 @@ class GaussianHMM:
             means = (gamma.T @ X) / denom[:, None]
             for i in range(k):
                 diff = X - means[i]
-                covars[i] = (gamma[:, i][:, None] * diff ** 2).sum(axis=0) / denom[i]
+                covars[i] = (gamma[:, i][:, None] * diff**2).sum(axis=0) / denom[i]
             covars = np.maximum(covars, 1e-10)
 
         # фінальний прогін (масштабований forward–backward)
@@ -267,9 +267,9 @@ def hmm_regime_features(
         post = model.posteriors_
 
     out = pd.DataFrame(index=close.index, dtype=float)
-    out.loc[obs.index[-len(states):], "hmm_state"] = states.astype(float)
+    out.loc[obs.index[-len(states) :], "hmm_state"] = states.astype(float)
     for k in range(n_states):
-        out.loc[obs.index[-len(states):], f"hmm_p{k}"] = post[:, k]
+        out.loc[obs.index[-len(states) :], f"hmm_p{k}"] = post[:, k]
     out["hmm_state"] = out["hmm_state"].ffill().fillna(0.0)
     out = out.fillna(0.0)
     return out

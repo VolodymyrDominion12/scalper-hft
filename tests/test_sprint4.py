@@ -31,6 +31,7 @@ def _make_df(n: int = 600, seed: int = 41) -> pd.DataFrame:
 
 # ── 1. MCP-сервер ────────────────────────────────────────────────────────────
 
+
 class TestMcpTrading:
     def _call(self, msg: dict):
         from scalper_hft.mcp_trading import handle_message
@@ -38,9 +39,18 @@ class TestMcpTrading:
         return handle_message(msg)
 
     def test_initialize(self):
-        resp = self._call({"jsonrpc": "2.0", "id": 1, "method": "initialize",
-                           "params": {"protocolVersion": "2024-11-05", "capabilities": {},
-                                      "clientInfo": {"name": "t", "version": "1"}}})
+        resp = self._call(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "t", "version": "1"},
+                },
+            }
+        )
         assert resp[0]["result"]["protocolVersion"] == "2024-11-05"
         assert resp[0]["result"]["capabilities"]["tools"] == {}
 
@@ -50,13 +60,22 @@ class TestMcpTrading:
     def test_tools_list(self):
         resp = self._call({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
         names = [t["name"] for t in resp[0]["result"]["tools"]]
-        for expected in ["strategy_list", "settings_summary", "run_backtest", "run_cohort",
-                         "run_stress", "run_capacity", "paper_step", "market_status"]:
+        for expected in [
+            "strategy_list",
+            "settings_summary",
+            "run_backtest",
+            "run_cohort",
+            "run_stress",
+            "run_capacity",
+            "paper_step",
+            "market_status",
+        ]:
             assert expected in names
 
     def test_strategy_list_tool(self):
-        resp = self._call({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
-                           "params": {"name": "strategy_list", "arguments": {}}})
+        resp = self._call(
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "strategy_list", "arguments": {}}}
+        )
         text = resp[0]["result"]["content"][0]["text"]
         data = json.loads(text)
         names = [s["name"] for s in data["strategies"]]
@@ -64,16 +83,18 @@ class TestMcpTrading:
         assert "mean_reversion" in names
 
     def test_settings_summary_no_secrets(self):
-        resp = self._call({"jsonrpc": "2.0", "id": 4, "method": "tools/call",
-                           "params": {"name": "settings_summary", "arguments": {}}})
+        resp = self._call(
+            {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "settings_summary", "arguments": {}}}
+        )
         text = resp[0]["result"]["content"][0]["text"]
         data = json.loads(text)
         assert "api_key" not in json.dumps(data).lower() or "api_key_configured" in data
         assert "dry_run" in data
 
     def test_unknown_tool_error(self):
-        resp = self._call({"jsonrpc": "2.0", "id": 5, "method": "tools/call",
-                           "params": {"name": "nope", "arguments": {}}})
+        resp = self._call(
+            {"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "nope", "arguments": {}}}
+        )
         assert resp[0]["error"]["code"] == -32602
 
     def test_unknown_method_error(self):
@@ -98,6 +119,7 @@ class TestMcpTrading:
 
 
 # ── 2. HMM-гейтований mean reversion (alpha-гіпотеза) ───────────────────────
+
 
 class TestHmmReversion:
     def test_registered(self):
@@ -125,8 +147,10 @@ class TestHmmReversion:
         vol = np.concatenate([np.full(n // 2, 0.0003), np.full(n // 2, 0.006)])
         ret = rng.normal(0, vol)
         close = 100.0 * np.exp(np.cumsum(ret))
-        df = pd.DataFrame({"open": close, "high": close * 1.001, "low": close * 0.999,
-                           "close": close, "volume": np.full(n, 50.0)}, index=idx)
+        df = pd.DataFrame(
+            {"open": close, "high": close * 1.001, "low": close * 0.999, "close": close, "volume": np.full(n, 50.0)},
+            index=idx,
+        )
         strat = HmmReversionScalper(hmm_states=3, hmm_threshold=0.5)
         mask = strat._calm_state_mask(df["close"], n_states=3, fit_bars=300, threshold=0.5)
         assert mask.dtype == bool
@@ -150,6 +174,7 @@ class TestHmmReversion:
 
 
 # ── 3. Live-інтеграція ───────────────────────────────────────────────────────
+
 
 class TestLiveSprint4:
     def _trader(self, **kw):
@@ -175,8 +200,16 @@ class TestLiveSprint4:
         rng = np.random.default_rng(43)
         idx = pd.date_range("2025-01-01", periods=300, freq="1min")
         close = 100.0 * np.exp(np.cumsum(rng.normal(0, 0.0001, 300)))
-        df = pd.DataFrame({"open": close, "high": close * 1.0001, "low": close * 0.9999,
-                           "close": close, "volume": np.full(300, 50.0)}, index=idx)
+        df = pd.DataFrame(
+            {
+                "open": close,
+                "high": close * 1.0001,
+                "low": close * 0.9999,
+                "close": close,
+                "volume": np.full(300, 50.0),
+            },
+            index=idx,
+        )
         t = self._trader(vol_sizing=True, vol_ref=0.001)
         size = t.vol_scaled_size(100.0, df)
         assert size > 100.0

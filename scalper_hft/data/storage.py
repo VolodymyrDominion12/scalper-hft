@@ -80,6 +80,11 @@ def load_funding(path: Path) -> pd.DataFrame | None:
 
 def save_klines(path: Path, df: pd.DataFrame) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    from scalper_hft.data.validate import validate_bars
+
+    report = validate_bars(df)
+    if not report.ok:
+        logger.warning("Якість барів %s: %s", path.name, report.summary())
     df[_KLINES_COLUMNS].astype(float).to_parquet(path, compression="zstd")
     logger.info("Збережено klines: %s (%d рядків)", path, len(df))
 

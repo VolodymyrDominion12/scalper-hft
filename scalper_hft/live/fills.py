@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
+
 
 @dataclass(frozen=True)
 class FillDecision:
@@ -27,10 +29,43 @@ def post_only_touched(side: str, limit_price: float, high: float, low: float) ->
     return high >= limit_price
 
 
-def decide_fill(side: str, limit_price: float, high: float, low: float) -> FillDecision:
-    if post_only_touched(side, limit_price, high, low):
+def fill_probability(
+    side: str,
+    limit_price: float,
+    mid: float,
+    k: float = 0.08,
+) -> float:
+    """P(fill | touch) від відстані ліміту до mid (bps). На mid → 1.0."""
+    if mid <= 0:
+        return 0.0
+    if side == "buy":
+        dist_bps = (mid - limit_price) / mid * 10_000.0
+    else:
+        dist_bps = (limit_price - mid) / mid * 10_000.0
+    return float(min(max(np.exp(-k * max(dist_bps, 0.0)), 0.0), 1.0))
+
+
+def decide_fill(
+    side: str,
+    limit_price: float,
+    high: float,
+    low: float,
+    mid: float | None = None,
+    rng: np.random.Generator | None = None,
+    k: float = 0.08,
+) -> FillDecision:
+    """OHLC-touch + ймовірність філу від distance-to-mid.
+
+    Без mid (або mid=limit) P=1 після touch — сумісно з наявними тестами.
+    """
+    if not post_only_touched(side, limit_price, high, low):
+        return FillDecision(False, limit_price, "unfilled_no_touch")
+    mid_px = float(mid) if mid is not None else float(limit_price)
+    p = fill_probability(side, limit_price, mid_px, k=k)
+    draw = 1.0 if rng is None else float(rng.random())
+    if draw <= p:
         return FillDecision(True, limit_price, "filled")
-    return FillDecision(False, limit_price, "unfilled_no_touch")
+    return FillDecision(False, limit_price, "unfilled_prob")
 
 
 def both_or_neither(d1: FillDecision, d2: FillDecision) -> tuple[FillDecision, FillDecision]:

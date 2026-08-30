@@ -22,6 +22,7 @@ import pandas as pd
 
 # ── Volume bars ───────────────────────────────────────────────────────────────
 
+
 def volume_bars(trades: pd.DataFrame, bar_volume: float) -> pd.DataFrame:
     """Об'ємні бари з потоку угод (AFML Ch.2.3.1).
 
@@ -63,6 +64,7 @@ def volume_bars(trades: pd.DataFrame, bar_volume: float) -> pd.DataFrame:
 
 # ── VPIN (AFML Ch.19.5.2) ─────────────────────────────────────────────────────
 
+
 def vpin(trades: pd.DataFrame, bar_volume: float = 1000.0, n: int = 50) -> pd.Series:
     """Volume-Synchronized Probability of Informed Trading.
 
@@ -81,6 +83,7 @@ def vpin(trades: pd.DataFrame, bar_volume: float = 1000.0, n: int = 50) -> pd.Se
 
 
 # ── Kyle λ (AFML Ch.19.4.1) ───────────────────────────────────────────────────
+
 
 def signed_volume_series(trades: pd.DataFrame, resample: str = "1min") -> pd.Series:
     """Підписаний об'єм за період: Σ side·amount (buy > 0, sell < 0)."""
@@ -145,6 +148,7 @@ def kyle_lambda_series(close: pd.Series, signed_volume: pd.Series, window: int =
 
 # ── Roll spread (AFML Ch.19.3.2) ──────────────────────────────────────────────
 
+
 def roll_spread(close: pd.Series, window: int = 20) -> pd.Series:
     """Ефективний спред з серійної коваріації прибутків: 2√(−cov(Δp_t, Δp_{t−1})).
 
@@ -164,6 +168,7 @@ def roll_spread(close: pd.Series, window: int = 20) -> pd.Series:
 
 # ── Amihud illiquidity (AFML Ch.19.4.2) ──────────────────────────────────────
 
+
 def amihud(returns: pd.Series, dollar_volume: pd.Series, window: int = 20) -> pd.Series:
     """Міра неліквідності Amihud: середнє |r| / доларовий об'єм за вікно.
 
@@ -174,6 +179,7 @@ def amihud(returns: pd.Series, dollar_volume: pd.Series, window: int = 20) -> pd
 
 
 # ── Corwin–Schultz spread + Parkinson vol (AFML Ch.19.3.3–19.3.4) ─────────────
+
 
 def corwin_schultz_spread(high: pd.Series, low: pd.Series) -> pd.Series:
     """Спред Corwin–Schultz лише з High/Low (без книги/глибини).
@@ -201,6 +207,7 @@ def parkinson_vol(high: pd.Series, low: pd.Series, window: int = 20) -> pd.Serie
 
 # ── Персистентність потоку (AFML Ch.19.6.5) ──────────────────────────────────
 
+
 def signed_flow_autocorr(trades: pd.DataFrame, resample: str = "1min", lags: int = 1, window: int = 120) -> pd.Series:
     """Серійна кореляція підписаного потоку — splitting/herding.
 
@@ -214,6 +221,7 @@ def signed_flow_autocorr(trades: pd.DataFrame, resample: str = "1min", lags: int
 
 
 # ── Зручний додавач ──────────────────────────────────────────────────────────
+
 
 def add_microstructure_features(df: pd.DataFrame, trades: pd.DataFrame, resample: str = "1min") -> pd.DataFrame:
     """Приєднати мікроструктурні фічі до свічкового DataFrame (ffill, без lookahead).
@@ -249,21 +257,22 @@ def add_microstructure_features(df: pd.DataFrame, trades: pd.DataFrame, resample
 
 # ── Order Book Imbalance (OBI) ───────────────────────────────────────────────
 
+
 def order_book_imbalance(bookticker: pd.DataFrame) -> pd.Series:
     """Обчислює Order Book Imbalance (OBI) на основі best bid/ask.
-    
+
     OBI = (bid_qty - ask_qty) / (bid_qty + ask_qty)
     bookticker: DataFrame з колонками ['bid_qty', 'ask_qty']
-    
+
     Returns:
         pd.Series значень OBI від -1 до 1.
     """
     if bookticker is None or bookticker.empty:
         return pd.Series(dtype=float)
-        
+
     bid_qty = bookticker.get("bid_qty", pd.Series(0, index=bookticker.index))
     ask_qty = bookticker.get("ask_qty", pd.Series(0, index=bookticker.index))
-    
+
     total_qty = bid_qty + ask_qty
     obi = (bid_qty - ask_qty) / total_qty.replace(0, np.nan)
     return obi.fillna(0.0)

@@ -40,7 +40,9 @@ class Strategy(abc.ABC):
         return self.params.get(key, default)
 
     @abc.abstractmethod
-    def generate_signals(self, df: pd.DataFrame, trades: pd.DataFrame | None = None, funding: pd.DataFrame | None = None) -> pd.Series:
+    def generate_signals(
+        self, df: pd.DataFrame, trades: pd.DataFrame | None = None, funding: pd.DataFrame | None = None
+    ) -> pd.Series:
         """Повертає Series позицій, індексовану як df.index."""
 
     def __repr__(self) -> str:

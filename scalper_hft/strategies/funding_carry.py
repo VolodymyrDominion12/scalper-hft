@@ -46,7 +46,9 @@ class FundingCarryScalper(Strategy):
             trend_block=trend_block,
         )
 
-    def generate_signals(self, df: pd.DataFrame, trades: pd.DataFrame | None = None, funding: pd.DataFrame | None = None) -> pd.Series:
+    def generate_signals(
+        self, df: pd.DataFrame, trades: pd.DataFrame | None = None, funding: pd.DataFrame | None = None
+    ) -> pd.Series:
         """Сигнали на основі фандінгу, вирівняного на свічковий індекс.
 
         funding: DataFrame з колонкою 'fundingRate' (індекс — час ставки).

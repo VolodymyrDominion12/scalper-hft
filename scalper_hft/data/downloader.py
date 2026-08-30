@@ -1,6 +1,6 @@
 """Завантаження історичних даних Binance у parquet-кеш.
 
-Підтримувані типи даних (книга, гл. 8 — "Data"): 
+Підтримувані типи даних (книга, гл. 8 — "Data"):
     - klines (OHLCV) — для свічкових стратегій;
     - aggTrades (трейди з buy/sell флагом) — для обчислення CVD та потоку заявок;
     - funding rate history — для фандінг-фільтрів.
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Iterable
+from typing import Any
 
 import pandas as pd
 
@@ -53,9 +53,7 @@ class Downloader:
 
     def __init__(self, client: BinanceClient | None = None, retries: int = 3) -> None:
         settings = get_settings()
-        self.client = client or BinanceClient(
-            settings.binance_api_key, settings.binance_api_secret, settings.exchange
-        )
+        self.client = client or BinanceClient(settings.binance_api_key, settings.binance_api_secret, settings.exchange)
         self.retries = retries
 
     def _with_retry(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
@@ -168,7 +166,13 @@ class Downloader:
                     "ts": t["timestamp"],
                     "price": float(t["price"]),
                     "amount": float(t["amount"]),
-                    "side": "buy" if t.get("side") == "buy" else ("sell" if t.get("side") == "sell" else ("buy" if not t.get("info", {}).get("m", True) else "sell")),
+                    "side": "buy"
+                    if t.get("side") == "buy"
+                    else (
+                        "sell"
+                        if t.get("side") == "sell"
+                        else ("buy" if not t.get("info", {}).get("m", True) else "sell")
+                    ),
                 }
                 for t in batch
             ]
@@ -242,9 +246,13 @@ def download_klines(symbol: str, interval: str, days: int, force: bool = False) 
         staleness = max(2 * _interval_ms(interval), 60_000)
         stale = newest < now - pd.Timedelta(milliseconds=staleness)
         if oldest <= needed_from and not stale:
-            logger.info("Кеш klines %s %s покриває період і свіжий: %d рядків (до %s)", symbol, interval, len(cached), newest)
+            logger.info(
+                "Кеш klines %s %s покриває період і свіжий: %d рядків (до %s)", symbol, interval, len(cached), newest
+            )
             return cached
-        logger.info("Розширення кешу klines %s %s: %d рядків (до %s, stale=%s)", symbol, interval, len(cached), newest, stale)
+        logger.info(
+            "Розширення кешу klines %s %s: %d рядків (до %s, stale=%s)", symbol, interval, len(cached), newest, stale
+        )
     logger.info("Завантаження klines %s %s за %d днів", symbol, interval, days)
     return Downloader().klines(symbol, interval, days)
 
@@ -267,11 +275,35 @@ def download_agg_trades(symbol: str, days: int, force: bool = False) -> pd.DataF
 
 
 def download_funding(symbol: str, days: int, force: bool = False) -> pd.DataFrame:
+    """Кеш фандінгу: свіжий лише якщо покриває період і остання ставка < 16 год.
+
+    Binance USDT-M нараховує фандінг кожні 8 год; 2 періоди без оновлення = stale.
+    """
     settings = get_settings()
     path = funding_path(settings.data_dir_abs, symbol)
     cached = None if force else load_funding(path)
     if cached is not None and not cached.empty:
-        return cached
+        now = _utc_now()
+        oldest = cached.index[0]
+        newest = cached.index[-1]
+        needed_from = now - pd.Timedelta(days=days)
+        stale = newest < now - pd.Timedelta(hours=16)
+        if oldest <= needed_from and not stale:
+            logger.info(
+                "Кеш funding %s покриває період і свіжий: %d рядків (до %s)",
+                symbol,
+                len(cached),
+                newest,
+            )
+            return cached
+        logger.info(
+            "Оновлення funding %s: %d рядків (до %s, stale=%s)",
+            symbol,
+            len(cached),
+            newest,
+            stale,
+        )
+    logger.info("Завантаження funding %s за %d днів", symbol, days)
     return Downloader().funding(symbol, days)
 
 

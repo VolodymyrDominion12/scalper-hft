@@ -35,9 +35,9 @@ class CostModel:
     slippage_frac: float = 0.0002  # 2 bps
     impact_frac: float = 0.0
     # ── Спринт 2 ──
-    impact_k: float = 0.1       # константа Square-Root Law (калібрується)
-    vol_ref: float = 0.0        # базова волатильність (частка ціни); 0 = без масштабування
-    vol_exp: float = 1.0        # показник масштабування slippage волатильністю
+    impact_k: float = 0.1  # константа Square-Root Law (калібрується)
+    vol_ref: float = 0.0  # базова волатильність (частка ціни); 0 = без масштабування
+    vol_exp: float = 1.0  # показник масштабування slippage волатильністю
 
     def taker_cost_per_side(self) -> float:
         return self.taker_fee + self.slippage_frac + self.impact_frac
@@ -154,9 +154,7 @@ def _atr_from_ohlc(df: pd.DataFrame, period: int = 14) -> pd.Series:
     """ATR-фолбек з OHLC, якщо у df немає готової колонки atr."""
     high, low, close = df["high"], df["low"], df["close"]
     prev_close = close.shift(1)
-    tr = pd.concat(
-        [(high - low), (high - prev_close).abs(), (low - prev_close).abs()], axis=1
-    ).max(axis=1)
+    tr = pd.concat([(high - low), (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
     return tr.ewm(alpha=1 / period, min_periods=period).mean()
 
 

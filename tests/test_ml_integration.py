@@ -11,7 +11,8 @@ def _make_df(n: int = 600, seed: int = 7) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     idx = pd.date_range("2025-01-01", periods=n, freq="1min")
     close = 100.0 * np.exp(np.cumsum(rng.normal(0, 0.002, n)))
-    open_ = np.roll(close, 1); open_[0] = close[0]
+    open_ = np.roll(close, 1)
+    open_[0] = close[0]
     high = np.maximum(open_, close) * (1 + rng.uniform(0, 0.001, n))
     low = np.minimum(open_, close) * (1 - rng.uniform(0, 0.001, n))
     volume = rng.uniform(10, 100, n)
@@ -22,6 +23,7 @@ def _make_df(n: int = 600, seed: int = 7) -> pd.DataFrame:
 
 
 # ── build_labeled_dataset ────────────────────────────────────────────────────
+
 
 class TestBuildLabeledDataset:
     def test_triple_barrier_returns_three_tuple(self):
@@ -115,12 +117,13 @@ lgbm = pytest.importorskip("lightgbm", reason="lightgbm не встановле�
 class TestTrainWalkForwardAFML:
     def _get_dataset(self, n=800):
         from scalper_hft.ml.features import build_labeled_dataset
+
         df = _make_df(n)
         X, y, w = build_labeled_dataset(df, mode="triple_barrier", holding_bars=8)
         return X, y, w, df["close"]
 
     def test_returns_mlresult(self):
-        from scalper_hft.ml.trainer import train_walk_forward, MlResult
+        from scalper_hft.ml.trainer import MlResult, train_walk_forward
 
         X, y, w, close = self._get_dataset()
         if len(X) < 100:
@@ -179,8 +182,10 @@ class TestTrainWalkForwardAFML:
         result = train_walk_forward(X, y, train_size=50, test_size=20, sample_weights=w)
         if result.feature_importance is not None:
             assert len(result.feature_importance) == len(X.columns)
-            assert result.feature_importance.index.tolist() == \
-                result.feature_importance.sort_values(ascending=False).index.tolist()
+            assert (
+                result.feature_importance.index.tolist()
+                == result.feature_importance.sort_values(ascending=False).index.tolist()
+            )
 
     def test_too_small_raises(self):
         from scalper_hft.ml.trainer import train_walk_forward
@@ -193,9 +198,10 @@ class TestTrainWalkForwardAFML:
 
 # ── train_from_ohlcv (end-to-end) ────────────────────────────────────────────
 
+
 class TestTrainFromOhlcv:
     def test_end_to_end_returns_mlresult(self):
-        from scalper_hft.ml.trainer import train_from_ohlcv, MlResult
+        from scalper_hft.ml.trainer import MlResult, train_from_ohlcv
 
         df = _make_df(800)
         result = train_from_ohlcv(
@@ -211,7 +217,7 @@ class TestTrainFromOhlcv:
         assert result.n_windows >= 1
 
     def test_horizon_mode_end_to_end(self):
-        from scalper_hft.ml.trainer import train_from_ohlcv, MlResult
+        from scalper_hft.ml.trainer import MlResult, train_from_ohlcv
 
         df = _make_df(600)
         result = train_from_ohlcv(df, train_size=50, test_size=20, mode="horizon")

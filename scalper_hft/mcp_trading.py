@@ -23,6 +23,7 @@ from typing import Any
 
 # ── Інструменти ──────────────────────────────────────────────────────────────
 
+
 def _strategy_list(args: dict | None = None) -> dict:
     from scalper_hft.strategies import REGISTRY
 
@@ -238,11 +239,16 @@ def handle_message(msg: dict) -> list[dict]:
     msg_id = msg.get("id")
 
     if method == "initialize":
-        return [_result(msg_id, {
-            "protocolVersion": _PROTOCOL_VERSION,
-            "capabilities": {"tools": {}},
-            "serverInfo": {"name": "scalper-hft", "version": "0.1.0"},
-        })]
+        return [
+            _result(
+                msg_id,
+                {
+                    "protocolVersion": _PROTOCOL_VERSION,
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "scalper-hft", "version": "0.1.0"},
+                },
+            )
+        ]
     if method == "notifications/initialized":
         return []  # notification — без відповіді
     if method == "ping":

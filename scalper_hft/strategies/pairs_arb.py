@@ -42,7 +42,9 @@ class PairsArb(Strategy):
             lookback=int(lookback),
         )
 
-    def generate_signals(self, df: pd.DataFrame, trades: pd.DataFrame | None = None, funding: pd.DataFrame | None = None) -> pd.Series:
+    def generate_signals(
+        self, df: pd.DataFrame, trades: pd.DataFrame | None = None, funding: pd.DataFrame | None = None
+    ) -> pd.Series:
         """Сигнал пари: +1 = шорт leg1/лонг leg2 (спред високий), −1 = дзеркально.
 
         df: DataFrame з колонками leg1/leg2 (ціни закриття перпів).

@@ -60,7 +60,9 @@ def _freq_seconds(freq: str) -> float:
     return float(n * 86400)
 
 
-def kaplan_meier(durations: np.ndarray | pd.Series, events: np.ndarray | pd.Series, max_time: int | None = None) -> pd.DataFrame:
+def kaplan_meier(
+    durations: np.ndarray | pd.Series, events: np.ndarray | pd.Series, max_time: int | None = None
+) -> pd.DataFrame:
     """Крива виживання Kaplan–Meier (без lifelines, на numpy).
 
     S(t) = Π_{t_i ≤ t} (1 − d_i/n_i), де d_i — події в момент t_i, n_i —
@@ -83,7 +85,7 @@ def kaplan_meier(durations: np.ndarray | pd.Series, events: np.ndarray | pd.Seri
         at_risk = int(np.sum(d >= t))
         n_events = int(np.sum((d == t) & (e == 1)))
         if at_risk > 0:
-            survival *= (1.0 - n_events / at_risk)
+            survival *= 1.0 - n_events / at_risk
         cum += n_events
         rows["time"].append(float(t))
         rows["n_risk"].append(at_risk)
@@ -126,8 +128,7 @@ def survival_by_feature(
     try:
         df["bin"] = pd.qcut(df["feat"], q=min(n_bins, df["feat"].nunique()), duplicates="drop")
     except ValueError:
-        df["bin"] = pd.qcut(df["feat"].rank(method="first"), q=min(n_bins, df["feat"].nunique()),
-                            duplicates="drop")
+        df["bin"] = pd.qcut(df["feat"].rank(method="first"), q=min(n_bins, df["feat"].nunique()), duplicates="drop")
     rows: dict[str, list] = {"bin": [], "n": [], "median_hold": [], "survival_10": []}
     overall_median = float(df["duration"].median())
     for b, g in df.groupby("bin", observed=True):

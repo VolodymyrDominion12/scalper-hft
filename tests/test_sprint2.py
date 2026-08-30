@@ -41,6 +41,7 @@ def _make_trades(n: int = 3000, seed: int = 22, drift: float = 0.0) -> pd.DataFr
 
 # ── 1. Мікроструктура ────────────────────────────────────────────────────────
 
+
 class TestMicrostructure:
     def test_volume_bars(self):
         from scalper_hft.features.microstructure import volume_bars
@@ -118,6 +119,7 @@ class TestMicrostructure:
 
 # ── 2. HMM-режими ────────────────────────────────────────────────────────────
 
+
 class TestHmmRegime:
     def test_hmm_recovers_two_regimes(self):
         from scalper_hft.features.hmm_regime import GaussianHMM
@@ -147,6 +149,7 @@ class TestHmmRegime:
 
 
 # ── 3. GARCH ─────────────────────────────────────────────────────────────────
+
 
 class TestGarch:
     def _sim_garch(self, n: int = 2000, seed: int = 4, alpha: float = 0.08, beta: float = 0.9) -> np.ndarray:
@@ -202,6 +205,7 @@ class TestGarch:
 
 # ── 4. Емпіричний CostModel ──────────────────────────────────────────────────
 
+
 class TestCostModelSprint2:
     def test_vol_aware_slippage(self):
         from scalper_hft.backtest.execution import CostModel
@@ -229,8 +233,9 @@ class TestCostModelSprint2:
 
         c = CostModel(slippage_frac=0.0002, impact_k=0.1, vol_ref=0.01)
         base = c.total_cost_per_side(is_maker=True)
-        scaled = c.total_cost_per_side(is_maker=True, vol_frac=0.02,
-                                       qty_notional=1e4, adv_notional=1e6, sigma_frac=0.01)
+        scaled = c.total_cost_per_side(
+            is_maker=True, vol_frac=0.02, qty_notional=1e4, adv_notional=1e6, sigma_frac=0.01
+        )
         assert scaled > base
 
     def test_estimate_impact_k(self):
@@ -243,13 +248,19 @@ class TestCostModelSprint2:
         from scalper_hft.backtest.execution import estimate_spread_from_bookticker
 
         idx = pd.date_range("2025-01-01", periods=100, freq="1s")
-        bt = pd.DataFrame({"bid": 100.0 + np.random.default_rng(1).normal(0, 0.001, 100),
-                           "ask": 100.02 + np.random.default_rng(1).normal(0, 0.001, 100)}, index=idx)
+        bt = pd.DataFrame(
+            {
+                "bid": 100.0 + np.random.default_rng(1).normal(0, 0.001, 100),
+                "ask": 100.02 + np.random.default_rng(1).normal(0, 0.001, 100),
+            },
+            index=idx,
+        )
         s = estimate_spread_from_bookticker(bt)
         assert 0.0001 < s < 0.001
 
 
 # ── 5. ERC / risk-parity ─────────────────────────────────────────────────────
+
 
 class TestErc:
     def _returns(self, seed: int = 7) -> np.ndarray:
@@ -299,19 +310,18 @@ class TestErc:
         from scalper_hft.backtest.pairs_portfolio import run_pairs_portfolio
         from scalper_hft.strategies.pairs_arb import PairsArb
 
-        data = {"A": _make_klines(300, seed=1), "B": _make_klines(300, seed=2),
-                "C": _make_klines(300, seed=3)}
+        data = {"A": _make_klines(300, seed=1), "B": _make_klines(300, seed=2), "C": _make_klines(300, seed=3)}
         cfg = [
             {"leg1": "A", "leg2": "B", "strategy": PairsArb(entry_z=2.0, exit_z=0.3, lookback=60)},
             {"leg1": "B", "leg2": "C", "strategy": PairsArb(entry_z=2.0, exit_z=0.3, lookback=60)},
         ]
-        res = run_pairs_portfolio(data, cfg, position_pct=0.1, cost=CostModel(),
-                                  method="erc", turnover_rate=0.0005)
+        res = run_pairs_portfolio(data, cfg, position_pct=0.1, cost=CostModel(), method="erc", turnover_rate=0.0005)
         assert res.metrics is not None
         assert res.details["method"] == "erc"
 
 
 # ── 6. Feature importance (AFML Ch.8) ────────────────────────────────────────
+
 
 class TestFeatureImportance:
     def _data(self, n: int = 600, seed: int = 11):
@@ -321,8 +331,7 @@ class TestFeatureImportance:
         x1 = rng.normal(0, 1, n)
         noise = rng.normal(0, 1, n)
         y = np.sign(x0 + 0.8 * x1 + rng.normal(0, 0.5, n))
-        X = pd.DataFrame({"good0": x0, "good1": x1, "noise": noise,
-                          "noise2": rng.normal(0, 1, n)}, index=idx)
+        X = pd.DataFrame({"good0": x0, "good1": x1, "noise": noise, "noise2": rng.normal(0, 1, n)}, index=idx)
         return X, pd.Series(y, index=idx)
 
     def _factory(self):

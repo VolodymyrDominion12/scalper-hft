@@ -53,6 +53,7 @@ class Settings:
     position_pct: float = field(default_factory=lambda: _env_float("POSITION_PCT", 0.01))
     max_open_positions: int = field(default_factory=lambda: _env_int("MAX_OPEN_POSITIONS", 1))
     daily_loss_limit: float = field(default_factory=lambda: _env_float("DAILY_LOSS_LIMIT", 0.03))
+    weekly_loss_limit: float = field(default_factory=lambda: _env_float("WEEKLY_LOSS_LIMIT", 0.06))
     max_consecutive_losses: int = field(default_factory=lambda: _env_int("MAX_CONSECUTIVE_LOSSES", 3))
     pair_notional_pct: float = field(default_factory=lambda: _env_float("PAIR_NOTIONAL_PCT", 0.30))
     portfolio_notional_pct: float = field(default_factory=lambda: _env_float("PORTFOLIO_NOTIONAL_PCT", 0.60))
@@ -62,7 +63,9 @@ class Settings:
     # Дані
     data_dir: Path = field(default_factory=lambda: Path(os.getenv("DATA_DIR", "./data")))
     default_symbols: tuple[str, ...] = field(
-        default_factory=lambda: tuple(s.strip() for s in os.getenv("DEFAULT_SYMBOLS", "BTCUSDT,ETHUSDT,SOLUSDT").split(",") if s.strip())
+        default_factory=lambda: tuple(
+            s.strip() for s in os.getenv("DEFAULT_SYMBOLS", "BTCUSDT,ETHUSDT,SOLUSDT").split(",") if s.strip()
+        )
     )
     default_interval: str = field(default_factory=lambda: os.getenv("DEFAULT_INTERVAL", "1m"))
 

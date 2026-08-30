@@ -92,6 +92,7 @@ def meta_size(p_meta: np.ndarray | pd.Series, method: str = "logit") -> np.ndarr
 
 # ── Динамічний розмір і лімітна ціна (AFML Ch.10.6) ──────────────────────────
 
+
 def sigmoid_size(x: np.ndarray | float, omega: float) -> np.ndarray:
     """Сигмоїдний розмір: m[ω,x] = 2/(1 + e^{−ωx}) − 1 ∈ (−1, 1).
 

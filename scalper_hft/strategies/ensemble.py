@@ -59,6 +59,7 @@ class EnsembleStrategy(Strategy):
 
         signals = []
         import inspect
+
         for s in self.strats:
             try:
                 sig_params = inspect.signature(s.generate_signals).parameters
@@ -67,7 +68,7 @@ class EnsembleStrategy(Strategy):
                     kwargs["trades"] = trades
                 if "funding" in sig_params:
                     kwargs["funding"] = funding
-                
+
                 sig = s.generate_signals(df, **kwargs)
                 signals.append(sig.fillna(0.0))
             except Exception as e:
@@ -90,7 +91,8 @@ class EnsembleStrategy(Strategy):
                 elif (row < 0).all():
                     return -1.0
                 return 0.0
+
             return sig_df.apply(vote, axis=1)
-        
+
         # За замовчуванням (mean): усереднюємо капітал (наприклад 0.5 від першої, 0.5 від другої)
         return sig_df.mean(axis=1)

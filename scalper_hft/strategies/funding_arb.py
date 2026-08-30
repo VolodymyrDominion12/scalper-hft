@@ -44,7 +44,9 @@ class FundingArb(Strategy):
             exit_threshold=exit_threshold,
         )
 
-    def generate_signals(self, df: pd.DataFrame, trades: pd.DataFrame | None = None, funding: pd.DataFrame | None = None) -> pd.Series:
+    def generate_signals(
+        self, df: pd.DataFrame, trades: pd.DataFrame | None = None, funding: pd.DataFrame | None = None
+    ) -> pd.Series:
         """Carry-сигнал пари: +1 = шорт перп/лонг спот (збір позитивного фандінгу),
         −1 = лонг перп/шорт спот. Рішення за ПОПЕРЕДНЬОЮ ставкою (без lookahead)."""
         if funding is None or funding.empty:

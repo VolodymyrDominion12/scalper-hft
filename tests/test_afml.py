@@ -6,8 +6,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-
 # ── helpers ───────────────────────────────────────────────────────────────────
+
 
 def _make_close(n: int = 500, seed: int = 42) -> pd.Series:
     rng = np.random.default_rng(seed)
@@ -32,6 +32,7 @@ def _make_df(n: int = 500, seed: int = 42) -> pd.DataFrame:
 
 # ── Fractional Differentiation ────────────────────────────────────────────────
 
+
 class TestFracDiff:
     def test_ffd_returns_same_length(self):
         from scalper_hft.ml.frac_diff import frac_diff_ffd
@@ -42,7 +43,7 @@ class TestFracDiff:
 
     def test_ffd_no_nan_after_warmup(self):
         """Після warmup-рядків не повинно бути NaN."""
-        from scalper_hft.ml.frac_diff import frac_diff_ffd, _get_weights_ffd
+        from scalper_hft.ml.frac_diff import _get_weights_ffd, frac_diff_ffd
 
         s = _make_close(200)
         d = 0.4
@@ -109,6 +110,7 @@ class TestFracDiff:
 
 # ── Triple Barrier Labeling ───────────────────────────────────────────────────
 
+
 class TestTripleBarrier:
     def test_label_from_ohlcv_returns_dataframe(self):
         from scalper_hft.ml.labeling import label_from_ohlcv
@@ -158,6 +160,7 @@ class TestTripleBarrier:
 
 
 # ── Sample Weights ────────────────────────────────────────────────────────────
+
 
 class TestSampleWeights:
     def test_compute_sample_weights_shape(self):
@@ -223,5 +226,4 @@ class TestSampleWeights:
         w = compute_sample_weights(events, df["close"], decay=1.0)
         w_nonzero = w[w > 0]
         # get_time_decay_weights нормує до суми=1
-        assert abs(w_nonzero.sum() - 1.0) < 0.01, \
-            f"Сума ваг {w_nonzero.sum():.4f} != 1.0"
+        assert abs(w_nonzero.sum() - 1.0) < 0.01, f"Сума ваг {w_nonzero.sum():.4f} != 1.0"

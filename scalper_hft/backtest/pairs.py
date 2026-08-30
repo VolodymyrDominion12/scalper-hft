@@ -35,15 +35,61 @@ class PairsResult:
         m = self.metrics
         return (
             f"Pairs arb: ret={m.total_return:+.3%} | SRh={m.sharpe_hourly:+.3f} | угод={m.n_trades} "
-            f"| maxDD={m.max_drawdown:.2%} | funding={self.funding_pnl:+.3f}%\n"
-            + m.summary()
+            f"| maxDD={m.max_drawdown:.2%} | funding={self.funding_pnl:+.3f}%\n" + m.summary()
         )
 
 
 def _align(leg1: pd.DataFrame, leg2: pd.DataFrame) -> pd.DataFrame:
-    return leg1[["close"]].rename(columns={"close": "leg1"}).join(
-        leg2[["close"]].rename(columns={"close": "leg2"}), how="inner"
-    ).dropna()
+    frames = [
+        leg1[["close"]].rename(columns={"close": "leg1"}),
+        leg2[["close"]].rename(columns={"close": "leg2"}),
+    ]
+    if {"high", "low"}.issubset(leg1.columns) and {"high", "low"}.issubset(leg2.columns):
+        frames.extend(
+            [
+                leg1[["high", "low"]].add_prefix("l1_"),
+                leg2[["high", "low"]].add_prefix("l2_"),
+            ]
+        )
+    return frames[0].join(frames[1:], how="inner").dropna()
+
+
+def _maker_pair_positions(
+    signals: pd.Series,
+    common: pd.DataFrame,
+    position_pct: float,
+    rng: np.random.Generator | None = None,
+) -> pd.Series:
+    """Та сама модель філу, що й paper: touch + P(fill | distance-to-mid)."""
+    from scalper_hft.live.fills import both_or_neither, decide_fill
+
+    target = signals.astype(float).shift(1).fillna(0.0).clip(-1, 1) * position_pct
+    actual = np.zeros(len(common))
+    curr = 0.0
+    c1, c2 = common["leg1"].values, common["leg2"].values
+    h1, lo1 = common["l1_high"].values, common["l1_low"].values
+    h2, lo2 = common["l2_high"].values, common["l2_low"].values
+    for i in range(1, len(common)):
+        t = float(target.iloc[i])
+        if t == curr:
+            actual[i] = curr
+            continue
+        lim1, lim2 = float(c1[i - 1]), float(c2[i - 1])
+        if t > 0:
+            s1, s2 = "sell", "buy"
+        elif t < 0:
+            s1, s2 = "buy", "sell"
+        else:
+            s1, s2 = ("buy", "sell") if curr > 0 else ("sell", "buy")
+        mid1 = 0.5 * (float(h1[i]) + float(lo1[i]))
+        mid2 = 0.5 * (float(h2[i]) + float(lo2[i]))
+        d1 = decide_fill(s1, lim1, float(h1[i]), float(lo1[i]), mid=mid1, rng=rng)
+        d2 = decide_fill(s2, lim2, float(h2[i]), float(lo2[i]), mid=mid2, rng=rng)
+        d1, d2 = both_or_neither(d1, d2)
+        if d1.filled and d2.filled:
+            curr = t
+        actual[i] = curr
+    return pd.Series(actual, index=common.index)
 
 
 def run_pairs_backtest(
@@ -69,7 +115,11 @@ def run_pairs_backtest(
 
     ratio = np.log(common["leg1"] / common["leg2"])
     signals = strategy.generate_signals(common)
-    pos = signals.astype(float).shift(1).fillna(0.0).clip(-1, 1) * position_pct
+    has_range = {"l1_high", "l1_low", "l2_high", "l2_low"}.issubset(common.columns)
+    if maker_execution and has_range:
+        pos = _maker_pair_positions(signals, common, position_pct)
+    else:
+        pos = signals.astype(float).shift(1).fillna(0.0).clip(-1, 1) * position_pct
 
     # спред PnL: pos=+1 (шорт leg1/лонг leg2) → −Δratio
     d_ratio = ratio.diff().fillna(0.0)
@@ -126,7 +176,9 @@ def _extract_trades(pos: pd.Series, strat_ret: pd.Series) -> pd.DataFrame:
     for ts, p in pos.items():
         if p != cur:
             if cur != 0 and entry_ts is not None:
-                rows.append({"entry_ts": entry_ts, "exit_ts": ts, "side": int(cur / abs(cur)) if cur else 0, "ret": cum})
+                rows.append(
+                    {"entry_ts": entry_ts, "exit_ts": ts, "side": int(cur / abs(cur)) if cur else 0, "ret": cum}
+                )
             entry_ts = ts if p != 0 else None
             cum = 0.0
             cur = p
@@ -134,8 +186,10 @@ def _extract_trades(pos: pd.Series, strat_ret: pd.Series) -> pd.DataFrame:
             cum += strat_ret.get(ts, 0.0)
     if cur != 0 and entry_ts is not None:
         rows.append({"entry_ts": entry_ts, "exit_ts": pos.index[-1], "side": int(cur / abs(cur)), "ret": cum})
-    return pd.DataFrame(rows, columns=["entry_ts", "exit_ts", "side", "ret"]) if rows else pd.DataFrame(
-        columns=["entry_ts", "exit_ts", "side", "ret"]
+    return (
+        pd.DataFrame(rows, columns=["entry_ts", "exit_ts", "side", "ret"])
+        if rows
+        else pd.DataFrame(columns=["entry_ts", "exit_ts", "side", "ret"])
     )
 
 
@@ -167,8 +221,12 @@ def run_pairs_walk_forward(
         f1_te = _slice_by_time(funding1, te.index[0], te.index[-1])
         f2_te = _slice_by_time(funding2, te.index[0], te.index[-1])
         try:
-            r_is = run_pairs_backtest(l1_tr, l2_tr, strategy, f1_tr, f2_tr, position_pct=position_pct, maker_execution=maker_execution)
-            r_oos = run_pairs_backtest(l1_te, l2_te, strategy, f1_te, f2_te, position_pct=position_pct, maker_execution=maker_execution)
+            r_is = run_pairs_backtest(
+                l1_tr, l2_tr, strategy, f1_tr, f2_tr, position_pct=position_pct, maker_execution=maker_execution
+            )
+            r_oos = run_pairs_backtest(
+                l1_te, l2_te, strategy, f1_te, f2_te, position_pct=position_pct, maker_execution=maker_execution
+            )
             is_s.append(r_is.metrics.sharpe_hourly)
             oos.append(r_oos.metrics.sharpe_hourly)
         except Exception:  # noqa: BLE001

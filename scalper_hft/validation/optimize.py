@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Callable
 
 import numpy as np
 import pandas as pd
@@ -65,7 +64,9 @@ def _default_objective(
         trades_tr = trades.iloc[train_idx] if trades is not None else None
         funding_tr = _slice_funding(funding, te.index[0], te.index[-1]) if funding is not None else None
         try:
-            res = run_backtest(te, strategy_cls(**params), cost=cost, trades=trades_tr, funding=funding_tr, position_pct=position_pct)
+            res = run_backtest(
+                te, strategy_cls(**params), cost=cost, trades=trades_tr, funding=funding_tr, position_pct=position_pct
+            )
             sharpe = res.metrics.sharpe
         except Exception:  # noqa: BLE001
             sharpe = -1.0
@@ -104,7 +105,7 @@ def optimize_params(
     strategy_cls = type(strategy)
     space = strategy.param_space
 
-    def objective(trial: "optuna.Trial") -> float:
+    def objective(trial: optuna.Trial) -> float:
         params: dict = {}
         for pname, (lo, hi, step) in space.items():
             is_int = float(step) == int(step) and float(lo) == int(lo) and float(hi) == int(hi)
@@ -112,11 +113,12 @@ def optimize_params(
                 params[pname] = trial.suggest_int(pname, int(lo), int(hi))
             else:
                 params[pname] = trial.suggest_float(pname, float(lo), float(hi))
-        return _default_objective(
-            df, strategy_cls, params, cost, trades, funding, n_splits, embargo, position_pct
-        )
+        return _default_objective(df, strategy_cls, params, cost, trades, funding, n_splits, embargo, position_pct)
 
-    study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(seed=42) if sampler == "tpe" else optuna.samplers.RandomSampler(seed=42))
+    study = optuna.create_study(
+        direction="maximize",
+        sampler=optuna.samplers.TPESampler(seed=42) if sampler == "tpe" else optuna.samplers.RandomSampler(seed=42),
+    )
     study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
 
     # CV-оцінки найкращого варіанта (перезапуск objective з фіксованими параметрами)
@@ -128,8 +130,12 @@ def optimize_params(
             funding_te = _slice_funding(funding, te.index[0], te.index[-1]) if funding is not None else None
             try:
                 res = run_backtest(
-                    te, strategy_cls(**study.best_params), cost=cost, trades=trades_te,
-                    funding=funding_te, position_pct=position_pct,
+                    te,
+                    strategy_cls(**study.best_params),
+                    cost=cost,
+                    trades=trades_te,
+                    funding=funding_te,
+                    position_pct=position_pct,
                 )
                 score = res.metrics.sharpe
             except Exception:  # noqa: BLE001
@@ -147,6 +153,7 @@ def optimize_params(
 
 # ── ML-специфічна оптимізація (AFML Ch.7) ────────────────────────────────────
 
+
 def optimize_ml_params(
     df: pd.DataFrame,
     n_trials: int = 40,
@@ -158,7 +165,7 @@ def optimize_ml_params(
     add_frac_diff: bool = True,
     trades: pd.DataFrame | None = None,
     sampler: str = "tpe",
-) -> "OptimizationResult":
+) -> OptimizationResult:
     """Оптимізація pt/sl/holding_bars через PurgedKFold + LightGBM CV.
 
     На відміну від optimize_params() (який оптимізує по Sharpe бектесту),
@@ -191,12 +198,12 @@ def optimize_ml_params(
         raise ImportError("Встановіть lightgbm: uv add --optional ml lightgbm") from e
 
     from scalper_hft.ml.features import build_labeled_dataset
-    from scalper_hft.validation.cv import PurgedKFold
     from scalper_hft.ml.labeling import label_from_ohlcv
+    from scalper_hft.validation.cv import PurgedKFold
 
     pkf = PurgedKFold(n_splits=n_splits, embargo_pct=embargo_pct)
 
-    def objective(trial: "optuna.Trial") -> float:
+    def objective(trial: optuna.Trial) -> float:
         pt = trial.suggest_float("pt", 0.5, 2.5, step=0.25)
         sl = trial.suggest_float("sl", 0.5, 2.5, step=0.25)
         holding_bars = trial.suggest_int("holding_bars", 5, 30, step=5)
@@ -247,11 +254,7 @@ def optimize_ml_params(
             return -1.0 if scoring == "accuracy" else -10.0
 
     direction = "maximize"
-    sampler_obj = (
-        optuna.samplers.TPESampler(seed=42)
-        if sampler == "tpe"
-        else optuna.samplers.RandomSampler(seed=42)
-    )
+    sampler_obj = optuna.samplers.TPESampler(seed=42) if sampler == "tpe" else optuna.samplers.RandomSampler(seed=42)
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     study = optuna.create_study(direction=direction, sampler=sampler_obj)
     study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
@@ -272,18 +275,33 @@ def optimize_ml_params(
                 add_frac_diff=add_frac_diff,
             )
             from scalper_hft.ml.labeling import label_from_ohlcv as _lfo
-            ev = _lfo(df, pt=study.best_params["pt"], sl=study.best_params["sl"],
-                      holding_bars=study.best_params["holding_bars"])
+
+            ev = _lfo(
+                df,
+                pt=study.best_params["pt"],
+                sl=study.best_params["sl"],
+                holding_bars=study.best_params["holding_bars"],
+            )
             t1_best = ev.loc[ev.index.intersection(X_best.index), "t1"]
 
             model_final = LGBMClassifier(
-                n_estimators=200, learning_rate=0.05, num_leaves=31,
-                min_child_samples=30, class_weight="balanced", verbosity=-1,
+                n_estimators=200,
+                learning_rate=0.05,
+                num_leaves=31,
+                min_child_samples=30,
+                class_weight="balanced",
+                verbosity=-1,
             )
-            cv_scores = list(pkf.cross_val_score(
-                model_final, X_best, y_best, t1=t1_best,
-                sample_weight=w_best, scoring=scoring,
-            ))
+            cv_scores = list(
+                pkf.cross_val_score(
+                    model_final,
+                    X_best,
+                    y_best,
+                    t1=t1_best,
+                    sample_weight=w_best,
+                    scoring=scoring,
+                )
+            )
         except Exception as e:
             logger.warning("Final CV failed: %s", e)
 
@@ -294,4 +312,3 @@ def optimize_ml_params(
         n_trials=n_trials,
         details={"scoring": scoring, "n_splits": n_splits, "method": "PurgedKFold"},
     )
-

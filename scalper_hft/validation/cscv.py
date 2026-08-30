@@ -47,12 +47,12 @@ def _sharpe(x: np.ndarray) -> float:
 
 
 def variant_returns(
-    df: "pd.DataFrame",
-    strategy: "Strategy",
+    df: pd.DataFrame,
+    strategy: Strategy,
     n_variants: int = 30,
-    cost: "CostModel | None" = None,
-    trades: "pd.DataFrame | None" = None,
-    funding: "pd.DataFrame | None" = None,
+    cost: CostModel | None = None,
+    trades: pd.DataFrame | None = None,
+    funding: pd.DataFrame | None = None,
     seed: int = 42,
     position_pct: float = 0.01,
 ) -> np.ndarray:
@@ -75,8 +75,12 @@ def variant_returns(
                 params[pname] = float(rng.uniform(lo, hi))
         try:
             res = run_backtest(
-                df, type(strategy)(**params), cost=cost, trades=trades,
-                funding=funding, position_pct=position_pct,
+                df,
+                type(strategy)(**params),
+                cost=cost,
+                trades=trades,
+                funding=funding,
+                position_pct=position_pct,
             )
             rows.append(res.equity.pct_change().fillna(0.0).values)
         except Exception:  # noqa: BLE001
@@ -149,13 +153,21 @@ def pbo_cscv(
         is_best_oos.append(oos_sharpe)
 
     if not is_best_oos:
-        return CscvResult(pbo=1.0, n_combos=0, n_variants=s, n_blocks=n_blocks,
-                          is_best_oos_sharpes=np.array([]), oos_sharpe_median=0.0)
+        return CscvResult(
+            pbo=1.0,
+            n_combos=0,
+            n_variants=s,
+            n_blocks=n_blocks,
+            is_best_oos_sharpes=np.array([]),
+            oos_sharpe_median=0.0,
+        )
 
     oos_arr = np.array(is_best_oos)
     median = float(np.median(oos_arr))
     # PBO: частка комбінацій, де IS-кращий гірший за медіану або нижче порогу
-    pbo = float(np.mean(oos_arr < min(median, threshold)) ) if median > threshold else float(np.mean(oos_arr < threshold))
+    pbo = (
+        float(np.mean(oos_arr < min(median, threshold))) if median > threshold else float(np.mean(oos_arr < threshold))
+    )
     return CscvResult(
         pbo=pbo,
         n_combos=len(oos_arr),

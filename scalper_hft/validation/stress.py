@@ -108,8 +108,7 @@ def stress_report(
     from scalper_hft.backtest.metrics import compute_metrics
 
     stressed = stress_test(returns, scenarios)
-    rows: dict[str, list] = {"scenario": [], "total_return": [], "sharpe": [],
-                             "max_drawdown": [], "worst_period": []}
+    rows: dict[str, list] = {"scenario": [], "total_return": [], "sharpe": [], "max_drawdown": [], "worst_period": []}
     for name, r in stressed.items():
         if not isinstance(r.index, pd.DatetimeIndex):
             r = r.copy()

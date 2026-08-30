@@ -49,8 +49,7 @@ def decile_lift(
     try:
         df["bin"] = pd.qcut(df["feat"], q=min(n_bins, df["feat"].nunique()), duplicates="drop")
     except ValueError:
-        df["bin"] = pd.qcut(df["feat"].rank(method="first"), q=min(n_bins, df["feat"].nunique()),
-                            duplicates="drop")
+        df["bin"] = pd.qcut(df["feat"].rank(method="first"), q=min(n_bins, df["feat"].nunique()), duplicates="drop")
 
     overall = df["pnl"].mean()
     g = df.groupby("bin", observed=True)["pnl"]

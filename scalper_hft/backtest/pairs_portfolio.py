@@ -79,8 +79,14 @@ def run_pairs_portfolio(
         f1 = cfg.get("funding1")
         f2 = cfg.get("funding2")
         res = run_pairs_backtest(
-            data[leg1], data[leg2], strategy, f1, f2,
-            position_pct=position_pct, cost=cost, maker_execution=maker_execution,
+            data[leg1],
+            data[leg2],
+            strategy,
+            f1,
+            f2,
+            position_pct=position_pct,
+            cost=cost,
+            maker_execution=maker_execution,
         )
         name = f"{leg1}/{leg2}"
         pair_equities[name] = res.equity
@@ -106,6 +112,5 @@ def run_pairs_portfolio(
         equity=equity,
         pair_equities=pair_equities,
         metrics=metrics,
-        details={"weights": weights, "position_pct": position_pct,
-                 "method": method, "turnover_rate": turnover_rate},
+        details={"weights": weights, "position_pct": position_pct, "method": method, "turnover_rate": turnover_rate},
     )

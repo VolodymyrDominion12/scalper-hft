@@ -95,7 +95,9 @@ def test_engine_always_long_matches_buy_hold():
 
 def test_engine_fees_reduce_return():
     df = make_klines()
-    res_no_fee = run_backtest(df, FlipFlop(), cost=CostModel(maker_fee=0, taker_fee=0, slippage_frac=0), position_pct=0.1)
+    res_no_fee = run_backtest(
+        df, FlipFlop(), cost=CostModel(maker_fee=0, taker_fee=0, slippage_frac=0), position_pct=0.1
+    )
     res_fee = run_backtest(
         df, FlipFlop(), cost=CostModel(maker_fee=0.0005, taker_fee=0.0005, slippage_frac=0.0002), position_pct=0.1
     )
@@ -116,7 +118,6 @@ def test_metrics_basic():
 
 def test_deflated_sharpe():
     import numpy as np
-
     from scalper_hft.validation.deflated_sharpe import deflated_sharpe_ratio
 
     rng = np.random.default_rng(7)
@@ -127,10 +128,9 @@ def test_deflated_sharpe():
 
 
 def test_indicators_no_nan_at_tail():
-    import pandas as pd
 
     df = make_klines(500)
-    from scalper_hft.features.indicators import add_standard_features, rsi
+    from scalper_hft.features.indicators import add_standard_features
 
     f = add_standard_features(df)
     for col in ["rsi_14", "ema_9", "atr_14", "bb_width", "vwap_20"]:
@@ -149,7 +149,6 @@ def test_purged_kfold_covers_all():
 
 
 def test_downloader_cache_roundtrip(tmp_path):
-    import pandas as pd
 
     from scalper_hft.data.storage import klines_path, load_klines, save_klines
 
@@ -174,8 +173,7 @@ def test_cscv_pbo_math():
     """CSCV: зі штучними даними, де edge є — PBO має бути низьким;
     де edge немає (шум) — PBO високий."""
     import numpy as np
-
-    from scalper_hft.validation.cscv import combinatorial_splits, pbo_cscv
+    from scalper_hft.validation.cscv import pbo_cscv
 
     n, s = 1600, 8
     rng = np.random.default_rng(11)
@@ -232,14 +230,15 @@ def test_funding_charged_once_per_block():
     """Funding платиться ОДИН раз на період ставки, а не кожен бар."""
     import numpy as np
     import pandas as pd
-
     from scalper_hft.backtest.engine import run_backtest
     from scalper_hft.backtest.execution import CostModel
 
     # 3 години 1m-барів; одна funding-ставка в середині
     idx = pd.date_range("2025-01-01", periods=180, freq="1min")
     close = pd.Series(100.0 + 0.001 * np.arange(180), index=idx)
-    df = pd.DataFrame({"open": close, "high": close * 1.001, "low": close * 0.999, "close": close, "volume": 10.0}, index=idx)
+    df = pd.DataFrame(
+        {"open": close, "high": close * 1.001, "low": close * 0.999, "close": close, "volume": 10.0}, index=idx
+    )
     funding = pd.DataFrame({"fundingRate": [0.001]}, index=[pd.Timestamp("2025-01-01 01:00:00")])
 
     class AlwaysShort:
@@ -256,8 +255,12 @@ def test_funding_charged_once_per_block():
             return pd.Series(-1, index=df.index)
 
     # шорт з позитивним фандінгом ОТРИМУЄ платіж: -pos × rate = -(-1) × 0.001 = +0.001
-    res_f = run_backtest(df, AlwaysShort(), cost=CostModel(maker_fee=0, taker_fee=0, slippage_frac=0), funding=funding, position_pct=1.0)
-    res_0 = run_backtest(df, AlwaysShort(), cost=CostModel(maker_fee=0, taker_fee=0, slippage_frac=0), funding=None, position_pct=1.0)
+    res_f = run_backtest(
+        df, AlwaysShort(), cost=CostModel(maker_fee=0, taker_fee=0, slippage_frac=0), funding=funding, position_pct=1.0
+    )
+    res_0 = run_backtest(
+        df, AlwaysShort(), cost=CostModel(maker_fee=0, taker_fee=0, slippage_frac=0), funding=None, position_pct=1.0
+    )
     diff = res_f.equity.pct_change().fillna(0.0) - res_0.equity.pct_change().fillna(0.0)
     # funding вплив має бути ≈ +0.001 РІВНО на одному барі (а не на всіх 180)
     n_funding_bars = int((diff.abs() > 1e-9).sum())
@@ -270,7 +273,6 @@ def test_paper_replay_daily_reset():
     """Пауза після серії збитків скидається на новий день (не блокує назавжди)."""
     import numpy as np
     import pandas as pd
-
     from scalper_hft.live.paper_replay import paper_replay
 
     # 3 дні 1m-барів; ціна щодня падає → кожен лонг-цикл збитковий
@@ -307,7 +309,6 @@ def test_delta_neutral_basis_accounting():
     """Delta-neutral: ціновий PnL = ±Δbasis; funding один раз за блок; 2-leg комісії."""
     import numpy as np
     import pandas as pd
-
     from scalper_hft.backtest.delta_neutral import run_delta_neutral_backtest
     from scalper_hft.backtest.execution import CostModel
     from scalper_hft.strategies.funding_arb import FundingArb
@@ -320,8 +321,7 @@ def test_delta_neutral_basis_accounting():
     funding = pd.DataFrame({"fundingRate": [0.0005, 0.0005, 0.0005]}, index=[idx[30], idx[150], idx[210]])
     # carry=+1 (шорт перп/лонг спот) при позитивному фандінгу
     s = FundingArb(upper_threshold=0.0004, lower_threshold=-0.0004, exit_threshold=0.0001)
-    res = run_delta_neutral_backtest(perp, spot, s, funding, position_pct=1.0,
-                                     cost=CostModel(0, 0, 0))
+    res = run_delta_neutral_backtest(perp, spot, s, funding, position_pct=1.0, cost=CostModel(0, 0, 0))
     # basis зростає → carry+1 (шорт перп) втрачає на basis; funding отримує на активній позиції
     ret_total = res.metrics.total_return
     assert ret_total < 0, f"шорт перпа при зростаючому basis має втрачати, отримали {ret_total}"
@@ -345,7 +345,6 @@ def test_basis_reversion_signals():
     """Basis_reversion: сигнали з'являються при аномальному basis."""
     import numpy as np
     import pandas as pd
-
     from scalper_hft.strategies.basis_reversion import BasisReversion
 
     idx = pd.date_range("2025-01-01", periods=500, freq="1min")
@@ -363,14 +362,13 @@ def test_pairs_accounting():
     """Парний бектест: спред PnL = ∓Δratio; funding ніг з правильними знаками."""
     import numpy as np
     import pandas as pd
-
     from scalper_hft.backtest.execution import CostModel
     from scalper_hft.backtest.pairs import run_pairs_backtest
     from scalper_hft.strategies.pairs_arb import PairsArb
 
     idx = pd.date_range("2025-01-01", periods=500, freq="1min")
-    leg1 = pd.DataFrame({"close": 100.0 + 0.002 * np.arange(500)}, index=idx)   # росте
-    leg2 = pd.DataFrame({"close": 100.0 + 0.0 * np.arange(500)}, index=idx)     # flat
+    leg1 = pd.DataFrame({"close": 100.0 + 0.002 * np.arange(500)}, index=idx)  # росте
+    leg2 = pd.DataFrame({"close": 100.0 + 0.0 * np.arange(500)}, index=idx)  # flat
     f1 = pd.DataFrame({"fundingRate": [0.0005]}, index=[idx[100], idx[250], idx[400]])
     f2 = pd.DataFrame({"fundingRate": [0.0005]}, index=[idx[100], idx[250], idx[400]])
     # ratio=log(leg1/leg2) зростає → z стає високим → pos=+1 (шорт leg1/лонг leg2) → втрачає
@@ -386,7 +384,6 @@ def test_pairs_portfolio_combines():
     """Портфель пар: комбінація equity з вагами."""
     import numpy as np
     import pandas as pd
-
     from scalper_hft.backtest.execution import CostModel
     from scalper_hft.backtest.pairs_portfolio import run_pairs_portfolio
     from scalper_hft.strategies.pairs_arb import PairsArb

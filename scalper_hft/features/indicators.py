@@ -39,27 +39,21 @@ def sma(series: pd.Series, window: int) -> pd.Series:
 def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     high, low, close = df["high"], df["low"], df["close"]
     prev_close = close.shift(1)
-    tr = pd.concat(
-        [(high - low), (high - prev_close).abs(), (low - prev_close).abs()], axis=1
-    ).max(axis=1)
+    tr = pd.concat([(high - low), (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
     return tr.ewm(alpha=1 / period, min_periods=period).mean()
 
 
 def bollinger(close: pd.Series, period: int = 20, num_std: float = 2.0) -> pd.DataFrame:
     mid = close.rolling(period, min_periods=period).mean()
     std = close.rolling(period, min_periods=period).std(ddof=0)
-    return pd.DataFrame(
-        {"bb_mid": mid, "bb_up": mid + num_std * std, "bb_low": mid - num_std * std}
-    )
+    return pd.DataFrame({"bb_mid": mid, "bb_up": mid + num_std * std, "bb_low": mid - num_std * std})
 
 
 def rolling_vwap(df: pd.DataFrame, window: int) -> pd.Series:
     """Зважена за об'ємом середня ціна у ковзному вікні (без lookahead)."""
     tp = (df["high"] + df["low"] + df["close"]) / 3.0
     pv = tp * df["volume"]
-    return pv.rolling(window, min_periods=window).sum() / df["volume"].rolling(
-        window, min_periods=window
-    ).sum()
+    return pv.rolling(window, min_periods=window).sum() / df["volume"].rolling(window, min_periods=window).sum()
 
 
 def realized_vol(close: pd.Series, window: int = 30) -> pd.Series:

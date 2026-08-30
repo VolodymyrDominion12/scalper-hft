@@ -2,12 +2,25 @@
   "mcpServers": {
     "filesystem": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/volodymyr/PycharmProjects/scalper-hft"]
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/home/volodymyr/PycharmProjects/scalper-hft"
+      ]
     },
     "python-scalper": {
       "command": "/home/volodymyr/PycharmProjects/scalper-hft/.venv/bin/python",
-      "args": ["-m", "scalper_hft.cli"],
+      "args": [
+        "-m",
+        "scalper_hft.cli"
+      ],
       "env": {}
+    },
+    "context7": {
+      "url": "https://mcp.context7.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ctx7sk-216c5458-687a-400d-bcd8-e6b9dfb61a7b"
+      }
     }
   }
 }

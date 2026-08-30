@@ -39,11 +39,12 @@ except ImportError:  # pragma: no cover
 
 # ── Результат ─────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class MlResult:
     oos_accuracy: float
     oos_logloss: float
-    oos_sharpe: float       # Sharpe симуляції: позиція = знак прогнозу
+    oos_sharpe: float  # Sharpe симуляції: позиція = знак прогнозу
     predictions: pd.Series
     n_train: int
     n_test: int
@@ -61,14 +62,39 @@ class MlResult:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _simulate_sharpe(preds: pd.Series, close: pd.Series) -> float:
-    """Sharpe стратегії 'позиція = знак прогнозу' на OOS-даних."""
+
+def _simulate_sharpe(
+    preds: pd.Series,
+    close: pd.Series,
+    cost: object | None = None,
+) -> float:
+    """Net Sharpe: знак прогнозу × ret − taker-комісії за turnover."""
+    from scalper_hft.backtest.execution import CostModel
+
+    cm = cost if isinstance(cost, CostModel) else CostModel()
     pos = np.sign(preds).astype(float)
     ret = close.pct_change().fillna(0.0)
-    strat = pos.shift(1).fillna(0.0) * ret
+    pos_lag = pos.shift(1).fillna(0.0)
+    turnover = (pos_lag - pos_lag.shift(1)).abs().fillna(pos_lag.abs())
+    fees = turnover * cm.taker_cost_per_side()
+    strat = pos_lag * ret - fees
     if strat.std() == 0 or len(strat) < 2:
         return 0.0
     return float(strat.mean() / strat.std(ddof=0) * np.sqrt(len(strat)))
+
+
+def _purge_train_slice(
+    index: pd.Index,
+    t1: pd.Series,
+    train_end: int,
+    test_end: int,
+) -> np.ndarray:
+    """Індекси train, чиї лейбли не заходять у test (AFML purge)."""
+    t_test_start = index[train_end]
+    t1_al = t1.reindex(index)
+    t1_al = t1_al.fillna(pd.Series(index, index=index))
+    keep = [i for i in range(train_end) if t1_al.iloc[i] <= t_test_start]
+    return np.asarray(keep, dtype=int)
 
 
 def _logloss(y_true: np.ndarray, p_pos: np.ndarray) -> float:
@@ -88,12 +114,13 @@ def _default_lgbm_params() -> dict:
         "colsample_bytree": 0.8,
         "reg_alpha": 0.1,
         "reg_lambda": 0.1,
-        "class_weight": "balanced",   # компенсація незбалансованих класів
+        "class_weight": "balanced",  # компенсація незбалансованих класів
         "verbosity": -1,
     }
 
 
 # ── Walk-Forward з AFML ──────────────────────────────────────────────────────
+
 
 def train_walk_forward(
     X: pd.DataFrame,
@@ -103,6 +130,8 @@ def train_walk_forward(
     params: dict | None = None,
     close: pd.Series | None = None,
     sample_weights: pd.Series | None = None,
+    t1: pd.Series | None = None,
+    cost: object | None = None,
 ) -> MlResult:
     """Walk-forward навчання LightGBM з AFML sample weights.
 
@@ -133,8 +162,16 @@ def train_walk_forward(
         idx_tr = slice(start, start + train_size)
         idx_te = slice(start + train_size, start + train_size + test_size)
 
-        X_tr = X.iloc[idx_tr]
-        y_tr = y.iloc[idx_tr]
+        if t1 is not None:
+            tr_idx = _purge_train_slice(X.index, t1, start + train_size, start + train_size + test_size)
+            if len(tr_idx) < 10:
+                start += test_size
+                continue
+            X_tr = X.iloc[tr_idx]
+            y_tr = y.iloc[tr_idx]
+        else:
+            X_tr = X.iloc[idx_tr]
+            y_tr = y.iloc[idx_tr]
         X_te = X.iloc[idx_te]
 
         # sample weights для навчального вікна
@@ -186,7 +223,7 @@ def train_walk_forward(
     ll = _logloss(y_oos.values.astype(int), p_pos_all)
 
     close_aligned = close.reindex(preds.index) if close is not None else None
-    sharpe = _simulate_sharpe(preds, close_aligned) if close_aligned is not None else 0.0
+    sharpe = _simulate_sharpe(preds, close_aligned, cost=cost) if close_aligned is not None else 0.0
 
     # середня feature importance по всіх вікнах
     feat_importance = None
@@ -208,6 +245,7 @@ def train_walk_forward(
 
 
 # ── Зручний end-to-end helper ─────────────────────────────────────────────────
+
 
 def train_from_ohlcv(
     df: pd.DataFrame,
@@ -284,6 +322,7 @@ def train_from_ohlcv(
 
 # ── Walk-forward мета-лейблінг (AFML Ch.3.6–3.7) ─────────────────────────────
 
+
 def _oof_primary_predictions(
     X: pd.DataFrame,
     y: pd.Series,
@@ -319,6 +358,8 @@ def train_walk_forward_meta(
     test_size: int = 500,
     sample_weights: pd.Series | None = None,
     params: dict | None = None,
+    close: pd.Series | None = None,
+    cost: object | None = None,
 ) -> tuple[pd.Series, pd.Series]:
     """Walk-forward мета-лейблінг: primary задає сторону, мета — «торгувати чи ні».
 
@@ -363,7 +404,14 @@ def train_walk_forward_meta(
 
         # 2) чесні OOF-прогнози primary на train → мета-мітки
         side_tr_oof = _oof_primary_predictions(X_tr, y_tr, w_tr, params)
-        y_meta_tr = (side_tr_oof == y_tr.values).astype(int)
+        from scalper_hft.backtest.execution import CostModel
+
+        fee = (cost if isinstance(cost, CostModel) else CostModel()).taker_cost_per_side() * 2
+        if close is not None:
+            ret = close.reindex(X_tr.index).pct_change().shift(-1).fillna(0.0).values
+            y_meta_tr = (side_tr_oof * ret - fee > 0).astype(int)
+        else:
+            y_meta_tr = (side_tr_oof == y_tr.values).astype(int)
 
         # 3) мета: P(primary правий | фічі + side)
         meta = None
@@ -402,6 +450,7 @@ def _predict_binary(model: object, X: pd.DataFrame) -> np.ndarray:
 
 
 # ── Inference ─────────────────────────────────────────────────────────────────
+
 
 def predict(model: object, X: pd.DataFrame) -> np.ndarray:
     """Прогноз напрямку (+1/-1) для нових даних."""

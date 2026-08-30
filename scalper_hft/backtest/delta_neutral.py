@@ -37,8 +37,7 @@ class DeltaNeutralResult:
         return (
             f"Delta-neutral arb: ret={m.total_return:+.3%} | SRh={m.sharpe_hourly:+.3f} "
             f"| угод={m.n_trades} | maxDD={m.max_drawdown:.2%}\n"
-            f"  funding PnL: {self.funding_pnl:+.3f}% від капіталу | basis std: {self.basis.std():.4%}\n"
-            + m.summary()
+            f"  funding PnL: {self.funding_pnl:+.3f}% від капіталу | basis std: {self.basis.std():.4%}\n" + m.summary()
         )
 
 
@@ -63,9 +62,12 @@ def run_delta_neutral_backtest(
     if funding is None or funding.empty:
         raise ValueError("Delta-neutral arb потребує funding даних")
 
-    common = perp[["close"]].rename(columns={"close": "perp"}).join(
-        spot[["close"]].rename(columns={"close": "spot"}), how="inner"
-    ).dropna()
+    common = (
+        perp[["close"]]
+        .rename(columns={"close": "perp"})
+        .join(spot[["close"]].rename(columns={"close": "spot"}), how="inner")
+        .dropna()
+    )
     if len(common) < 100:
         raise ValueError("Замало спільних барів перп/спот")
 
@@ -118,7 +120,9 @@ def _extract_pair_trades(pos: pd.Series, strat_ret: pd.Series) -> pd.DataFrame:
     for ts, p in pos.items():
         if p != cur:
             if cur != 0 and entry_ts is not None:
-                rows.append({"entry_ts": entry_ts, "exit_ts": ts, "side": int(cur / abs(cur)) if cur else 0, "ret": cum})
+                rows.append(
+                    {"entry_ts": entry_ts, "exit_ts": ts, "side": int(cur / abs(cur)) if cur else 0, "ret": cum}
+                )
             entry_ts = ts if p != 0 else None
             cum = 0.0
             cur = p
@@ -126,8 +130,10 @@ def _extract_pair_trades(pos: pd.Series, strat_ret: pd.Series) -> pd.DataFrame:
             cum += strat_ret.get(ts, 0.0)
     if cur != 0 and entry_ts is not None:
         rows.append({"entry_ts": entry_ts, "exit_ts": pos.index[-1], "side": int(cur / abs(cur)), "ret": cum})
-    return pd.DataFrame(rows, columns=["entry_ts", "exit_ts", "side", "ret"]) if rows else pd.DataFrame(
-        columns=["entry_ts", "exit_ts", "side", "ret"]
+    return (
+        pd.DataFrame(rows, columns=["entry_ts", "exit_ts", "side", "ret"])
+        if rows
+        else pd.DataFrame(columns=["entry_ts", "exit_ts", "side", "ret"])
     )
 
 
@@ -144,9 +150,12 @@ def run_dn_walk_forward(
 
     Повертає словник з avg_is_sharpe, avg_oos_sharpe, часткою позитивних вікон.
     """
-    common = perp[["close"]].rename(columns={"close": "perp"}).join(
-        spot[["close"]].rename(columns={"close": "spot"}), how="inner"
-    ).dropna()
+    common = (
+        perp[["close"]]
+        .rename(columns={"close": "perp"})
+        .join(spot[["close"]].rename(columns={"close": "spot"}), how="inner")
+        .dropna()
+    )
     if len(common) < train_bars + test_bars:
         raise ValueError("Замало даних для walk-forward")
 

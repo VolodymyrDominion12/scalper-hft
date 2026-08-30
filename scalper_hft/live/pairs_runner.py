@@ -127,6 +127,12 @@ class PairsEngine:
         self.size_pct = pair_size_pct(n_pairs, settings.pair_notional_pct, settings.portfolio_notional_pct)
         self.max_losing_months = settings.max_losing_months
         self.daily_loss_limit = settings.daily_loss_limit
+        self.weekly_loss_limit = settings.weekly_loss_limit
+        self.week_start_equity = account.equity
+        self._last_week: tuple[int, int] | None = None
+        from scalper_hft.live.is_log import IsJournal
+
+        self.is_journal = IsJournal()
         self.pending: tuple[PendingOrder, PendingOrder] | None = None
         self.have = 0
         self.losing_months = 0
@@ -166,6 +172,8 @@ class PairsEngine:
             return False, "два збиткові місяці — пауза"
         if self.account.equity <= self.account.day_start_equity * (1 - self.daily_loss_limit):
             return False, "денний ліміт збитків"
+        if self.account.equity <= self.week_start_equity * (1 - self.weekly_loss_limit):
+            return False, "тижневий ліміт збитків"
         return True, "ok"
 
     def _log_order(self, ts: pd.Timestamp, o: PendingOrder, status: str, reason: str) -> None:
@@ -198,9 +206,7 @@ class PairsEngine:
             return f"unfilled:{reason}"
         return "pending"
 
-    def _apply_fills(
-        self, ts: pd.Timestamp, o1: PendingOrder, o2: PendingOrder, px1: float, px2: float
-    ) -> None:
+    def _apply_fills(self, ts: pd.Timestamp, o1: PendingOrder, o2: PendingOrder, px1: float, px2: float) -> None:
         if o1.reduce_only:
             closed: list[dict] = []
             for o, px in ((o1, px1), (o2, px2)):
@@ -217,6 +223,9 @@ class PairsEngine:
         self.account.open_position(o1.key, o1.pos_side, o1.size, px1, ts, is_maker=self.is_maker)
         self.account.open_position(o2.key, o2.pos_side, o2.size, px2, ts, is_maker=self.is_maker)
         self.have = 1 if o1.pos_side == "short" else -1
+        if self.is_journal:
+            self.is_journal.log(ts, self.pid, o1.symbol, o1.side, o1.limit_price, px1)
+            self.is_journal.log(ts, self.pid, o2.symbol, o2.side, o2.limit_price, px2)
 
     def _quote(self, ts: pd.Timestamp, want: int, p1: float, p2: float) -> str:
         if want == self.have:
@@ -233,24 +242,48 @@ class PairsEngine:
                 self.have = 0
                 return "hold"
             o1 = PendingOrder(
-                self.leg1, pos1.symbol, "sell" if pos1.side == "long" else "buy",
-                pos1.side, pos1.size, p1, True, ts,
+                self.leg1,
+                pos1.symbol,
+                "sell" if pos1.side == "long" else "buy",
+                pos1.side,
+                pos1.size,
+                p1,
+                True,
+                ts,
             )
             o2 = PendingOrder(
-                self.leg2, pos2.symbol, "sell" if pos2.side == "long" else "buy",
-                pos2.side, pos2.size, p2, True, ts,
+                self.leg2,
+                pos2.symbol,
+                "sell" if pos2.side == "long" else "buy",
+                pos2.side,
+                pos2.size,
+                p2,
+                True,
+                ts,
             )
         else:
             s1, s2 = legs_for_want(want)
             size1 = self.size_pct * equity / p1
             size2 = self.size_pct * equity / p2
             o1 = PendingOrder(
-                self.leg1, self._k(self.leg1), "sell" if s1 == "short" else "buy",
-                s1, size1, p1, False, ts,
+                self.leg1,
+                self._k(self.leg1),
+                "sell" if s1 == "short" else "buy",
+                s1,
+                size1,
+                p1,
+                False,
+                ts,
             )
             o2 = PendingOrder(
-                self.leg2, self._k(self.leg2), "sell" if s2 == "short" else "buy",
-                s2, size2, p2, False, ts,
+                self.leg2,
+                self._k(self.leg2),
+                "sell" if s2 == "short" else "buy",
+                s2,
+                size2,
+                p2,
+                False,
+                ts,
             )
         self.pending = (o1, o2)
         self._log_order(ts, o1, "pending", f"want={want}")
@@ -277,23 +310,34 @@ class PairsEngine:
         if funding1 is not None:
             pnl = self.account.apply_funding(self._k(self.leg1), funding1, ts)
             if pnl and self.store:
-                self.store.log_trade(ts, self.pid, {"type": "funding", "symbol": self.leg1, "pnl": pnl, "side": "", "size": 0})
+                self.store.log_trade(
+                    ts, self.pid, {"type": "funding", "symbol": self.leg1, "pnl": pnl, "side": "", "size": 0}
+                )
         if funding2 is not None:
             pnl = self.account.apply_funding(self._k(self.leg2), funding2, ts)
             if pnl and self.store:
-                self.store.log_trade(ts, self.pid, {"type": "funding", "symbol": self.leg2, "pnl": pnl, "side": "", "size": 0})
+                self.store.log_trade(
+                    ts, self.pid, {"type": "funding", "symbol": self.leg2, "pnl": pnl, "side": "", "size": 0}
+                )
 
         equity = self.account.equity_at(marks)
         day = ts.date()
         if getattr(self, "_last_day", None) is not None and day != self._last_day:
             self.account.roll_to_new_day(equity)
         self._last_day = day
+        iso = ts.isocalendar()
+        week = (int(iso.year), int(iso.week))
+        if self._last_week is not None and week != self._last_week:
+            self.week_start_equity = equity
+        self._last_week = week
         self._roll_month(ts, equity)
         parts.append(self._resolve_pending(ts, high1, low1, high2, low2))
         if self.pending is None:
             parts.append(self._quote(ts, int(signal), close1, close2))
         if self.store:
-            self.store.log_equity(ts, self.pid, self.account.equity_at(marks), self.account.cash, self.account.realized_pnl)
+            self.store.log_equity(
+                ts, self.pid, self.account.equity_at(marks), self.account.cash, self.account.realized_pnl
+            )
         self.last_bar_ts = ts
         return " | ".join(parts)
 

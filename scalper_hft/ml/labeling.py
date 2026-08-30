@@ -16,8 +16,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-
 # ── Допоміжні ────────────────────────────────────────────────────────────────
+
 
 def _daily_vol(close: pd.Series, span: int = 100) -> pd.Series:
     """Денна (per-bar) волатильність для встановлення бар'єрів."""
@@ -26,6 +26,7 @@ def _daily_vol(close: pd.Series, span: int = 100) -> pd.Series:
 
 
 # ── Бар'єри ───────────────────────────────────────────────────────────────────
+
 
 def get_events(
     close: pd.Series,
@@ -87,7 +88,7 @@ def _apply_pt_sl(
         df0 = close[loc:]
         # обмежуємо вертикальним бар'єром
         if pd.notna(events.at[loc, "t1"]):
-            df0 = df0[:events.at[loc, "t1"]]
+            df0 = df0[: events.at[loc, "t1"]]
         if df0.empty:
             out.at[loc, "t1"] = events.at[loc, "t1"]
             continue
@@ -96,9 +97,11 @@ def _apply_pt_sl(
         t_pt = df0[df0 >= pt * events.at[loc, "target"]].index.min() if pt > 0 else pd.NaT
         t_sl = df0[df0 <= -sl * events.at[loc, "target"]].index.min() if sl > 0 else pd.NaT
 
-        out.at[loc, "t1"] = min(
-            t for t in [t_pt, t_sl, events.at[loc, "t1"]] if pd.notna(t)
-        ) if any(pd.notna(t) for t in [t_pt, t_sl, events.at[loc, "t1"]]) else pd.NaT
+        out.at[loc, "t1"] = (
+            min(t for t in [t_pt, t_sl, events.at[loc, "t1"]] if pd.notna(t))
+            if any(pd.notna(t) for t in [t_pt, t_sl, events.at[loc, "t1"]])
+            else pd.NaT
+        )
 
     return out.join(events[["target", "side"]])
 
@@ -125,24 +128,49 @@ def get_labels(
     return out
 
 
+def get_t_events(close: pd.Series, threshold: float = 0.005) -> pd.DatetimeIndex:
+    """CUSUM filter (AFML Ch.2.5.2): події лише на інформативних зсувах ціни."""
+    log_ret = np.log(close / close.shift(1)).fillna(0.0)
+    events: list[pd.Timestamp] = []
+    s_pos = 0.0
+    s_neg = 0.0
+    for t, r in log_ret.items():
+        s_pos = max(0.0, s_pos + float(r))
+        s_neg = min(0.0, s_neg + float(r))
+        if s_pos > threshold or s_neg < -threshold:
+            events.append(pd.Timestamp(t))
+            s_pos = 0.0
+            s_neg = 0.0
+    return pd.DatetimeIndex(events)
+
+
 # ── Вертикальний бар'єр (простий helper) ─────────────────────────────────────
+
 
 def add_vertical_barrier(
     t_events: pd.DatetimeIndex,
     close: pd.Series,
     num_days: int = 1,
 ) -> pd.Series:
-    """Повертає Series t_events → t_events + num_days * bar_freq.
+    """Вертикальний бар'єр через `num_days` барів (не календарних днів).
 
-    num_days тут означає кількість барів-горизонту, а не календарних днів.
+    Ім'я аргумента історичне (AFML: num_days); для 1m/5m `holding_bars=10`
+    означає 10 свічок, а не 10 діб.
     """
-    t1 = close.index.searchsorted(t_events + pd.Timedelta(days=num_days))
-    t1 = t1[t1 < close.shape[0]]
-    t1 = pd.Series(close.index[t1], index=t_events[: len(t1)])
-    return t1
+    n_bars = int(num_days)
+    if n_bars < 1:
+        raise ValueError("num_days (бари горизонту) має бути >= 1")
+    locs = close.index.searchsorted(t_events)
+    t1_locs = locs + n_bars
+    valid = (locs >= 0) & (t1_locs < len(close.index))
+    if not np.any(valid):
+        return pd.Series(dtype="datetime64[ns]")
+    events = pd.DatetimeIndex(t_events)[valid]
+    return pd.Series(close.index[t1_locs[valid]], index=events)
 
 
 # ── Швидкий helper: від OHLCV до labeled dataset ──────────────────────────────
+
 
 def label_from_ohlcv(
     df: pd.DataFrame,
@@ -151,14 +179,20 @@ def label_from_ohlcv(
     holding_bars: int = 10,
     vol_span: int = 100,
     min_ret: float = 0.0,
+    event_filter: str = "all",
+    cusum_threshold: float = 0.005,
 ) -> pd.DataFrame:
     """Одна функція: OHLCV → events + labels.
 
-    Returns:
-        DataFrame з колонками [t1, target, side, label, ret]
+    event_filter: 'all' — кожен бар; 'cusum' — лише CUSUM-події (AFML 2.5.2).
     """
     close = df["close"]
-    t_events = close.index
+    if event_filter == "cusum":
+        t_events = get_t_events(close, threshold=cusum_threshold)
+        if len(t_events) == 0:
+            t_events = close.index
+    else:
+        t_events = close.index
     vol = _daily_vol(close, span=vol_span)
     t1 = add_vertical_barrier(t_events, close, num_days=holding_bars)
 

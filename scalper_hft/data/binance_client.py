@@ -109,12 +109,15 @@ class BinanceClient:
         price: float | None = None,
         params: dict[str, Any] | None = None,
         post_only: bool = False,
+        client_order_id: str | None = None,
     ) -> dict[str, Any]:
         """Створення ордера. post_only=True — лімітний maker-ордер (Binance:
         відхиляється, якщо перетнув би спред) — для збору maker-комісій."""
         params = dict(params or {})
         if post_only:
             params["postOnly"] = True
+        if client_order_id:
+            params["newClientOrderId"] = client_order_id
         return self.exchange.create_order(symbol, order_type, side, amount, price, params)
 
     def cancel_order(self, order_id: str, symbol: str) -> dict[str, Any]:
@@ -122,3 +125,9 @@ class BinanceClient:
 
     def fetch_balance(self) -> dict[str, Any]:
         return self.exchange.fetch_balance()
+
+    def fetch_positions(self, symbols: list[str] | None = None) -> list[dict[str, Any]]:
+        """Відкриті позиції USDT-M (для звірки з локальним рахунком)."""
+        if symbols:
+            return self.exchange.fetch_positions(symbols)
+        return self.exchange.fetch_positions()

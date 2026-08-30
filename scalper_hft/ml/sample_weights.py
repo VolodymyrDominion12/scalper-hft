@@ -16,8 +16,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-
 # ── Матриця індикаторів ───────────────────────────────────────────────────────
+
 
 def get_ind_matrix(
     bar_index: pd.DatetimeIndex,
@@ -54,6 +54,7 @@ def get_avg_uniqueness(ind_m: pd.DataFrame) -> pd.Series:
 
 
 # ── Sequential Bootstrap ──────────────────────────────────────────────────────
+
 
 def seq_bootstrap(
     ind_m: pd.DataFrame,
@@ -136,6 +137,7 @@ def get_num_co_events(
 
 # ── Time-Decay ваги ───────────────────────────────────────────────────────────
 
+
 def get_time_decay_weights(
     t1: pd.Series,
     num_co_events: pd.Series,
@@ -165,6 +167,7 @@ def get_time_decay_weights(
 
 
 # ── Комбінований helper ───────────────────────────────────────────────────────
+
 
 def compute_sample_weights(
     events: pd.DataFrame,

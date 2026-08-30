@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import numpy as np
 import pandas as pd
 
 from scalper_hft.backtest.execution import CostModel, apply_breakeven_gate
@@ -60,7 +61,9 @@ def _extract_trades(positions: pd.Series, ret: pd.Series, fees: pd.Series) -> pd
             bar_ret = ret.get(ts, 0.0) * cur_pos - fees.get(ts, 0.0)
             cum_ret += bar_ret
     if cur_pos != 0 and entry_ts is not None:
-        rows.append({"entry_ts": entry_ts, "exit_ts": positions.index[-1], "side": int(cur_pos / abs(cur_pos)), "ret": cum_ret})
+        rows.append(
+            {"entry_ts": entry_ts, "exit_ts": positions.index[-1], "side": int(cur_pos / abs(cur_pos)), "ret": cum_ret}
+        )
     return pd.DataFrame(rows, columns=["entry_ts", "exit_ts", "side", "ret"])
 
 
@@ -104,51 +107,51 @@ def run_backtest(
 
     # Вектор цільових позицій (з лагом 1)
     target_pos = signals.astype(float).shift(1).fillna(0.0).clip(-1, 1) * position_pct
-    
+
     if is_maker:
         # Симуляція Queue Position та Adverse Selection для Maker-ордерів
         actual_pos = np.zeros(len(df))
         adverse_penalties = np.zeros(len(df))
-        
+
         target_vals = target_pos.values
         close_vals = close.values
         low_vals = df["low"].values
         high_vals = df["high"].values
-        
+
         # Налаштування мікроструктури
         adverse_bps = 0.0001  # 1 bps penalty for adverse selection
-        prob_touch = 0.5      # 50% chance to fill if low/high equals limit
-        
+        prob_touch = 0.5  # 50% chance to fill if low/high equals limit
+
         curr_pos = 0.0
-        np.random.seed(42) # Для відтворюваності бектестів
+        np.random.seed(42)  # Для відтворюваності бектестів
         rands = np.random.rand(len(df))
-        
+
         for i in range(1, len(df)):
             t_pos = target_vals[i]
             if t_pos != curr_pos:
-                limit_px = close_vals[i-1]
+                limit_px = close_vals[i - 1]
                 low_px = low_vals[i]
                 high_px = high_vals[i]
-                
+
                 filled = False
-                if t_pos > curr_pos: # Buy order
+                if t_pos > curr_pos:  # Buy order
                     if low_px < limit_px:
                         filled = True
                         adverse_penalties[i] += abs(t_pos - curr_pos) * adverse_bps
                     elif low_px == limit_px and rands[i] < prob_touch:
                         filled = True
-                elif t_pos < curr_pos: # Sell order
+                elif t_pos < curr_pos:  # Sell order
                     if high_px > limit_px:
                         filled = True
                         adverse_penalties[i] += abs(curr_pos - t_pos) * adverse_bps
                     elif high_px == limit_px and rands[i] < prob_touch:
                         filled = True
-                        
+
                 if filled:
                     curr_pos = t_pos
-                    
+
             actual_pos[i] = curr_pos
-            
+
         pos = pd.Series(actual_pos, index=df.index)
         adv_penalty_series = pd.Series(adverse_penalties, index=df.index)
     else:

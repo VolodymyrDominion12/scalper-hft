@@ -15,7 +15,7 @@
 
 from __future__ import annotations
 
-from typing import Iterator
+from collections.abc import Iterator
 
 import numpy as np
 import pandas as pd
@@ -67,6 +67,7 @@ def split_by_index(
 
 
 # ── PurgedKFold (AFML Ch.7) ───────────────────────────────────────────────────
+
 
 class PurgedKFold:
     """Purged K-Fold Cross-Validator з урахуванням spanів triple-barrier лейблів.
@@ -133,7 +134,7 @@ class PurgedKFold:
             # заповнюємо NaN власним індексом (t1 = t0 означає миттєвий лейбл)
             idx_series = pd.Series(X.index, index=X.index)
             t1_aligned = t1_aligned.fillna(idx_series)
-            for i in indices[: test_start]:  # ліва частина train
+            for i in indices[:test_start]:  # ліва частина train
                 if train_mask[i] and t1_aligned.iloc[i] > t_test_start:
                     train_mask[i] = False
 

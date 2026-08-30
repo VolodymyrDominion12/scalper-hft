@@ -72,11 +72,17 @@ class HmmReversionScalper(Strategy):
         skip_high_vol: bool = True,
     ) -> None:
         super().__init__(
-            rsi_period=int(rsi_period), oversold=oversold, overbought=overbought,
-            bb_period=int(bb_period), min_atr_pct=min_atr_pct,
-            stop_atr_mult=stop_atr_mult, max_trend=max_trend,
-            hmm_states=int(hmm_states), hmm_threshold=hmm_threshold,
-            hmm_fit_bars=int(hmm_fit_bars), skip_high_vol=skip_high_vol,
+            rsi_period=int(rsi_period),
+            oversold=oversold,
+            overbought=overbought,
+            bb_period=int(bb_period),
+            min_atr_pct=min_atr_pct,
+            stop_atr_mult=stop_atr_mult,
+            max_trend=max_trend,
+            hmm_states=int(hmm_states),
+            hmm_threshold=hmm_threshold,
+            hmm_fit_bars=int(hmm_fit_bars),
+            skip_high_vol=skip_high_vol,
         )
 
     def _calm_state_mask(self, close: pd.Series, n_states: int, fit_bars: int, threshold: float) -> pd.Series:

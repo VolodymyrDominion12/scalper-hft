@@ -35,9 +35,7 @@ REGISTRY: dict[str, type[Strategy]] = {
 
 def get_strategy(name: str, **params: float | int | str) -> Strategy:
     if name not in REGISTRY:
-        raise KeyError(
-            f"Невідома стратегія '{name}'. Доступні: {sorted(REGISTRY)}"
-        )
+        raise KeyError(f"Невідома стратегія '{name}'. Доступні: {sorted(REGISTRY)}")
     # breakeven-гейт — крос-стратегійний прапорець (Narang гл. 5):
     # не передаємо в __init__ (явні сигнатури його не приймають)
     breakeven_gate = params.pop("breakeven_gate", None)

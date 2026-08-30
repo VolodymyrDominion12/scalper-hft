@@ -67,7 +67,7 @@ def garch11_fit(
         for t in range(1, len(r)):
             var[t] = omega + alpha * r[t - 1] ** 2 + beta * var[t - 1]
         var = np.maximum(var, 1e-12)
-        return float(0.5 * np.sum(np.log(var) + r ** 2 / var))
+        return float(0.5 * np.sum(np.log(var) + r**2 / var))
 
     try:
         from scipy.optimize import minimize

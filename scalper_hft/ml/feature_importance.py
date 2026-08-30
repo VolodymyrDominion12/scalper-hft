@@ -59,8 +59,11 @@ def _iter_folds(cv, X: pd.DataFrame, t1: pd.Series | None):
 
 def _fold_score(
     clf_factory,
-    X_tr: pd.DataFrame, y_tr: pd.Series, w_tr,
-    X_te: pd.DataFrame, y_te: pd.Series,
+    X_tr: pd.DataFrame,
+    y_tr: pd.Series,
+    w_tr,
+    X_te: pd.DataFrame,
+    y_te: pd.Series,
     score: str,
 ) -> float:
     """neg-log-loss або accuracy на тестовому зрізі."""
@@ -76,8 +79,7 @@ def _fold_score(
         pred = np.where(p_pos >= 0.5, 1, classes[0])
         return float((pred == y_te.values).mean())
     # neg log loss (вище = краще; значення ≤ 0)
-    p_true = np.where(y_te.values == 1, np.clip(p_pos, 1e-9, 1 - 1e-9),
-                      1 - np.clip(p_pos, 1e-9, 1 - 1e-9))
+    p_true = np.where(y_te.values == 1, np.clip(p_pos, 1e-9, 1 - 1e-9), 1 - np.clip(p_pos, 1e-9, 1 - 1e-9))
     return float(np.mean(np.log(p_true)))
 
 
@@ -189,7 +191,9 @@ def feature_importance_report(
     sfi_vals = sfi(X, y, clf_factory, cv, sample_weights=sample_weights, score=score, t1=t1)
     # MDI-проксі: середній gain з однієї моделі на повних даних
     clf = clf_factory()
-    clf.fit(X, y, sample_weight=sample_weights.reindex(X.index).fillna(0.0).values if sample_weights is not None else None)
+    clf.fit(
+        X, y, sample_weight=sample_weights.reindex(X.index).fillna(0.0).values if sample_weights is not None else None
+    )
     mdi_vals = mdi(clf, X)
     tau = pca_importance_corr(mdi_vals.dropna(), X)
     out = pd.DataFrame({"mda": mda_vals, "sfi": sfi_vals, "mdi": mdi_vals})

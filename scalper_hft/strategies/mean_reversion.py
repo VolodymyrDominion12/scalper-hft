@@ -51,8 +51,10 @@ class MeanReversionScalper(Strategy):
             skip_high_vol=skip_high_vol,
         )
 
-    def generate_signals(self, df: pd.DataFrame, trades: pd.DataFrame | None = None, funding: pd.DataFrame | None = None) -> pd.Series:
-        from scalper_hft.features.indicators import atr, bollinger, rsi
+    def generate_signals(
+        self, df: pd.DataFrame, trades: pd.DataFrame | None = None, funding: pd.DataFrame | None = None
+    ) -> pd.Series:
+        from scalper_hft.features.indicators import rsi
         from scalper_hft.features.regimes import trend_strength, volatility_regime
 
         f = add_standard_features(df)

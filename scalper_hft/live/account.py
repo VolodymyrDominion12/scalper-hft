@@ -84,9 +84,7 @@ class PaperAccount:
         self.positions[symbol] = Position(symbol, side, size, price, ts, entry_fee=fee)
         self._marks[symbol] = price
 
-    def close_position(
-        self, symbol: str, price: float, ts: pd.Timestamp, is_maker: bool = False
-    ) -> dict:
+    def close_position(self, symbol: str, price: float, ts: pd.Timestamp, is_maker: bool = False) -> dict:
         pos = self.positions.pop(symbol)
         fee_rate = self.maker_fee if is_maker else self.taker_fee
         fee = price * pos.size * fee_rate

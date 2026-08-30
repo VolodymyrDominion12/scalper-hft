@@ -59,12 +59,11 @@ def erc_weights(
     best_obj = obj(best_w)
     # кілька стартів (рівні + випадкові) — SLSQP чутливий до початкової точки
     rng = np.random.default_rng(42)
-    starts = [np.full(n, 1.0 / n)] + [
-        rng.dirichlet(np.ones(n)) for _ in range(3)
-    ]
+    starts = [np.full(n, 1.0 / n)] + [rng.dirichlet(np.ones(n)) for _ in range(3)]
     for x0 in starts:
-        res = minimize(obj, x0=x0, method="SLSQP", bounds=bounds, constraints=cons,
-                       options={"maxiter": 1000, "ftol": 1e-12})
+        res = minimize(
+            obj, x0=x0, method="SLSQP", bounds=bounds, constraints=cons, options={"maxiter": 1000, "ftol": 1e-12}
+        )
         if res.success and res.fun < best_obj:
             best_obj = float(res.fun)
             best_w = np.clip(res.x, 0.0, max_weight)

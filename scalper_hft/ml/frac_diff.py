@@ -24,8 +24,8 @@ import numpy as np
 import pandas as pd
 from statsmodels.tsa.stattools import adfuller
 
-
 # ── Ваги ─────────────────────────────────────────────────────────────────────
+
 
 def _get_weights_ffd(d: float, threshold: float = 1e-4) -> np.ndarray:
     """Ваги для FFD (Fixed-Width Window).
@@ -47,6 +47,7 @@ def _get_weights_ffd(d: float, threshold: float = 1e-4) -> np.ndarray:
 
 
 # ── FFD ───────────────────────────────────────────────────────────────────────
+
 
 def frac_diff_ffd(
     series: pd.Series,
@@ -108,6 +109,7 @@ def frac_diff_expanding(
 
 # ── Пошук мінімального d ─────────────────────────────────────────────────────
 
+
 def find_min_d(
     series: pd.Series,
     d_range: tuple[float, float] = (0.0, 1.0),
@@ -150,6 +152,7 @@ def find_min_d(
 
 
 # ── Pipeline helper ───────────────────────────────────────────────────────────
+
 
 def add_frac_diff(
     df: pd.DataFrame,

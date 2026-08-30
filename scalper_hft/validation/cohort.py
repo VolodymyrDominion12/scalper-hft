@@ -43,8 +43,14 @@ def cohort_metrics(trades: pd.DataFrame, freq: str = "ME", pnl_col: str = "ret")
     except ValueError:
         # старі pandas: 'ME' → 'M', 'QE' → 'Q', 'YE' → 'Y'
         df["cohort"] = ts.dt.to_period(freq.replace("E", ""))
-    rows: dict[str, list] = {"cohort": [], "n_trades": [], "pnl_per_trade": [],
-                             "win_rate": [], "cum_pnl": [], "sharpe": []}
+    rows: dict[str, list] = {
+        "cohort": [],
+        "n_trades": [],
+        "pnl_per_trade": [],
+        "win_rate": [],
+        "cum_pnl": [],
+        "sharpe": [],
+    }
     for cohort, g in df.groupby("cohort"):
         pnl = g[pnl_col]
         rows["cohort"].append(str(cohort))
@@ -52,9 +58,7 @@ def cohort_metrics(trades: pd.DataFrame, freq: str = "ME", pnl_col: str = "ret")
         rows["pnl_per_trade"].append(float(pnl.mean()) if len(pnl) else 0.0)
         rows["win_rate"].append(float((pnl > 0).mean()) if len(pnl) else 0.0)
         rows["cum_pnl"].append(float(pnl.sum()))
-        rows["sharpe"].append(
-            float(pnl.mean() / pnl.std(ddof=0)) if len(pnl) > 1 and pnl.std(ddof=0) > 0 else 0.0
-        )
+        rows["sharpe"].append(float(pnl.mean() / pnl.std(ddof=0)) if len(pnl) > 1 and pnl.std(ddof=0) > 0 else 0.0)
     out = pd.DataFrame(rows).set_index("cohort")
     return out
 
@@ -75,13 +79,25 @@ def cohort_decay(
     if cohort is None or cohort.empty or metric not in cohort.columns:
         return {"slope": 0.0, "rvalue": 0.0, "pvalue": 1.0, "n_cohorts": 0, "decaying": False}
     if len(cohort) < min_cohorts:
-        return {"slope": 0.0, "rvalue": 0.0, "pvalue": 1.0,
-                "n_cohorts": len(cohort), "decaying": False, "note": "замало когорт"}
+        return {
+            "slope": 0.0,
+            "rvalue": 0.0,
+            "pvalue": 1.0,
+            "n_cohorts": len(cohort),
+            "decaying": False,
+            "note": "замало когорт",
+        }
     try:
         from scipy.stats import linregress
     except ImportError:  # pragma: no cover
-        return {"slope": 0.0, "rvalue": 0.0, "pvalue": 1.0,
-                "n_cohorts": len(cohort), "decaying": False, "note": "потрібен scipy"}
+        return {
+            "slope": 0.0,
+            "rvalue": 0.0,
+            "pvalue": 1.0,
+            "n_cohorts": len(cohort),
+            "decaying": False,
+            "note": "потрібен scipy",
+        }
     x = pd.Series(range(len(cohort)), index=cohort.index)
     y = cohort[metric].astype(float)
     res = linregress(x, y)
@@ -103,8 +119,7 @@ def cohort_report(trades: pd.DataFrame, freq: str = "ME") -> str:
         "",
         c.to_string(),
         "",
-        f"Decay-тест ({'pnl_per_trade'}): slope={d['slope']:+.5f}, p={d['pvalue']:.3f}, "
-        f"когорт={d['n_cohorts']}",
+        f"Decay-тест ({'pnl_per_trade'}): slope={d['slope']:+.5f}, p={d['pvalue']:.3f}, когорт={d['n_cohorts']}",
         "→ edge деградує ⚠" if d["decaying"] else "→ деградації не виявлено",
     ]
     return "\n".join(lines)

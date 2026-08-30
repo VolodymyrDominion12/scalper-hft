@@ -53,6 +53,7 @@ def _make_trades(n_per_month: int = 10, n_months: int = 6, trend: float = -0.01)
 
 # ── 1. Bet sizing ─────────────────────────────────────────────────────────────
 
+
 class TestBetSizing:
     def test_prob_to_size_zero_at_half(self):
         from scalper_hft.ml.bet_sizing import prob_to_size
@@ -90,6 +91,7 @@ class TestBetSizing:
 
 # ── 2. Мета-лейблінг + probabilities ─────────────────────────────────────────
 
+
 class TestWalkForwardProbabilities:
     def test_train_walk_forward_returns_probabilities(self):
         pytest.importorskip("lightgbm")
@@ -108,8 +110,7 @@ class TestWalkForwardProbabilities:
         from scalper_hft.strategies import get_strategy
 
         df = _make_df(800)
-        strat = get_strategy("ml_strategy", train_bars=150, test_bars=60, holding_bars=8,
-                             meta_filter=True)
+        strat = get_strategy("ml_strategy", train_bars=150, test_bars=60, holding_bars=8, meta_filter=True)
         signals = strat.generate_signals(df)
         assert len(signals) == len(df)
         assert signals.index.equals(df.index)
@@ -134,8 +135,7 @@ class TestWalkForwardProbabilities:
         from scalper_hft.strategies import get_strategy
 
         df = _make_df(800)
-        strat = get_strategy("ml_strategy", train_bars=150, test_bars=60, holding_bars=8,
-                             confidence_thr=0.55)
+        strat = get_strategy("ml_strategy", train_bars=150, test_bars=60, holding_bars=8, confidence_thr=0.55)
         signals = strat.generate_signals(df)
         assert set(signals.unique()).issubset({-1.0, 0.0, 1.0})
 
@@ -144,15 +144,14 @@ class TestWalkForwardProbabilities:
         from scalper_hft.strategies import get_strategy
 
         df = _make_df(800)
-        strat = get_strategy("ml_strategy", train_bars=150, test_bars=60, holding_bars=8,
-                             prob_size=True)
+        strat = get_strategy("ml_strategy", train_bars=150, test_bars=60, holding_bars=8, prob_size=True)
         signals = strat.generate_signals(df)
         assert signals.abs().max() <= 1.0
-        assert any(abs(v) > 0 and abs(v) < 1.0 for v in signals.unique()), \
-            "prob_size має давати безперервні розміри"
+        assert any(abs(v) > 0 and abs(v) < 1.0 for v in signals.unique()), "prob_size має давати безперервні розміри"
 
 
 # ── 3. Breakeven-гейт ─────────────────────────────────────────────────────────
+
 
 class TestBreakevenGate:
     def test_gate_zeroes_weak_moves(self):
@@ -210,6 +209,7 @@ class TestBreakevenGate:
 
 # ── 4. Cohort analysis ────────────────────────────────────────────────────────
 
+
 class TestCohort:
     def test_cohort_metrics_structure(self):
         from scalper_hft.validation.cohort import cohort_metrics
@@ -242,6 +242,7 @@ class TestCohort:
 
 
 # ── 5. Децильний lift ─────────────────────────────────────────────────────────
+
 
 class TestLift:
     def test_decile_lift_strong_feature(self):
@@ -288,6 +289,7 @@ class TestLift:
 
 # ── 6. Hedge-блендінг ─────────────────────────────────────────────────────────
 
+
 class TestHedge:
     def test_weights_rows_sum_to_one(self):
         from scalper_hft.strategies.blend import hedge_weights
@@ -326,8 +328,9 @@ class TestHedge:
         from scalper_hft.strategies import get_strategy
 
         df = _make_df(400)
-        strat = get_strategy("ensemble", strategies="mean_reversion,mean_reversion",
-                             mode="hedge", mean_reversion_period=20)
+        strat = get_strategy(
+            "ensemble", strategies="mean_reversion,mean_reversion", mode="hedge", mean_reversion_period=20
+        )
         # простіший тест: дві однакові стратегії → сигнал у межах
         signals = strat.generate_signals(df)
         assert len(signals) == len(df)
