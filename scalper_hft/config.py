@@ -69,6 +69,26 @@ class Settings:
     )
     default_interval: str = field(default_factory=lambda: os.getenv("DEFAULT_INTERVAL", "1m"))
 
+    # Бекенд кешу даних: "parquet" (за замовчуванням, файли у data/) або
+    # "postgres" (PostgreSQL у Docker — зручно для багатьох символів/таймфреймів).
+    data_backend: str = field(default_factory=lambda: os.getenv("DATA_BACKEND", "parquet").strip().lower())
+    postgres_host: str = field(default_factory=lambda: os.getenv("POSTGRES_HOST", "localhost"))
+    postgres_port: int = field(default_factory=lambda: _env_int("POSTGRES_PORT", 5433))
+    postgres_db: str = field(default_factory=lambda: os.getenv("POSTGRES_DB", "scalper"))
+    postgres_user: str = field(default_factory=lambda: os.getenv("POSTGRES_USER", "scalper"))
+    postgres_password: str = field(default_factory=lambda: os.getenv("POSTGRES_PASSWORD", "scalper"))
+    postgres_dsn: str = field(default_factory=lambda: os.getenv("POSTGRES_DSN", ""))
+
+    @property
+    def postgres_conninfo(self) -> str:
+        """libpq conninfo для psycopg: пріоритет має явний POSTGRES_DSN."""
+        if self.postgres_dsn:
+            return self.postgres_dsn
+        return (
+            f"host={self.postgres_host} port={self.postgres_port} dbname={self.postgres_db} "
+            f"user={self.postgres_user} password={self.postgres_password}"
+        )
+
     @property
     def slippage_frac(self) -> float:
         """Slippage як частка ціни (bps / 10_000)."""

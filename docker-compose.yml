@@ -1,0 +1,38 @@
+# PostgreSQL для кешування ринкових даних (klines / aggTrades / funding).
+#
+# Запуск:
+#   docker compose up -d postgres
+#   docker compose ps          # перевірити healthcheck
+#
+# Потім укажи в .env:
+#   DATA_BACKEND=postgres
+#   POSTGRES_HOST=localhost
+#   POSTGRES_PORT=5433
+#
+# Схема створюється автоматично при першому підключенні (store.ensure_schema).
+# Об'єм зберігається у docker volume `postgres_data` — дані переживають
+# перезапуск контейнера.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: scalper_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-scalper}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scalper}
+      POSTGRES_DB: ${POSTGRES_DB:-scalper}
+    ports:
+      # зовнішній порт за замовчуванням 5433, щоб не конфліктувати
+      # з можливим локальним PostgreSQL на 5432
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-scalper} -d ${POSTGRES_DB:-scalper}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  postgres_data:

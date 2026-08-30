@@ -26,10 +26,20 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(na
 logger = logging.getLogger("scalper_hft.cli")
 
 
-def _load_klines(symbol: str, interval: str, days: int) -> pd.DataFrame:
-    from scalper_hft.data.downloader import download_klines
+def _load_klines(symbol: str, interval: str, days: int, base: str | None = None, derive: bool = False) -> pd.DataFrame:
+    """Завантажити klines: напряму або ресемплінгом із базового інтервалу.
 
-    df = download_klines(symbol, interval, days)
+    base/derive — гнучке джерело даних без зайвих API-дзвінків:
+        --base 1m --derive → 5m/15m/1h будуються локально з 1m-кешу.
+    """
+    if base or derive:
+        from scalper_hft.data.access import ensure_klines
+
+        df = ensure_klines(symbol, interval, days, base_interval=base or "1m", derive=True)
+    else:
+        from scalper_hft.data.downloader import download_klines
+
+        df = download_klines(symbol, interval, days)
     if df is None or df.empty:
         logger.error("Немає даних для %s %s — запустіть download спершу", symbol, interval)
         sys.exit(1)
@@ -107,7 +117,7 @@ def cmd_walkforward(args: argparse.Namespace) -> None:
     from scalper_hft.strategies import get_strategy
     from scalper_hft.validation.walk_forward import run_walk_forward
 
-    df = _load_klines(args.symbol, args.interval, args.days)
+    df = _load_klines(args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", False))
     strategy = get_strategy(args.strategy, **args.param_dict)
     trades = None
     if strategy.needs_trades:
@@ -139,7 +149,7 @@ def cmd_optimize(args: argparse.Namespace) -> None:
     from scalper_hft.strategies import get_strategy
     from scalper_hft.validation.optimize import optimize_params
 
-    df = _load_klines(args.symbol, args.interval, args.days)
+    df = _load_klines(args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", False))
     strategy = get_strategy(args.strategy)
     settings = get_settings()
     res = optimize_params(
@@ -156,7 +166,7 @@ def cmd_ml_opt(args: argparse.Namespace) -> None:
     """Оптимізація параметрів маркування Triple-Barrier для ML-стратегій."""
     from scalper_hft.validation.optimize import optimize_ml_params
 
-    df = _load_klines(args.symbol, args.interval, args.days)
+    df = _load_klines(args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", False))
     trades = None
     if args.trades:
         from scalper_hft.data.downloader import download_agg_trades
@@ -189,7 +199,7 @@ def cmd_overfit(args: argparse.Namespace) -> None:
     from scalper_hft.validation.sensitivity import parameter_sensitivity
     from scalper_hft.validation.walk_forward import run_walk_forward
 
-    df = _load_klines(args.symbol, args.interval, args.days)
+    df = _load_klines(args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", False))
     strategy = get_strategy(args.strategy, **args.param_dict)
     settings = get_settings()
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
@@ -250,7 +260,7 @@ def cmd_ml(args: argparse.Namespace) -> None:
     """Walk-forward ML: Triple-Barrier + LightGBM + AFML sample weights."""
     from scalper_hft.ml.trainer import train_from_ohlcv
 
-    df = _load_klines(args.symbol, args.interval, args.days)
+    df = _load_klines(args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", False))
     trades = None
     if args.trades:
         from scalper_hft.data.downloader import download_agg_trades
@@ -300,7 +310,7 @@ def cmd_paper(args: argparse.Namespace) -> None:
     from scalper_hft.live.trader import LiveTrader, run_trader_once
     from scalper_hft.strategies import get_strategy
 
-    df = _load_klines(args.symbol, args.interval, args.days)
+    df = _load_klines(args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", False))
     strategy = get_strategy(args.strategy, **args.param_dict)
     trader = LiveTrader(strategy, args.symbol, args.interval)
     result = run_trader_once(trader, df)
@@ -321,7 +331,7 @@ def cmd_report(args: argparse.Namespace) -> None:
     from scalper_hft.validation.sensitivity import parameter_sensitivity
     from scalper_hft.validation.walk_forward import run_walk_forward
 
-    df = _load_klines(args.symbol, args.interval, args.days)
+    df = _load_klines(args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", False))
     strategy = get_strategy(args.strategy, **args.param_dict)
     settings = get_settings()
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
@@ -408,7 +418,7 @@ def cmd_cscv(args: argparse.Namespace) -> None:
     from scalper_hft.strategies import get_strategy
     from scalper_hft.validation.cscv import pbo_cscv, variant_returns
 
-    df = _load_klines(args.symbol, args.interval, args.days)
+    df = _load_klines(args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", False))
     strategy = get_strategy(args.strategy, **args.param_dict)
     settings = get_settings()
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
@@ -473,7 +483,7 @@ def cmd_paper_replay(args: argparse.Namespace) -> None:
     from scalper_hft.live.paper_replay import paper_replay
     from scalper_hft.strategies import get_strategy
 
-    df = _load_klines(args.symbol, args.interval, args.days)
+    df = _load_klines(args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", False))
     strategy = get_strategy(args.strategy, **args.param_dict)
     funding = None
     if strategy.needs_funding:
@@ -698,7 +708,7 @@ def cmd_cohort(args: argparse.Namespace) -> None:
     from scalper_hft.strategies import get_strategy
     from scalper_hft.validation.cohort import cohort_report
 
-    df = _load_klines(args.symbol, args.interval, args.days)
+    df = _load_klines(args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", False))
     strategy = get_strategy(args.strategy, **args.param_dict)
     settings = get_settings()
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
@@ -726,7 +736,7 @@ def cmd_lift(args: argparse.Namespace) -> None:
     from scalper_hft.strategies import get_strategy
     from scalper_hft.validation.lift import feature_lift_report, lift_summary
 
-    df = _load_klines(args.symbol, args.interval, args.days)
+    df = _load_klines(args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", False))
     strategy = get_strategy(args.strategy, **args.param_dict)
     settings = get_settings()
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
@@ -763,7 +773,7 @@ def cmd_featimp(args: argparse.Namespace) -> None:
     from scalper_hft.ml.features import build_labeled_dataset
     from scalper_hft.validation.cv import PurgedKFold
 
-    df = _load_klines(args.symbol, args.interval, args.days)
+    df = _load_klines(args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", False))
     trades = None
     if args.trades:
         from scalper_hft.data.downloader import download_agg_trades
@@ -816,7 +826,7 @@ def cmd_cfi(args: argparse.Namespace) -> None:
     from scalper_hft.ml.features import build_labeled_dataset
     from scalper_hft.validation.cv import PurgedKFold
 
-    df = _load_klines(args.symbol, args.interval, args.days)
+    df = _load_klines(args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", False))
     trades = None
     if args.trades:
         from scalper_hft.data.downloader import download_agg_trades
@@ -874,7 +884,7 @@ def cmd_stress(args: argparse.Namespace) -> None:
     from scalper_hft.strategies import get_strategy
     from scalper_hft.validation.stress import SCENARIOS, stress_report
 
-    df = _load_klines(args.symbol, args.interval, args.days)
+    df = _load_klines(args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", False))
     strategy = get_strategy(args.strategy, **args.param_dict)
     settings = get_settings()
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
@@ -907,7 +917,7 @@ def cmd_capacity(args: argparse.Namespace) -> None:
     from scalper_hft.strategies import get_strategy
     from scalper_hft.validation.capacity import capacity_report
 
-    df = _load_klines(args.symbol, args.interval, args.days)
+    df = _load_klines(args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", False))
     strategy = get_strategy(args.strategy, **args.param_dict)
     settings = get_settings()
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
@@ -944,7 +954,7 @@ def cmd_survival(args: argparse.Namespace) -> None:
     from scalper_hft.strategies import get_strategy
     from scalper_hft.validation.survival import kaplan_meier, median_survival_time, trade_durations
 
-    df = _load_klines(args.symbol, args.interval, args.days)
+    df = _load_klines(args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", False))
     strategy = get_strategy(args.strategy, **args.param_dict)
     settings = get_settings()
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
@@ -1053,6 +1063,69 @@ def cmd_mcp(args: argparse.Namespace) -> None:
     run_stdio()
 
 
+def cmd_sweep(args: argparse.Namespace) -> None:
+    """Матричний прогон: всі стратегії × символи × таймфрейми.
+
+    База (1m) качається один раз на символ; решта таймфреймів — ресемплінг
+    з кешу (parquet або PostgreSQL), без повторних звернень до Binance.
+    """
+    from scalper_hft.validation.sweep import DEFAULT_INTERVALS, run_sweep, save_sweep_report
+
+    strategies = [s.strip() for s in args.strategies.split(",") if s.strip()] if args.strategies else None
+    symbols = [s.strip() for s in args.symbols.split(",") if s.strip()] if args.symbols else None
+    intervals = [s.strip() for s in args.intervals.split(",") if s.strip()] if args.intervals else DEFAULT_INTERVALS
+
+    df = run_sweep(
+        strategies=strategies,
+        symbols=symbols,
+        intervals=intervals,
+        days=args.days,
+        base_interval=args.base or "1m",
+        mode=args.mode,
+        train_bars=args.train,
+        test_bars=args.test,
+        workers=args.workers,
+        include_slow=args.all,
+    )
+
+    out_csv = Path(args.out) if args.out else Path("results/sweep.csv")
+    out_md = out_csv.with_suffix(".md")
+    save_sweep_report(df, out_csv=str(out_csv), out_md=str(out_md))
+
+    ok = df[df["status"] == "ok"].copy()
+    print(f"\nSweep: {len(df)} клітинок (ok={len(ok)}, помилок={(df['status'] != 'ok').sum()})")
+    print(f"Збережено: {out_csv}, {out_md}\n")
+    if ok.empty:
+        print("Немає успішних клітинок — перевірте лог помилок.")
+        return
+    view = ok[["strategy", "symbol", "interval", "n_trades", "total_return", "sharpe", "max_dd", "win_rate"]].copy()
+    for c in ["total_return", "max_dd", "win_rate"]:
+        view[c] = view[c].map(lambda v: f"{v:+.2%}" if pd.notna(v) else "-")
+    view["sharpe"] = view["sharpe"].map(lambda v: f"{v:+.3f}" if pd.notna(v) else "-")
+    view = view.sort_values(["interval", "sharpe"], ascending=[True, False])
+    print(view.to_markdown(index=False))
+
+    # топ-клітинки за Sharpe у кожному таймфреймі
+    print("\n— Топ-3 за Sharpe на таймфрейм —")
+    for iv in sorted(df["interval"].unique(), key=lambda x: (len(x), x)):
+        sub = ok[ok["interval"] == iv].sort_values("sharpe", ascending=False).head(3)
+        if sub.empty:
+            continue
+        for _, r in sub.iterrows():
+            print(f"  {iv:>4s}  {r['strategy']:<20s} {r['symbol']:<12s} sharpe={r['sharpe']:+.3f} "
+                  f"ret={r['total_return']:+.2%} trades={r['n_trades']}")
+    if args.notify:
+        from scalper_hft.live.telegram import send_telegram
+
+        best = ok.sort_values("sharpe", ascending=False).head(1)
+        if not best.empty:
+            r = best.iloc[0]
+            send_telegram(
+                f"📊 Sweep: {len(ok)} ok | топ: {r['strategy']} {r['symbol']} {r['interval']} "
+                f"sharpe={r['sharpe']:+.3f} ret={r['total_return']:+.2%}"
+            )
+
+
 def _plot_equity(equity: pd.Series, strategy: str, symbol: str) -> None:
     try:
         import matplotlib
@@ -1101,6 +1174,12 @@ def main(argv: list[str] | None = None) -> None:
             help="Стратегія з реєстру: mean_reversion, cvd_momentum, pairs_arb, ...",
         )
         p.add_argument("--days", type=int, default=60, help="Глибина історії, днів")
+        p.add_argument(
+            "--base",
+            default=None,
+            help="Базовий таймфрейм для ресемплінгу (напр. 1m): старші таймфрейми будуються локально з кешу",
+        )
+        p.add_argument("--derive", action="store_true", help="Ресемплити з --base замість прямого завантаження інтервалу")
         p.add_argument("-p", "--param", action="append", default=[], help="Параметр стратегії: key=value")
 
     p = sub.add_parser("download", help="Завантажити klines/aggTrades/funding")
@@ -1356,6 +1435,24 @@ def main(argv: list[str] | None = None) -> None:
 
     p = sub.add_parser("mcp", help="Запуск MCP-сервера для трейдінгу (stdio)")
     p.set_defaults(func=cmd_mcp)
+
+    p = sub.add_parser(
+        "sweep",
+        help="Матричний прогон: всі стратегії × символи × таймфрейми (база качається раз, решта — ресемплінг)",
+    )
+    p.add_argument("--strategies", default=None, help="Через кому; за замовч. — всі single-symbol стратегії")
+    p.add_argument("--symbols", default=None, help="Через кому; за замовч. — DEFAULT_SYMBOLS з .env")
+    p.add_argument("--intervals", default=None, help="Через кому; за замовч. — 1m,5m,15m,30m,1h,4h")
+    p.add_argument("--days", type=int, default=60, help="Глибина історії, днів")
+    p.add_argument("--base", default=None, help="Базовий таймфрейм для ресемплінгу (за замовч. 1m)")
+    p.add_argument("--mode", default="backtest", choices=["backtest", "walkforward"], help="Режим кожної клітинки")
+    p.add_argument("--train", type=int, default=2000, help="Барів train для walkforward")
+    p.add_argument("--test", type=int, default=500, help="Барів test (OOS) для walkforward")
+    p.add_argument("--workers", type=int, default=1, help="Паралельних клітинок (0/1 = послідовно)")
+    p.add_argument("--all", action="store_true", help="Включити ML-стратегію та ensemble (повільно)")
+    p.add_argument("--out", default=None, help="Шлях CSV-результату (за замовч. results/sweep.csv)")
+    p.add_argument("--notify", action="store_true", help="Telegram-сповіщення топ-результату")
+    p.set_defaults(func=cmd_sweep)
 
     args = parser.parse_args(argv)
     args.param_dict = _parse_param_dict(getattr(args, "param", []))

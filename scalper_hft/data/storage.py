@@ -17,7 +17,7 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 _KLINES_COLUMNS = ["open", "high", "low", "close", "volume"]
-_TRADES_COLUMNS = ["price", "amount", "side"]
+_TRADES_COLUMNS = ["trade_id", "price", "amount", "side"]
 
 
 def _safe_load(path: Path) -> pd.DataFrame | None:
@@ -68,7 +68,14 @@ def load_trades(path: Path) -> pd.DataFrame | None:
     df = _safe_load(path)
     if df is None or df.empty:
         return None
-    return df[_TRADES_COLUMNS]
+    for col in _TRADES_COLUMNS:
+        if col not in df.columns:
+            df[col] = float("nan")
+    out = df[_TRADES_COLUMNS].copy()
+    if out["trade_id"].isna().any():
+        # старі кеші без id — синтетичні унікальні ідентифікатори
+        out["trade_id"] = pd.RangeIndex(1, len(out) + 1)
+    return out
 
 
 def load_funding(path: Path) -> pd.DataFrame | None:
