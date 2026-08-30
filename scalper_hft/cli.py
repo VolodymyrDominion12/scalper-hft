@@ -3,6 +3,7 @@
 Приклади:
     python -m scalper_hft.cli download --symbol BTCUSDT --interval 1m --days 30
     python -m scalper_hft.cli backtest --strategy mean_reversion --symbol BTCUSDT --interval 5m --days 90
+    python -m scalper_hft.cli plot --strategy mean_reversion --symbol BTCUSDT --interval 5m --days 30
     python -m scalper_hft.cli walkforward --strategy cvd_momentum --symbol BTCUSDT --interval 1m --days 60
     python -m scalper_hft.cli optimize --strategy mean_reversion --symbol BTCUSDT --interval 5m --trials 40
     python -m scalper_hft.cli overfit --strategy mean_reversion --symbol BTCUSDT --interval 5m --days 120
@@ -110,6 +111,48 @@ def cmd_backtest(args: argparse.Namespace) -> None:
     )
     print("\n" + res.summary())
     _plot_equity(res.equity, args.strategy, args.symbol)
+
+
+def cmd_plot(args: argparse.Namespace) -> None:
+    """Інтерактивний HTML-графік бектесту: свічки + індикатори + угоди + SL/TP.
+
+    Зберігає standalone HTML (Plotly) у --out — відкривається у будь-якому
+    браузері без сервера: зум, hover, легенда-перемикачі.
+    """
+    from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.backtest.router import run_strategy_backtest
+    from scalper_hft.config import get_settings
+    from scalper_hft.data.research import load_research_data
+    from scalper_hft.features.indicators import add_standard_features
+    from scalper_hft.strategies import get_strategy
+    from scalper_hft.visualization.charts import make_backtest_figure
+
+    strategy = get_strategy(args.strategy, **dict(args.param_dict))
+    settings = get_settings()
+    bundle = load_research_data(args.symbol, args.interval, args.days, strategy)
+    df = bundle.klines
+    if df is None or df.empty:
+        logger.error("Немає даних %s %s — запустіть download спершу", args.symbol, args.interval)
+        sys.exit(1)
+    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    res = run_strategy_backtest(
+        df, strategy, cost=cost, trades=bundle.trades, funding=bundle.funding, position_pct=settings.position_pct
+    )
+    fdf = add_standard_features(df)  # індикатори — лише для графіка
+    fig = make_backtest_figure(
+        fdf,
+        res,
+        symbol=args.symbol,
+        max_bars=args.bars,
+        start=args.start,
+        end=args.end,
+        with_trades=not args.no_trades,
+        with_sl_tp=not args.no_sl_tp,
+    )
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.write_html(out, include_plotlyjs="cdn", full_html=True)
+    logger.info("Графік збережено: %s (%d угод)", out, len(res.trades))
 
 
 def cmd_walkforward(args: argparse.Namespace) -> None:
@@ -1231,6 +1274,16 @@ def main(argv: list[str] | None = None) -> None:
     )
     p.add_argument("--bar-threshold", type=float, default=100000.0, help="Поріг для об'ємних або доларових барів")
     p.set_defaults(func=cmd_backtest)
+
+    p = sub.add_parser("plot", help="Інтерактивний HTML-графік бектесту (свічки+індикатори+угоди+SL/TP)")
+    add_common(p)
+    p.add_argument("--out", default="docs/plots/backtest.html", help="Шлях до HTML-файлу")
+    p.add_argument("--bars", type=int, default=20_000, help="Максимум барів на графіку (даунсемплінг; бари угод зберігаються)")
+    p.add_argument("--start", default=None, help="Початок вікна, ISO: YYYY-MM-DD[ HH:MM]")
+    p.add_argument("--end", default=None, help="Кінець вікна, ISO: YYYY-MM-DD[ HH:MM]")
+    p.add_argument("--no-trades", action="store_true", help="Не малювати точки входу/виходу")
+    p.add_argument("--no-sl-tp", action="store_true", help="Не малювати рівні SL/TP")
+    p.set_defaults(func=cmd_plot)
 
     p = sub.add_parser("walkforward", help="Walk-forward аналіз")
     add_common(p)

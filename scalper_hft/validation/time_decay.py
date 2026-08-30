@@ -47,6 +47,11 @@ class _Lagged:
             return sig
         return sig.shift(self.lag).fillna(0)
 
+    def exit_levels(self, df):
+        """Делегування рівнів SL/TP базовій стратегії (якщо вони є)."""
+        fn = getattr(self.base, "exit_levels", None)
+        return fn(df) if fn is not None else None
+
 
 def time_decay_test(
     df: pd.DataFrame,

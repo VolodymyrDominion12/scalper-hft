@@ -114,6 +114,7 @@ uv venv .venv && uv pip install -e ".[optim,ml,dev]"
 |---|---|
 | `download` | klines / aggTrades / funding у кеш (`--trades-days` для aggTrades; `--vision` — data.binance.vision) |
 | `backtest` | бектест стратегії з комісіями та slippage (funding PnL для funding_carry); `--base 1m --derive` — ресемплінг |
+| `plot` | **інтерактивний HTML-графік бектесту**: свічки + індикатори + точки входу/виходу + рівні SL/TP (Plotly, standalone, `--bars/--start/--end/--out`) |
 | `sweep` | **матричний прогон: всі стратегії × символи × таймфрейми** → `results/sweep.csv` (+`--mode walkforward`, `--workers`) |
 | `walkforward` | ковзні IS/OOS вікна — середній OOS Sharpe |
 | `optimize` | Optuna-пошук параметрів з purged CV цільовою функцією |
@@ -143,6 +144,29 @@ uv pip install -e ".[dashboard]"
 ```
 Секції: кеш даних по символах, бектест з equity-кривою та Deflated Sharpe,
 результати paper-run.
+
+## Візуалізація бектестів (`scalper_hft/visualization/`)
+
+Багатопанельний інтерактивний графік (Plotly, без UI-залежностей):
+**свічки + індикатори (BB/EMA/VWAP) + точки входу/виходу (▲/▼/×) +
+пунктирні рівні SL/TP + об'єм + позиція + equity/просадка**; внизу range
+slider для зуму, легенда вмикає/вимикає шари.
+
+```bash
+# standalone HTML (відкривається у браузері без сервера)
+.venv/bin/python -m scalper_hft.cli plot --strategy mean_reversion --symbol BTCUSDT --interval 5m --days 30
+# вікно + даунсемплінг
+.venv/bin/python -m scalper_hft.cli plot --strategy mean_reversion --symbol BTCUSDT --interval 1m --days 7 --bars 2000 --start "2026-08-20" --end "2026-08-22" --out docs/plots/mr_bt.html
+```
+
+Як це працює:
+- рушій бектесту збагачує кожну угоду цінами входу/виходу (`entry_price`/`exit_price`)
+  та, якщо стратегія реалізує `Strategy.exit_levels(df)`, рівнями `sl_price`/`tp_price`
+  на барі входу (приклад: `mean_reversion` — ціль = середина BB, стоп = середина ∓ ATR×mult);
+- у дашборді секція "Графік угод" показує повну фігуру з вікном, тумблерами
+  (маркери/SL-TP/індикатори) та таблицею угод (PnL, ціни, SL/TP);
+- для великих даних — даунсемплінг `max_bars`, бари входу/виходу угод завжди
+  зберігаються на графіку.
 
 ## Telegram-сповіщення
 

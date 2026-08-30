@@ -18,12 +18,78 @@ from scalper_hft.backtest.execution import CostModel
 from scalper_hft.backtest.pairs import run_pairs_backtest
 from scalper_hft.config import get_settings
 from scalper_hft.data.storage import klines_path, load_funding, load_klines, load_trades
+from scalper_hft.features.indicators import add_standard_features
 from scalper_hft.live.store import PaperStore
 from scalper_hft.strategies import REGISTRY, get_strategy
 from scalper_hft.validation.deflated_sharpe import deflated_sharpe_ratio, estimate_n_trials
+from scalper_hft.visualization import auto_indicator_columns, make_backtest_figure, trades_table
 
 st.set_page_config(page_title="scalper-hft", page_icon="📈", layout="wide")
 st.title("scalper-hft — моніторинг стратегій")
+
+
+@st.fragment
+def _render_bt_chart(view: dict) -> None:
+    """Інтерактивний графік угод + таблиця (окремий фрагмент — не перезапускає бектест)."""
+    df, res, title = view["df"], view["res"], view["title"]
+    st.subheader("Графік угод")
+    left, right = st.columns([1, 4])
+    with left:
+        ts0 = df.index[0].to_pydatetime()
+        ts1 = df.index[-1].to_pydatetime()
+        st.caption("Вікно графіка")
+        window = st.slider(
+            "Час",
+            min_value=ts0,
+            max_value=ts1,
+            value=(ts0, ts1),
+            format="%d.%m %H:%M",
+            key="bt_window",
+        )
+        with_trades = st.toggle("Точки входу/виходу", value=True, key="bt_trades")
+        with_sl_tp = st.toggle("Рівні SL / TP", value=True, key="bt_sl_tp")
+        with_inds = st.toggle("Індикатори", value=True, key="bt_inds")
+        max_bars = st.select_slider(
+            "Максимум барів",
+            options=[1_000, 5_000, 20_000, 100_000, 500_000],
+            value=20_000,
+            key="bt_max_bars",
+        )
+        st.caption(f"Угод: {len(res.trades)} · Max DD: {res.metrics.max_drawdown:.1%}")
+    with right:
+        fdf = add_standard_features(df)  # фічі лише для графіка
+        fig = make_backtest_figure(
+            fdf,
+            res,
+            symbol=title,
+            start=window[0],
+            end=window[1],
+            max_bars=max_bars,
+            with_trades=with_trades,
+            with_sl_tp=with_sl_tp,
+            indicators=auto_indicator_columns(fdf) if with_inds else [],
+        )
+        st.plotly_chart(fig, width="stretch", key="bt_fig")
+    st.subheader("Угоди")
+    if res.trades is not None and not res.trades.empty:
+        st.dataframe(
+            trades_table(res, initial_capital=10_000.0),
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "Вхід": st.column_config.DatetimeColumn("Вхід", format="DD.MM.YYYY HH:mm"),
+                "Вихід": st.column_config.DatetimeColumn("Вихід", format="DD.MM.YYYY HH:mm"),
+                "Сторона": st.column_config.TextColumn("Сторона"),
+                "Ціна входу": st.column_config.NumberColumn("Ціна входу", format="%.2f"),
+                "Ціна виходу": st.column_config.NumberColumn("Ціна виходу", format="%.2f"),
+                "SL": st.column_config.NumberColumn("SL", format="%.2f"),
+                "TP": st.column_config.NumberColumn("TP", format="%.2f"),
+                "PnL, %": st.column_config.NumberColumn("PnL, %", format="%.3f"),
+                "PnL, $": st.column_config.NumberColumn("PnL, $", format="%.2f"),
+            },
+        )
+    else:
+        st.info("Угод за цей період немає — спробуйте іншу стратегію/період.")
 
 settings = get_settings()
 data_dir = settings.data_dir_abs
@@ -62,7 +128,7 @@ for sym in _SYMBOLS:
             "bookTicker": len(bt_df) if bt_df is not None else 0,
         }
     )
-st.dataframe(pd.DataFrame(rows), use_container_width=True)
+st.dataframe(pd.DataFrame(rows), width="stretch")
 
 st.header("2. Бектест")
 if run_bt:
@@ -97,7 +163,7 @@ if run_bt:
                 c4.metric("Max DD", f"{m.max_drawdown:.2%}")
                 fig = go.Figure(go.Scatter(x=res.equity.index, y=res.equity.values, mode="lines", name="Equity"))
                 fig.update_layout(title=f"pairs_arb · {leg1}/{leg2} {interval} maker", height=350)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
                 with st.expander("Повні метрики"):
                     st.text(m.summary())
         else:
@@ -118,21 +184,22 @@ if run_bt:
                 res = run_backtest(
                     df, strategy, cost=cost, trades=trades, funding=funding, position_pct=settings.position_pct
                 )
+                st.session_state["bt_view"] = {"df": df, "res": res, "title": f"{strategy_name} · {symbol} {interval}"}
                 m = res.metrics
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("Дохідність", f"{m.total_return:.2%}")
                 c2.metric("Sharpe (год.)", f"{m.sharpe_hourly:.2f}")
                 c3.metric("Угоди", f"{m.n_trades}")
                 c4.metric("Win rate", f"{m.win_rate:.0%}")
-                fig = go.Figure(go.Scatter(x=res.equity.index, y=res.equity.values, mode="lines", name="Equity"))
-                fig.update_layout(title=f"{strategy_name} · {symbol} {interval}", height=350)
-                st.plotly_chart(fig, use_container_width=True)
                 ret = res.equity.pct_change().dropna()
                 n_trials = estimate_n_trials(max(len(strategy.param_space), 1), 40)
                 dsr = deflated_sharpe_ratio(ret.values, n_trials=n_trials)
                 st.info(f"Deflated Sharpe: **{dsr:.3f}** (trials={n_trials}) — edge значущий якщо > 0.95")
                 with st.expander("Повні метрики"):
                     st.text(m.summary())
+
+if st.session_state.get("bt_view") is not None:
+    _render_bt_chart(st.session_state["bt_view"])
 
 st.header("3. Paper pairs (SQLite)")
 db = Path("results") / "paper_pairs.sqlite"
@@ -148,11 +215,11 @@ if db.exists():
         for pair, g in eq.sort_values("ts").groupby("pair"):
             fig.add_trace(go.Scatter(x=g["ts"], y=g["equity"], mode="lines", name=str(pair)))
         fig.update_layout(title="Paper equity by pair", height=320)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
     orders = store.recent_orders()
     if not orders.empty:
         st.subheader("Останні ордери")
-        st.dataframe(orders.head(40), use_container_width=True)
+        st.dataframe(orders.head(40), width="stretch")
     store.close()
 else:
     st.info("Немає results/paper_pairs.sqlite — запустіть: python -m scalper_hft.cli paper-replay-pairs")
@@ -165,7 +232,7 @@ if results_dir.exists():
         for f in eq_files:
             eq = pd.read_csv(f, parse_dates=["ts"]).set_index("ts")
             fig = go.Figure(go.Scatter(x=eq.index, y=eq["equity"], mode="lines", name=f.stem))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
     else:
         st.info("Немає CSV paper-run.")
 else:
@@ -207,7 +274,7 @@ if run_diag:
                     from scalper_hft.validation.stress import stress_report
 
                     rep = stress_report(ret)
-                    st.dataframe(rep.round(4), use_container_width=True)
+                    st.dataframe(rep.round(4), width="stretch")
                     st.caption(
                         "crash = найгірше вікно ×2; liquidity = витрати ×10; "
                         "vol_spike = волатильність ×2; funding_shock = per-bar 0.1%"
@@ -225,7 +292,7 @@ if run_diag:
                         yaxis_title="Sharpe",
                         height=320,
                     )
-                    st.plotly_chart(fig, use_container_width=True)
-                    st.dataframe(curve.round(4), use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
+                    st.dataframe(curve.round(4), width="stretch")
     except Exception as exc:  # noqa: BLE001
         st.error(f"Діагностика не вдалася: {exc}")
