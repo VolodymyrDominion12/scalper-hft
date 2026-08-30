@@ -67,8 +67,49 @@ class TradeDecision:
     reason: str = ""
 
 
+class SilentAttritionKillSwitch:
+    """Детектор 'тихого згасання' альфи (Silent Attrition, PM Ch. 4, 13).
+
+    Відстежує EWMA прибутку на угоду (PnL per trade). Якщо EWMA падає нижче
+    критичного порогу z-score збитковості — ініціює безпечну зупинку нових входів.
+    """
+
+    def __init__(
+        self,
+        alpha_decay: float = 0.1,
+        min_trades: int = 5,
+        threshold_pnl: float = -0.005,  # -0.5% на угоду
+    ) -> None:
+        self.alpha_decay = alpha_decay
+        self.min_trades = min_trades
+        self.threshold_pnl = threshold_pnl
+        self.ewma_pnl: float = 0.0
+        self.trade_count: int = 0
+        self.tripped: bool = False
+
+    def record_trade(self, pnl_pct: float) -> bool:
+        """Реєструє закриту угоду. Повертає True, якщо kill-switch спрацював."""
+        self.trade_count += 1
+        if self.trade_count == 1:
+            self.ewma_pnl = pnl_pct
+        else:
+            self.ewma_pnl = (1.0 - self.alpha_decay) * self.ewma_pnl + self.alpha_decay * pnl_pct
+
+        if self.trade_count >= self.min_trades and self.ewma_pnl <= self.threshold_pnl:
+            self.tripped = True
+
+        return self.tripped
+
+    def reset(self) -> None:
+        """Скидання стану після аудиту/перезапуску."""
+        self.ewma_pnl = 0.0
+        self.trade_count = 0
+        self.tripped = False
+
+
 class LiveTrader:
     """Керує одним символом: свіжі klines → сигнал → ордер (paper/testnet/live).
+
 
     Розширення (Спринт 4):
         vol_sizing  — розмір позиції масштабується волатильністю
@@ -159,7 +200,26 @@ class LiveTrader:
         scale = min(max(self.vol_ref / vol, 0.25), 3.0)
         return base_size * scale
 
+    # ── нелінійний soft-penalty розмір (Narang Ch. 4) ─────────────────────────
+    def soft_penalty_size(
+        self,
+        base_size: float,
+        signal_strength: float,
+        limit_size: float,
+        k: float = 1.0,
+    ) -> float:
+        """Експоненційна штрафна функція розміру ставки замість hard cut-off.
+
+        size = limit * (1 - exp(-k * |signal| / limit)).
+        """
+        if limit_size <= 0:
+            return 0.0
+        sig_abs = abs(signal_strength)
+        dampened = limit_size * (1.0 - np.exp(-k * sig_abs / limit_size))
+        return float(min(base_size, dampened))
+
     # ── HMM-режимний блок нових входів (Спринт 4, без lookahead) ────────────
+
     def hmm_blocked(self, df: pd.DataFrame) -> bool:
         """True, якщо поточний HMM-стан «неспокійний» (висока волатильність).
 

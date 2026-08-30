@@ -1,0 +1,128 @@
+"""Exp3 Multi-Armed Bandit для адаптивного онлайн-вибору стратегій/режимів.
+
+Джерело: Eyal Gofer, "Machine Learning Algorithms with Applications in Finance", Ch. 4 §4.7.
+Алгоритм Exponential-weight for Exploration and Exploitation (Exp3):
+    1. Ймовірності вибору: p_{i,t} = (1 - γ) * (w_{i,t} / Σ w_{j,t}) + γ / K
+    2. Вибір дії: I_t ~ p_t
+    3. Оцінка винагороди: r̂_{i,t} = r_{i,t} / p_{i,t} для i = I_t (інакше 0)
+    4. Оновлення ваг: w_{i,t+1} = w_{i,t} * exp(γ * r̂_{i,t} / K)
+
+Гарантує обмеження регрету O(√(K T ln K)) без припущення про стаціонарність ринку.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import numpy as np
+import pandas as pd
+
+
+class Exp3Bandit:
+    """Multi-Armed Bandit на базі Exp3."""
+
+    def __init__(
+        self,
+        n_arms: int,
+        gamma: float = 0.05,
+        arm_names: list[str] | None = None,
+    ) -> None:
+        if n_arms < 2:
+            raise ValueError("Потрібно щонайменше 2 руки (arms)")
+        self.n_arms = n_arms
+        self.gamma = gamma
+        self.arm_names = arm_names or [f"arm_{i}" for i in range(n_arms)]
+        self._weights = np.ones(n_arms, dtype=float)
+        self.history: list[dict[str, float]] = []
+
+    def probabilities(self) -> np.ndarray:
+        """Поточний розподіл ймовірностей вибору рук."""
+        total_w = np.sum(self._weights)
+        if total_w <= 0 or not np.all(np.isfinite(self._weights)):
+            self._weights = np.ones(self.n_arms, dtype=float)
+            total_w = float(self.n_arms)
+
+        p = (1.0 - self.gamma) * (self._weights / total_w) + (self.gamma / self.n_arms)
+        return p / np.sum(p)
+
+    def select_arm(self, rng: np.random.Generator | None = None) -> int:
+        """Вибір руки згідно з ймовірнісним розподілом Exp3."""
+        p = self.probabilities()
+        if rng is not None:
+            return int(rng.choice(self.n_arms, p=p))
+        return int(np.random.choice(self.n_arms, p=p))
+
+    def update(self, arm: int, reward: float) -> None:
+        """Оновлення ваг після отримання винагороди.
+
+        reward: скаляр у діапазоні [-1.0, 1.0] (напр. барний PnL після комісій).
+        """
+        if arm < 0 or arm >= self.n_arms:
+            raise ValueError(f"Невалідний індекс руки: {arm}")
+
+        p = self.probabilities()
+        p_arm = max(p[arm], 1e-6)
+
+        # Зсув винагороди у [0, 1] для гарантії додатності
+        shifted_reward = (np.clip(reward, -1.0, 1.0) + 1.0) / 2.0
+        est_reward = shifted_reward / p_arm
+
+        # Оновлення ваги
+        growth = np.exp((self.gamma * est_reward) / self.n_arms)
+        self._weights[arm] *= growth
+
+        # Чисельна нормалізація для запобігання overflow
+        max_w = np.max(self._weights)
+        if max_w > 1e10:
+            self._weights /= max_w
+
+        self.history.append(
+            {
+                "arm": float(arm),
+                "reward": float(reward),
+                "p_arm": float(p_arm),
+            }
+        )
+
+    def weights_series(self) -> pd.Series:
+        """Поточні нормовані ваги стратегій."""
+        p = self.probabilities()
+        return pd.Series(p, index=self.arm_names)
+
+
+def exp3_select_signals(
+    signals_df: pd.DataFrame,
+    returns_df: pd.DataFrame,
+    gamma: float = 0.05,
+) -> pd.Series:
+    """Векторизований бектест вибору сигналів через Exp3 Bandit (без lookahead).
+
+    На кожному барі t обирає сигнал однієї зі стратегій, отримує прибуток на барі t+1
+    та оновлює розподіл ваг.
+
+    Args:
+        signals_df: (T x N) матриця сигналів суб-стратегій у [-1, 1].
+        returns_df: (T x N) матриця фактичних повернень суб-стратегій.
+        gamma: exploration rate.
+
+    Returns:
+        Series обраного сигналу в [-1, 1], індексована як signals_df.
+    """
+    t, n = signals_df.shape
+    bandit = Exp3Bandit(n_arms=n, gamma=gamma, arm_names=list(signals_df.columns))
+
+    chosen_signals = []
+    sig_vals = signals_df.values
+    ret_vals = returns_df.values
+
+    for i in range(t):
+        arm = bandit.select_arm()
+        chosen_signals.append(sig_vals[i, arm])
+
+        # Оновлення бандита за попередній спостережений крок
+        if i > 0:
+            # Винагорода за попередній крок
+            prev_arm = bandit.history[-1]["arm"] if bandit.history else 0
+            prev_ret = ret_vals[i - 1, int(prev_arm)]
+            bandit.update(int(prev_arm), prev_ret)
+
+    return pd.Series(chosen_signals, index=signals_df.index, dtype=float).clip(-1.0, 1.0)

@@ -21,6 +21,11 @@ from scalper_hft.ml.bet_sizing import (
     sigmoid_size,
     target_size,
 )
+from scalper_hft.ml.clustered_importance import (
+    CfiResult,
+    cluster_features,
+    clustered_mda,
+)
 from scalper_hft.ml.feature_importance import (
     feature_importance_report,
     mda,
@@ -47,6 +52,10 @@ __all__ = [
     "train_from_ohlcv",
     "predict",
     "MlResult",
+    "clustered_mda",
+    "cluster_features",
+    "CfiResult",
+
     # AFML
     "label_from_ohlcv",
     "get_events",

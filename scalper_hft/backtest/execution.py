@@ -190,3 +190,90 @@ def apply_breakeven_gate(
     move_frac = move / df["close"].replace(0, np.nan)
     gate = move_frac >= threshold
     return signals.where(gate.reindex(signals.index, fill_value=False), other=0.0)
+
+
+class ImplementationShortfallTracker:
+    """Трекер Implementation Shortfall (IS) та онлайн-калібровка CostModel (Narang Ch. 5, 7).
+
+    IS = Side * (Fill_Price - Decision_Price) / Decision_Price
+    Додатний IS означає погіршення ціни (slippage cost).
+    Забезпечує зворотний зв'язок між реальними виконаннями та CostModel.
+    """
+
+    def __init__(self, alpha_decay: float = 0.05) -> None:
+        self.alpha_decay = alpha_decay
+        self.records: list[dict[str, float]] = []
+        self._ewma_is_bps: float = 0.0
+        self._ewma_vol: float = 0.0
+        self._count: int = 0
+
+    def record_execution(
+        self,
+        decision_price: float,
+        fill_price: float,
+        side: int,
+        qty_notional: float = 0.0,
+        vol_frac: float = 0.0,
+        is_maker: bool = False,
+    ) -> float:
+        """Фіксація філа та розрахунок IS в bps.
+
+        side: +1 (Buy), -1 (Sell).
+        Returns: IS у базисних пунктах (bps).
+        """
+        if decision_price <= 0:
+            return 0.0
+        shortfall = side * (fill_price - decision_price) / decision_price
+        is_bps = shortfall * 10_000.0
+
+        self.records.append(
+            {
+                "decision_price": decision_price,
+                "fill_price": fill_price,
+                "side": float(side),
+                "qty_notional": qty_notional,
+                "vol_frac": vol_frac,
+                "is_maker": 1.0 if is_maker else 0.0,
+                "is_bps": is_bps,
+                "shortfall": shortfall,
+            }
+        )
+
+        # Оновлюємо EWMA показники
+        if self._count == 0:
+            self._ewma_is_bps = is_bps
+            self._ewma_vol = vol_frac
+        else:
+            self._ewma_is_bps = (1.0 - self.alpha_decay) * self._ewma_is_bps + self.alpha_decay * is_bps
+            if vol_frac > 0:
+                self._ewma_vol = (1.0 - self.alpha_decay) * self._ewma_vol + self.alpha_decay * vol_frac
+        self._count += 1
+
+        return is_bps
+
+    @property
+    def mean_slippage_bps(self) -> float:
+        """Середній реалізований slippage (bps)."""
+        if not self.records:
+            return 0.0
+        return float(np.mean([r["is_bps"] for r in self.records]))
+
+    @property
+    def current_slippage_frac(self) -> float:
+        """Поточний згладжений slippage як частка ціни."""
+        return max(self._ewma_is_bps / 10_000.0, 0.0)
+
+    def calibrate_cost_model(self, base_cost: CostModel | None = None) -> CostModel:
+        """Створює оновлену CostModel з каліброваним значенням slippage_frac."""
+        base = base_cost or CostModel()
+        new_slip = max(self.current_slippage_frac, 0.0001) if self._count >= 5 else base.slippage_frac
+        return CostModel(
+            maker_fee=base.maker_fee,
+            taker_fee=base.taker_fee,
+            slippage_frac=new_slip,
+            impact_frac=base.impact_frac,
+            impact_k=base.impact_k,
+            vol_ref=self._ewma_vol if self._ewma_vol > 0 else base.vol_ref,
+            vol_exp=base.vol_exp,
+        )
+

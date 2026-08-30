@@ -83,4 +83,53 @@ def loss_budget_split(
     return {str(cols[i]): float(daily_loss_limit * shares[i]) for i in range(len(w))}
 
 
-__all__ = ["portfolio_var", "vol_target_scale", "loss_budget_split"]
+def estimate_tail_dependence(
+    returns: pd.DataFrame | np.ndarray,
+    alpha: float = 0.05,
+) -> pd.DataFrame:
+    """Оцінка коефіцієнта нижньої хвостової залежності λ_L (FSPML Ch. 8.4).
+
+    λ_L = lim_{q->0} P(U_1 <= q | U_2 <= q) ≈ (1 / (q * T)) * Σ I(U_{1,t} <= q, U_{2,t} <= q)
+    Вимірює схильність активів до синхронного обвалу під час крипто-крахів.
+
+    Args:
+        returns: DataFrame (T x N) прибутковостей активів/стратегій.
+        alpha: квантиль нижнього хвоста (за замовчуванням 5%).
+
+    Returns:
+        DataFrame (N x N) попарної хвостової залежності у [0.0, 1.0].
+    """
+    if isinstance(returns, pd.DataFrame):
+        cols = list(returns.columns)
+        r = returns.dropna().values
+    else:
+        r = np.asarray(returns, dtype=float)
+        cols = [f"asset_{i}" for i in range(r.shape[1])]
+
+    t, n = r.shape
+    if t < 20 or n < 2:
+        return pd.DataFrame(np.eye(n), index=cols, columns=cols)
+
+    # Перетворення у емпіричні рівномірні маргінали U_i у (0, 1)
+    from scipy.stats import rankdata
+
+    u = np.zeros((t, n), dtype=float)
+    for j in range(n):
+        u[:, j] = rankdata(r[:, j]) / (t + 1.0)
+
+    lambda_l = np.eye(n, dtype=float)
+    q = min(max(alpha, 0.01), 0.5)
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            joint_co_crash = np.sum((u[:, i] <= q) & (u[:, j] <= q))
+            coef = float(joint_co_crash / (q * t))
+            coef = min(max(coef, 0.0), 1.0)
+            lambda_l[i, j] = coef
+            lambda_l[j, i] = coef
+
+    return pd.DataFrame(lambda_l, index=cols, columns=cols)
+
+
+__all__ = ["portfolio_var", "vol_target_scale", "loss_budget_split", "estimate_tail_dependence"]
+

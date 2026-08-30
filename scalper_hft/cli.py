@@ -810,7 +810,63 @@ def cmd_featimp(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_cfi(args: argparse.Namespace) -> None:
+    """Clustered Feature Importance (AFML Ch.8.5) з Purged CV."""
+    from scalper_hft.ml.clustered_importance import clustered_mda
+    from scalper_hft.ml.features import build_labeled_dataset
+    from scalper_hft.validation.cv import PurgedKFold
+
+    df = _load_klines(args.symbol, args.interval, args.days)
+    trades = None
+    if args.trades:
+        from scalper_hft.data.downloader import download_agg_trades
+
+        trades = download_agg_trades(args.symbol, args.days)
+    try:
+        X, y, w = build_labeled_dataset(
+            df,
+            trades=trades,
+            mode="triple_barrier",
+            pt=args.pt,
+            sl=args.sl,
+            holding_bars=args.holding,
+            decay=args.decay,
+            frac_d=args.frac_d,
+            add_frac_diff=not args.no_frac_diff,
+        )
+    except ValueError as e:
+        logger.error("cfi: %s", e)
+        sys.exit(1)
+
+    def clf_factory():
+        from lightgbm import LGBMClassifier
+
+        return LGBMClassifier(
+            n_estimators=100,
+            learning_rate=0.05,
+            num_leaves=31,
+            min_child_samples=50,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            class_weight="balanced",
+            verbosity=-1,
+        )
+
+    pkf = PurgedKFold(n_splits=args.splits, embargo_pct=args.embargo)
+    print(f"\nClustered Feature Importance (AFML Ch.8.5): {args.symbol} {args.interval}, {len(X)} зразків, {X.shape[1]} фіч\n")
+    cfi_res = clustered_mda(X, y, clf_factory, pkf, sample_weights=w, max_clusters=args.max_clusters)
+
+    print("— Важливість кластерів ознак (Clustered MDA) —")
+    for cl_id, imp in cfi_res.clustered_mda.items():
+        feats = cfi_res.clusters_dict.get(cl_id, [])
+        print(f"Кластер {cl_id:2d} (важливість: {imp:+.4f}) -> {', '.join(feats)}")
+
+    print("\n— Топ ознак за скоригованою важливістю —")
+    print(cfi_res.feature_mda.sort_values(ascending=False).round(4).to_string())
+
+
 def cmd_stress(args: argparse.Namespace) -> None:
+
     """Стрес-тестування: crash / liquidity / vol_spike / funding_shock."""
     from scalper_hft.backtest.engine import run_backtest
     from scalper_hft.backtest.execution import CostModel
@@ -1240,7 +1296,22 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--trades", action="store_true", help="Використати aggTrades (CVD фічі)")
     p.set_defaults(func=cmd_featimp)
 
+    p = sub.add_parser("cfi", help="Clustered Feature Importance (AFML Ch.8.5)")
+    add_common(p)
+    p.add_argument("--pt", type=float, default=1.0)
+    p.add_argument("--sl", type=float, default=1.0)
+    p.add_argument("--holding", type=int, default=10)
+    p.add_argument("--decay", type=float, default=0.9)
+    p.add_argument("--frac-d", type=float, default=0.4, dest="frac_d")
+    p.add_argument("--no-frac-diff", action="store_true", dest="no_frac_diff")
+    p.add_argument("--splits", type=int, default=4)
+    p.add_argument("--embargo", type=float, default=0.01)
+    p.add_argument("--max-clusters", type=int, default=6, dest="max_clusters")
+    p.add_argument("--trades", action="store_true", help="Використати aggTrades (CVD фічі)")
+    p.set_defaults(func=cmd_cfi)
+
     p = sub.add_parser("stress", help="Стрес-тест: crash / liquidity / vol_spike / funding_shock")
+
     add_common(p)
     p.add_argument("--scenarios", default=None, help="Через кому: crash,liquidity,vol_spike,funding_shock")
     p.set_defaults(func=cmd_stress)
