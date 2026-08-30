@@ -55,12 +55,27 @@ def _trade_id(t: dict[str, Any], fallback: int) -> int:
         return fallback
 
 
+_client: BinanceClient | None = None
+
+
+def _default_client() -> BinanceClient:
+    """Спільний клієнт на процес: ccxt enableRateLimit пейсить запити ГЛОБАЛЬНО.
+
+    Без цього кожен Downloader створював свій ccxt-інстанс зі своїм лімітером —
+    паралельні завантаження разом перевищували ліміт IP (429 -1003).
+    """
+    global _client
+    if _client is None:
+        settings = get_settings()
+        _client = BinanceClient(settings.binance_api_key, settings.binance_api_secret, settings.exchange)
+    return _client
+
+
 class Downloader:
     """Ітеративне завантаження історії з повторними спробами та батчами."""
 
     def __init__(self, client: BinanceClient | None = None, retries: int = 3, store: Any = None) -> None:
-        settings = get_settings()
-        self.client = client or BinanceClient(settings.binance_api_key, settings.binance_api_secret, settings.exchange)
+        self.client = client or _default_client()
         self.retries = retries
         self.store = store if store is not None else get_store()
 
@@ -71,17 +86,31 @@ class Downloader:
                 return fn(*args, **kwargs)
             except Exception as exc:  # noqa: BLE001 — мережеві помилки різні
                 last = exc
+                # rate limit — чекаємо довше, ліміт IP 2400/хв спільний з іншими процесами
+                if "429" in str(exc) or "Too many requests" in str(exc) or "RateLimitExceeded" in type(exc).__name__:
+                    sleep_s = 15.0 * (attempt + 1)
+                    logger.warning("Rate limit: сплю %.0f с (спроба %d/%d)", sleep_s, attempt + 1, self.retries)
+                else:
+                    sleep_s = 1.5 * (attempt + 1)
                 logger.warning("Спроба %d/%d не вдалась: %s", attempt + 1, self.retries, exc)
-                time.sleep(1.5 * (attempt + 1))
+                time.sleep(sleep_s)
         raise RuntimeError(f"Не вдалося завантажити дані після {self.retries} спроб: {last}")
 
     def klines(self, symbol: str, interval: str, days: int) -> pd.DataFrame:
         """Завантажити klines за останні `days` днів, доповнюючи кеш."""
         existing = self.store.load_klines(symbol, interval)
-        start_ms = int((_utc_now() - pd.Timedelta(days=days)).value // 1_000_000)
+        requested_start = int((_utc_now() - pd.Timedelta(days=days)).value // 1_000_000)
         if existing is not None and not existing.empty:
+            first_ts = int(existing.index[0].value // 1_000_000)
             last_ts = int(existing.index[-1].value // 1_000_000)
-            start_ms = min(start_ms, last_ts)
+            if first_ts <= requested_start:
+                # кеш покриває початок вікна — до-качуємо лише відсутній хвіст
+                start_ms = last_ts
+            else:
+                # кеш починається пізніше — розширюємо назад
+                start_ms = min(requested_start, first_ts)
+        else:
+            start_ms = requested_start
 
         frames: list[pd.DataFrame] = [existing] if existing is not None and not existing.empty else []
         since = start_ms
@@ -109,9 +138,13 @@ class Downloader:
     def spot_klines(self, symbol: str, interval: str, days: int) -> pd.DataFrame:
         """Спотові klines (для delta-neutral арбітражу) у окремий кеш."""
         existing = self.store.load_spot_klines(symbol, interval)
-        start_ms = int((_utc_now() - pd.Timedelta(days=days)).value // 1_000_000)
+        requested_start = int((_utc_now() - pd.Timedelta(days=days)).value // 1_000_000)
         if existing is not None and not existing.empty:
-            start_ms = min(start_ms, int(existing.index[-1].value // 1_000_000))
+            first_ts = int(existing.index[0].value // 1_000_000)
+            last_ts = int(existing.index[-1].value // 1_000_000)
+            start_ms = last_ts if first_ts <= requested_start else min(requested_start, first_ts)
+        else:
+            start_ms = requested_start
 
         spot_client = BinanceClient(market_type="spot")
         frames: list[pd.DataFrame] = [existing] if existing is not None and not existing.empty else []
