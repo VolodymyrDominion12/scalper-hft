@@ -53,6 +53,17 @@
 | Інтеграція фіч у live-шар | `live/trader.py`: `vol_scaled_size` (інверсне vol-масштабування розміру, кліп [0.25, 3]) + `hmm_blocked` (блок нових входів у «неспокійному» HMM-режимі; close ніколи не блокується) | `tests/test_sprint4.py::TestLiveSprint4` |
 | Дашборд: cohort/stress/capacity | `dashboard.py` §5: cohort decay, stress_report, capacity-крива (plotly) | py_compile |
 
+## ✅ Реалізовано (Спринт 5, 2026-08-30)
+
+| Підхід | Книга/розділ | Реалізація | Тести |
+|---|---|---|---|
+| Micro-price розрахунок & fair maker котирування | Narang Ch.7, 15 | `scalper_hft/backtest/micro_price.py`, інтеграція в `backtest/execution.py::CostModel` | `tests/test_sprint5.py::test_micro_price` |
+| Price ladder exits (драбина рівнів виходу) | Gofer Ch.7 | `scalper_hft/live/exit_ladders.py` (PriceLadderExit, каскадні рівні $2^i K$, partial fills) | `tests/test_sprint5.py::test_exit_ladders` |
+| Clustered Feature Importance (CFI) | AFML Ch.8 | `scalper_hft/ml/clustered_importance.py` (кластеризація фіч + OOS scoring) + CLI `cfi` | `tests/test_sprint5.py::test_cfi` |
+| Sparse Basket Arbitrage (мульти-активний кошик) | Narang Ch.3, FSPML Ch.2 | `scalper_hft/strategies/sparse_basket.py` (Lasso sparse weights + PCA-проекція) | `tests/test_sprint5.py::test_sparse_basket` |
+| Multi-asset Bar Sampling (tick/volume/dollar/imbalance) | AFML Ch.2 | `scalper_hft/data/bars.py` (dollar_bars, imbalance_bars, tick_bars) | `tests/test_sprint5.py::test_bars` |
+| Exp3 Multi-Armed Bandit для вибору активів/стратегій | Gofer Ch.2, 4 | `scalper_hft/strategies/bandit.py` (Exp3Bandit, exp3_select_signals) | `tests/test_sprint5.py::test_bandit` |
+
 ## Що вже є в проєкті (не дублювати)
 
 - **AFML**: triple-barrier labeling (side-aware), sample weights (uniqueness + time-decay + sequential bootstrap), FFD + find_min_d, purged K-fold + embargo (label-aware), CPCV/PBO, Deflated Sharpe + estimate_n_trials, walk-forward, sensitivity, Optuna.
@@ -263,7 +274,7 @@ benchmark 1/K; як альтернатива Hedge-блендінгу (п. 10) �
 
 ---
 
-## Рекомендований порядок (Спринти 1–4 — ✅ виконано)
+## Рекомендований порядок (Спринти 1–5 — ✅ виконано)
 
 1. ~~**Спринт 1 (S):** мета-лейблінг + sizing, breakeven-поріг, cohort decay,
    децильний lift, Hedge-блендінг~~ → зроблено 2026-08-29.
@@ -275,10 +286,12 @@ benchmark 1/K; як альтернатива Hedge-блендінгу (п. 10) �
 4. ~~**Спринт 4:** MCP-сервер для трейдінгу, alpha-гіпотеза hmm_reversion через
    повний цикл, live-інтеграція (vol-sizing + HMM-блок), дашборд cohort/stress/
    capacity~~ → зроблено 2026-08-29.
+5. ~~**Спринт 5:** micro-price розрахунок, exit ladders (драбини виходу), CFI (кластеризована важливість фіч),
+   sparse basket арбітраж, мульти-активні бари (dollar/tick/imbalance), Exp3 онлайн-бандит~~ →
+   зроблено 2026-08-30.
 
-Подальші кроки (за потребою): нова alpha-гіпотеза через повний цикл (наступна —
-на основі VPIN-гейту для maker або ML з micro/HMM/GARCH фічами), використання
-MCP-сервера в асистенті, paper-валідація hmm_reversion при позитивному аудиті.
+Подальші кроки (за потребою): тривалий paper-прогін (≥8 тижнів) для валідації виконання без розходжень,
+накопичення L2-даних глибини стакана та моніторинг фандінг-режимів.
 
 Кожен підхід — через повний цикл: реалізація → тест → walk-forward + Deflated Sharpe →
 sensitivity → paper (AGENTS.md, `skills/overfitting-audit.md`).

@@ -89,8 +89,8 @@ def test_download_funding_refreshes_stale_cache(monkeypatch, tmp_path) -> None:
             return fresh
 
     monkeypatch.setattr(dl, "get_settings", lambda: SimpleNamespace(data_dir_abs=tmp_path))
-    monkeypatch.setattr(dl, "load_funding", lambda path: stale)
-    monkeypatch.setattr(dl, "Downloader", FakeDL)
+    monkeypatch.setattr(dl, "get_store", lambda: SimpleNamespace(load_funding=lambda s: stale))
+    monkeypatch.setattr(dl, "Downloader", lambda **kw: FakeDL())
     monkeypatch.setattr(dl, "_utc_now", lambda: pd.Timestamp("2026-08-30 12:00"))
     out = dl.download_funding("BTCUSDT", days=30)
     assert called["n"] == 1
@@ -113,8 +113,8 @@ def test_download_funding_keeps_fresh_cache(monkeypatch, tmp_path) -> None:
             return cached
 
     monkeypatch.setattr(dl, "get_settings", lambda: SimpleNamespace(data_dir_abs=tmp_path))
-    monkeypatch.setattr(dl, "load_funding", lambda path: cached)
-    monkeypatch.setattr(dl, "Downloader", FakeDL)
+    monkeypatch.setattr(dl, "get_store", lambda: SimpleNamespace(load_funding=lambda s: cached))
+    monkeypatch.setattr(dl, "Downloader", lambda **kw: FakeDL())
     monkeypatch.setattr(dl, "_utc_now", lambda: now)
     out = dl.download_funding("BTCUSDT", days=1)
     assert called["n"] == 0

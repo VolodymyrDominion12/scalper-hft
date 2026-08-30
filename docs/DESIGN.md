@@ -3,34 +3,42 @@
 ## 1. Мета
 Високочастотна скальпінг-система для Binance USDT-M ф'ючерсів: цикл
 **дослідження → реалізація → тестування → аудит → покращення** з жорстким
-захистом від перенавчання. Цільовий горизонт стратегій — секунди/хвилини
-(реалістичний для retail: латентність з дому 50–200 мс, див. docs/RESEARCH.md).
+захистом від перенавчання. Цільовий горизонт стратегій — секунди/хвилини/години
+(з урахуванням реалістичної для retail латентності з дому 50–200 мс, див. [docs/RESEARCH.md](RESEARCH.md)).
 
 ## 2. Архітектура (за книгою "Inside the Black Box", гл. 2)
 
 ```
-Дані (Binance: klines, aggTrades, funding → parquet)
+Дані (Binance: klines, aggTrades, funding, vision dumps → parquet / PostgreSQL)
    │
    ▼
 Alpha Model ────┐
-Risk Model ─────┼──► Portfolio Construction ──► Execution (backtest/live)
+Risk Model ─────┼──► Portfolio Construction (ERC / Risk Budget) ──► Execution (backtest/live)
 Cost Model ─────┘
    │
    ▼
-Research: walk-forward / purged CV / Deflated Sharpe / sensitivity / Optuna / ML
+Research & Validation:
+  - Walk-forward / Purged K-fold CV / Deflated Sharpe / CSCV (PBO) / Sensitivity
+  - Stress-testing / Cohort Decay / Feature Lift / Capacity / Survival / Time-decay / Quintiles
+  - ML: Triple-barrier labeling / Meta-labeling / Bet sizing / CFI / LOB models
 ```
 
-Модулі (`scalper_hft/`):
+### Модулі (`scalper_hft/`):
 | Модуль | Відповідальність | Ключові файли |
 |---|---|---|
-| `data` | ccxt REST, parquet-кеш, розширення кешу | `binance_client.py`, `downloader.py`, `storage.py` |
-| `features` | індикатори + мікроструктура (CVD, OB imbalance, spread) | `indicators.py`, `regimes.py` |
-| `strategies` | альфа-моделі, єдиний інтерфейс `Strategy` | `base.py`, `mean_reversion.py`, `cvd_momentum.py`, `ob_imbalance.py`, `market_maker.py` |
-| `backtest` | рушії (векторизований/подієвий), CostModel, метрики | `engine.py`, `event_engine.py`, `execution.py`, `metrics.py` |
-| `validation` | анти-перенавчання | `walk_forward.py`, `cv.py`, `deflated_sharpe.py`, `sensitivity.py`, `optimize.py` |
-| `ml` | LightGBM walk-forward класифікатор | `features.py`, `trainer.py` |
-| `live` | paper/testnet/live трейдер, ризик-контроль | `account.py`, `trader.py` |
-| `cli.py` | CLI-інтерфейс | — |
+| `data` | REST/ccxt, Binance Vision dumps, parquet/PostgreSQL кеш, tick/volume/dollar/imbalance бари, валідація | `access.py`, `bars.py`, `binance_client.py`, `binance_vision.py`, `downloader.py`, `storage.py`, `store.py`, `validate.py` |
+| `features` | ТА індикатори, мікроструктура (VPIN, Kyle λ, Roll, Amihud), HMM-режими, GARCH(1,1), FFD, DSP | `indicators.py`, `microstructure.py`, `hmm_regime.py`, `volatility.py`, `fractional_diff.py`, `signal_processing.py`, `regimes.py` |
+| `strategies` | Альфа-моделі (єдиний інтерфейс `Strategy`, реєстр у `__init__.py`) | `mean_reversion.py`, `cvd_momentum.py`, `ob_imbalance.py`, `market_maker.py`, `funding_carry.py`, `funding_arb.py`, `basis_reversion.py`, `pairs_arb.py`, `ml_strategy.py`, `ensemble.py`, `hmm_reversion.py`, `sparse_basket.py`, `bandit.py`, `blend.py` |
+| `portfolio` | Конструювання портфеля: Equal Risk Contribution (ERC), risk-parity, vol-targeting, VaR, loss-budget | `erc.py`, `risk_budget.py` |
+| `backtest` | Векторизований/подієвий рушії, парний/портфельний бектест, емпіричний CostModel, micro-price, router | `engine.py`, `event_engine.py`, `pairs.py`, `pairs_portfolio.py`, `execution.py`, `micro_price.py`, `metrics.py`, `router.py` |
+| `validation` | Анти-перенавчання, статистична та сценарна валідація | `walk_forward.py`, `cv.py`, `deflated_sharpe.py`, `cscv.py`, `sensitivity.py`, `stress.py`, `cohort.py`, `lift.py`, `capacity.py`, `survival.py`, `time_decay.py`, `quintile.py`, `coint_scan.py`, `hedge_ratio.py`, `optimize.py`, `oos_registry.py` |
+| `ml` | LightGBM meta-labeling, bet sizing, sample weights, MDI/MDA/SFI, CFI, LOB models | `labeling.py`, `trainer.py`, `bet_sizing.py`, `features.py`, `feature_importance.py`, `clustered_importance.py`, `sample_weights.py`, `frac_diff.py`, `lob_models.py`, `train_lob.py` |
+| `live` | Paper/testnet/live трейдер, bookTicker/depth recorder, exit ladders, reconciliation & kill-switch, SQLite | `account.py`, `trader.py`, `pairs_runner.py`, `paper_runner.py`, `paper_replay.py`, `reconcile.py`, `bookticker_recorder.py`, `exit_ladders.py`, `fills.py`, `is_log.py`, `store.py`, `telegram.py` |
+| `mcp_trading.py` | MCP (Model Context Protocol) сервер для AI-асистентів | `mcp_trading.py` |
+| `dashboard.py` | Streamlit аналітичний та моніторинговий дашборд | `dashboard.py` |
+| `cli.py` | Повний CLI-інтерфейс (30+ команд) | `cli.py` |
+
+---
 
 ## 3. Ключові рішення
 
@@ -41,40 +49,46 @@ Research: walk-forward / purged CV / Deflated Sharpe / sensitivity / Optuna / ML
 `generate_signals` — це відповідальність автора стратегії (див. `skills/strategy-development.md`).
 
 ### 3.2. Модель витрат (гл. 5 книги)
-`CostModel`: maker_fee + taker_fee + slippage + impact. `breakeven_move_pct`
-показує мінімальний рух для покриття round-trip. Binance: maker 0.02%, taker 0.05%.
+`CostModel`: maker_fee (0.02%) + taker_fee (0.05%) + vol-aware slippage + Square-Root market impact (`k_imp * sigma * sqrt(Q/ADV)`).
+`breakeven_move_pct` та `breakeven_gate` запобігають входам, коли очікуваний рух менший за round-trip витрати.
 
-### 3.3. Анти-перенавчання
+### 3.3. Анти-перенавчання (гл. 9 книги + AFML)
 - **Walk-forward**: ковзні IS/OOS вікна, головна метрика — avg OOS Sharpe.
-- **Purged K-fold CV** (López de Prado): purging + embargo проти автокореляції.
-- **Deflated Sharpe (Bailey & LdP)**: коригування на кількість спроб; DSR > 0.95 = значущий edge.
-- **Sensitivity**: smoothness параметрів — плато vs ізольований пік.
-- **Правила**: оптимізація лише на train+CV; фінальний вердикт — на недоторканому OOS holdout;
-  мінімум ~100 угод для висновків.
+- **Purged K-fold CV & CPCV** (López de Prado): purging + embargo проти витоку інформації та автокореляції.
+- **Deflated Sharpe (Bailey & LdP)**: коригування на кількість спроб (DSR > 0.95 = значущий edge).
+- **Sensitivity & Monotonicity**: стабільність параметрів (плато vs пік) та квінтильні тести монотонності.
+- **Stress-Testing & Cohorts**: сценарні шоки (crash −30%, liquidity, funding spike) та когортне відстеження згасання edge.
 
-### 3.4. Стратегії (гл. 3 книги + дослідження)
-1. `mean_reversion` — RSI+BB mean reversion (найменш чутлива до slippage, гл. 5).
-2. `cvd_momentum` — потік заявок (CVD) + ціновий моментум (fast alpha, гл. 15).
-3. `ob_imbalance` — дисбаланс стакана (потребує bookTicker; поки синтетичний imbalance).
-4. `market_maker` — пасивні котирування обох сторін (NCMM, гл. 15; експериментальний,
-   потребує L2-даних — поточні філи оптимістичні/песимістичні за параметрами).
+### 3.4. Стратегії
+1. `pairs_arb` — парний статистичний арбітраж на 1h барах (z-score log-ratio, maker post-only). **Єдиний валідований кандидат**.
+2. `sparse_basket` — кошиковий мульти-активний арбітраж на основі Lasso/PCA.
+3. `ml_strategy` — LightGBM з потрійним бар'єром (triple-barrier), meta-labeling та ймовірнісним bet-sizing.
+4. `ensemble` та `blend` — ансамблі з динамічними вагами (Hedge no-regret, voting, regime-gating).
+5. `bandit` — Exp3 Multi-Armed Bandit для адаптивного вибору моделей/інструментів.
+6. `hmm_reversion` — Mean Reversion, гейтований HMM-станом ринку.
+7. `mean_reversion`, `cvd_momentum`, `funding_carry`, `funding_arb`, `basis_reversion`, `ob_imbalance`, `market_maker` — досліджені та відхилені або законсервовані (див. [docs/STRATEGY_STATUS.md](STRATEGY_STATUS.md)).
 
-### 3.5. Live
-Paper/testnet за замовчуванням (`DRY_RUN=true`). Ризик-контроль: ліміт позиції,
-денний ліміт збитків, пауза після серії збитків. Live — лише явно.
+### 3.5. Live та ризик-контроль
+Paper/testnet за замовчуванням (`DRY_RUN=true`).
+Багаторівневий ризик-контроль:
+- Hard limits: ліміт позиції, денний ліміт збитків на ногу та портфель, зупинка після серії збитків;
+- Динамічне масштабування: vol-scaled sizing (GARCH/EWMA) та блокування нових входів за HMM-режимом;
+- Каскадні виходи: price ladder exits;
+- Звірка (reconciliation): автоматична перевірка розходжень з біржею та аварійний kill-switch.
 
-## 4. Відомі обмеження
-- **aggTrades**: Binance REST обмежує 2 доби → CVD-фічі доступні лише для свіжого вікна;
-  історичні трейди — через data.binance.vision dumps (безкоштовно).
-- **bookTicker/L2**: історично не доступні безкоштовно → OB-стратегії потребують
-  власного запису (roadmap) або Tardis.dev.
-- **Market maker**: спрощена модель філів (без queue position, спайків глибини).
-  Для production — nautilus_trader + L2.
-- **testnet**: розріджені стакани, філи нереалістичні — лише інтеграційне тестування.
+---
 
-## 5. Roadmap
-1. 1s/5s свічки + запис bookTicker (для OB-стратегій на реальних снапшотах).
-2. nautilus_trader як L2-рушій (порівняльний аудит філів).
-3. asyncio + ccxt.pro live-цикл, maker-ордери (post-only), телеграм-сповіщення.
-4. ML: triple-barrier labeling, hmmlearn regime, DSR для ML.
-5. Streamlit-дашборд.
+## 4. Поточний статус та Roadmap
+
+### Реалізовано:
+1. ✅ Повна інфраструктура збору та кешування даних (Parquet, Postgres, Binance Vision, tick/dollar bars).
+2. ✅ Рекордер bookTicker/depth5 на systemd user-юніті.
+3. ✅ Валідований універсум пар (XRP/BTC, LINK/BTC, LINK/ETH, BTC/ETH) та мульти-парний портфель з ERC-алокацією.
+4. ✅ Повний ML-пайплайн (мета-лейблінг, bet sizing, MDI/MDA/SFI/CFI, LOB моделі).
+5. ✅ Розширені валідаційні тести (stress, capacity, survival, lift, cohort, quintiles, time-decay).
+6. ✅ MCP-сервер для трейдінгу та Streamlit дашборд.
+
+### Наступні кроки (Roadmap):
+1. **Paper-Gate**: 8 тижнів безперервного paper-прогону портфеля пар (`paper-run-pairs`) для верифікації відсутності розходжень з бектестом.
+2. **L2 Order Book**: накопичення тривалого масиву depth-даних та інтеграція Tardis.dev для моделювання черги лімітних ордерів у маркет-мейкінгу.
+3. **Live Execution**: перехід на реальний рахунок (лише за явним запитом і після успішного Paper-Gate).

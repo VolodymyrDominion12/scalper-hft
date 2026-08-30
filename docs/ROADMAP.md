@@ -1,29 +1,25 @@
 # Роадмап scalper-hft
 
-Стан на 2026-08-28 (після ітерацій 8–10). Цей документ — план розвитку після
+Стан на 2026-08-30 (після ітерацій 8–11 та Спринтів 1–5). Цей документ — план розвитку після
 аудиту коду, стратегій і live-шару. Детальний статус стратегій:
-[STRATEGY_STATUS.md](STRATEGY_STATUS.md), пари — [pairs_audit.md](pairs_audit.md).
+[STRATEGY_STATUS.md](STRATEGY_STATUS.md), пари — [pairs_audit.md](pairs_audit.md), синтез підходів — [book_approaches_synthesis.md](book_approaches_synthesis.md).
 
 ## Чесний вердикт
 
-Проєкт — зріла **research-платформа** (бектест, walk-forward, DSR, CSCV, облік
-комісій/фандінгу) з одним валідованим кандидатом: **pairs_arb на 1h, maker**.
-Це **не** готовий HFT-скальпер. Taker-скальпінг на 1m відхилено fee-drag;
-funding/basis сплять у низькому режимі 2025–26. Phase 0 (облік, закритий бар,
-post-only, REGISTRY) закрито. Live все ще не готовий до грошей: Phase 1 (paper pairs) є в коді — потрібен
-≥8 тижнів прогону без розходження з бектестом.
+Проєкт — зріла **квант-платформа** (Alpha → Risk → T-Cost → Portfolio → Execution, бектест, walk-forward, DSR, CSCV, ML meta-labeling, стрес-тести, MCP) з валідованим кандидатом: **портфель пар (pairs_arb на 1h, maker)**.
+Це **не** субмілісекундний тіковий HFT-скальпер. Taker-скальпінг на 1m відхилено через fee-drag;
+funding/basis сплять у низькому режимі 2025–26. Phase 0 закрито повністю.
+Усі ключові інженерні блоки Phase 2 та Phase 3 (reconciliation, hedge-ratio OLS/Johansen, coint-scan, triple-barrier ML, risk budget, ERC, exit ladders, micro-price) **імплементовані та покриті 238 тестами**.
 
-**Правило розгортання:** жоден live, доки paper pairs не пройде ≥8 тижнів без
-розходження з бектестом.
+**Головне правило розгортання:** жоден live з реальними коштами, доки paper pairs не пройде **≥8 тижнів безперервного моніторингу** без розходження з бектестом.
 
 ---
 
-## Phase 0 — P0 баги (закрито 2026-08-28)
+## Phase 0 — P0 баги (закрито 2026-08-28) ✅
 
 `pairs_arb` у REGISTRY; ф'ючерсний облік `PaperAccount` (cash + UPNL, без
 подвоєння PnL); сигнал/філл з закритого бару; close-before-flip + limit/post-only;
-paper-replay реверсує і рахує daily-loss на mark-to-market. Тести:
-`tests/test_live.py`.
+paper-replay реверсує і рахує daily-loss на mark-to-market. Тести: `tests/test_live.py`, `tests/test_p0.py`.
 
 | ID | Проблема | Статус |
 |---|---|---|
@@ -35,90 +31,72 @@ paper-replay реверсує і рахує daily-loss на mark-to-market. Те
 
 ---
 
-## Phase 1 — Paper pairs (код 2026-08-28; gate — 8 тижнів paper)
+## Phase 1 — Paper pairs (код закрито; триває 8-тижневий моніторинг) ⏳
 
 Зроблено в репозиторії:
-1. `PairsEngine` / `PairsPaperRunner` / `PairsPortfolioRunner` — дві ноги,
-   z-score на закритому барі, maker all-or-none, рівні ноціонали.
-2. Модель філла: post-only на OHLC; unfilled + wait_bars; ніколи однонога позиція.
-3. CLI: `paper-run-pairs`, `paper-replay-pairs`, `pairs-portfolio`.
-4. Ризик: `PAIR_NOTIONAL_PCT` / `PORTFOLIO_NOTIONAL_PCT` (3 пари → 20% нога),
-   стоп після `MAX_LOSING_MONTHS` збиткових місяців.
-5. SQLite `results/paper_pairs.sqlite` (equity, orders, trades, months).
-6. Дашборд: XRP/LINK + секція pairs + SQLite.
-7. Weekly-audit: валідовані пари + портфель; Telegram — OOS, не funding-шум.
-8. Ключі: лишаються в `.env` (`DRY_RUN=true`). Linger: вручну
-   `loginctl enable-linger $USER` для depth-рекордера.
+1. ✅ `PairsEngine` / `PairsPaperRunner` / `PairsPortfolioRunner` — дві ноги, z-score на закритому барі, maker all-or-none, рівні ноціонали.
+2. ✅ Модель філла: post-only на OHLC; unfilled + wait_bars; відсутність одноногих позицій.
+3. ✅ CLI: `paper-run-pairs`, `paper-replay-pairs`, `pairs-portfolio` з підтримкою `--method erc` (Equal Risk Contribution).
+4. ✅ Ризик: `PAIR_NOTIONAL_PCT` / `PORTFOLIO_NOTIONAL_PCT`, стоп після `MAX_LOSING_MONTHS`.
+5. ✅ SQLite `results/paper_pairs.sqlite` (equity, orders, trades, months).
+6. ✅ Дашборд: Streamlit секція pairs + SQLite аналітика.
+7. ✅ Weekly-audit: валідовані пари + портфель; Telegram сповіщення.
+8. ✅ Linger: активний `loginctl enable-linger $USER` для depth-рекордера.
 
-Критерій виходу (ще відкритий): ≥8 тижнів paper, tracking vs бектест, fill-rate
-у звіті, maxDD у межах бектесту × 1.5.
+**Критерій виходу (Paper Gate):** ≥8 тижнів paper-прогону, tracking error vs бектест, fill-rate у звіті, maxDD у межах бектесту × 1.5.
 
-Стартовий портфель: **XRP/BTC + BTC/ETH + LINK/BTC**, 1h, maker.
+Стартовий портфель: **XRP/BTC + BTC/ETH + LINK/BTC (+ LINK/ETH)**, 1h, maker.
 
 ---
 
-## Phase 2 — Production hardening (4–6 тижнів, після зеленого paper)
+## Phase 2 — Production hardening & ризик-інфраструктура ✅
 
-1. Звірка позицій з біржею кожен цикл (`fetch_positions`); kill-switch при
-   розходженні.
-2. Reduce-only на закритті; GTX/post-only на вході; ніколи market на pairs.
-3. asyncio + ccxt.pro (або наявний WS) замість REST-полінгу — для 1h не
-   критично, для OB/MM — обов'язково.
-4. Telegram: fill, reject, daily PnL, risk-block, kill-switch.
-5. Денний/тижневий ліміт збитків на **портфель**, не на одну ногу.
-6. Hedge-ratio: зараз 1:1 через log-ratio. Додати rolling OLS/Johansen і
-   порівняти OOS з поточною моделлю (не міняти live, доки OOS не кращий).
-7. Модель пропущених філлів у бектесті (ймовірність філла від distance-to-mid)
-   — щоб paper не був сюрпризом.
-
-Live з реальним капіталом — лише явний запит і після Phase 1 gate.
-Стартовий розмір: малий (напр. 5–10% цільового), scale-up за правилом.
+1. ✅ **Reconciliation**: звірка позицій з біржею кожен цикл (`fetch_positions`); kill-switch при розходженні (`scalper_hft/live/reconcile.py`).
+2. ✅ **Execution правила**: Reduce-only на закритті; GTX/post-only на вході; ніколи market на pairs.
+3. ✅ **Telegram інтеграція**: fill, reject, daily PnL, risk-block, kill-switch (`scalper_hft/live/telegram.py`).
+4. ✅ **Risk budget**: денний/тижневий ліміт збитків на портфель, vol-targeting (`scalper_hft/portfolio/risk_budget.py`).
+5. ✅ **Hedge-ratio**: rolling OLS та Johansen вектори коінтеграції (`scalper_hft/validation/hedge_ratio.py`).
+6. ✅ **Емпіричний CostModel & пропущені філи**: vol-aware slippage, Square-Root impact, micro-price та ймовірність виконання (`scalper_hft/backtest/execution.py`, `micro_price.py`).
+7. ✅ **Exit ladders**: драбини рівнів виходу за схемою каскадного часткового філу (`scalper_hft/live/exit_ladders.py`).
 
 ---
 
-## Phase 3 — Наступні альфи (паралельно з paper, не замість)
+## Phase 3 — Дослідження альф та ML-стек ✅
 
-Не воскрешати відхилені 1m-стратегії. Нові ідеї лише після того ж циклу:
-walk-forward → DSR → sensitivity → paper-replay.
-
-| Тема | Умова старту | Навіщо |
-|---|---|---|
-| Depth-weighted `ob_imbalance` | ≥2–4 тижні depth5 | Єдиний шлях до справжнього скальпу; top-of-book біполярний |
-| Market maker на L2 | Tardis або власний L2 + nautilus | Поточна OHLC-модель філлів нечесна |
-| Funding/basis wake-up | weekly-audit: >5% точок >36% річних | Режимно-сплячі; код тримати, не крутити на 1m |
-| Коінтеграційний універсум | скрипт скану пар (не ручний список) | XRP/LINK знайдені ітеративно; наступні пари — систематично |
-| ML | triple-barrier + DSR на OOS, не accuracy | Поточний LightGBM — напрямок бару без витрат; для pairs майже не потрібен |
+1. ✅ **Коінтеграційний сканер**: систематичний скан пар активів за Johansen/ADF (`validation/coint_scan.py`, CLI `coint-scan`).
+2. ✅ **ML-пайплайн**: triple-barrier labeling, sample weights (uniqueness + time decay), meta-labeling з F1/log-loss оптимізацією, bet sizing сигмоїдою (`ml/labeling.py`, `ml/trainer.py`, `ml/bet_sizing.py`).
+3. ✅ **Feature Importance**: MDI, MDA, SFI та Clustered Feature Importance (CFI) з PCA-перевіркою (`ml/feature_importance.py`, `ml/clustered_importance.py`).
+4. ✅ **Мікроструктурні та режимні фічі**: VPIN, Kyle λ, Roll, Amihud, Corwin–Schultz, каузальний HMM-режим, GARCH(1,1) та фракційне диференціювання FFD (`features/`).
+5. ✅ **Мульти-активні структури**: `SparseBasketArb` (Lasso/PCA кошики), `Exp3Bandit` (онлайн-вибір інструментів), `HedgeBlend` (no-regret блендінг).
+6. ✅ **Розширені валідатори**: `stress.py`, `cohort.py`, `lift.py`, `capacity.py`, `survival.py`, `time_decay.py`, `quintile.py`.
 
 ---
 
-## Phase 4 — HFT-інфра (лише якщо Phase 1–2 живуть)
+## Phase 4 — HFT та L2 Order Book інфраструктура (наступний етап)
 
-Retail-латентність 50–200 мс. Тіковий HFT з дому не виграється. Ця фаза —
-якщо pairs працює в paper/live і з’являється мікроструктурний edge:
-
-1. 1s/5s свічки + Tardis L2.
-2. nautilus_trader як альтернативний L2-рушій (аудит філлів vs власний event engine).
-3. Colocation / VPS ближче до Binance — лише під MM/OB, не під 1h pairs.
+1. **Глибина стакана**: тривале накопичення depth5 снапшотів через активний рекордер.
+2. **L2 Backtesting**: інтеграція Tardis.dev / L2 історичних даних для точного моделювання черги заявок у маркет-мейкінгу (`market_maker`).
+3. **Nautilus Trader інтеграція**: підключення як зовнішнього бенчмарк-рушія для L2 філів.
+4. **Live з реальними коштами**: підключення перевірених ключів Binance лише після виконання критерію Paper Gate (Phase 1).
 
 ---
 
-## Що не робити
+## Що категорично не робити
 
-- Не вмикати live на `mean_reversion` / `cvd_momentum` / `funding_carry` /
-  `basis_reversion` / 1m pairs — усі відхилені.
-- Не оптимізувати z/lookback на повній вибірці і не оголошувати «новий edge».
-- Не збільшувати частоту pairs «щоб більше угод» — 1m уже вбитий fee-drag.
-- Не ставити taker на pairs (аудит: taker гірший за maker).
-- Не масштабувати ноціонал, доки paper-філли не збігаються з моделлю.
+- Не вмикати live на `mean_reversion` / `cvd_momentum` / `funding_carry` / `basis_reversion` / 1m pairs — усі відхилені.
+- Не оптимізувати z/lookback на повній вибірці без OOS/DSR контролю.
+- Не збільшувати частоту pairs до 1m «щоб більше угод» — 1m знищується fee-drag.
+- Не ставити taker-виконання на pairs.
+- Не запускати реальний капітал до завершення 8-тижневого paper-трейдингу.
 
 ---
 
 ## Метрики прогресу
 
-| Фаза | Головна метрика |
-|---|---|
-| 0 | Усі P0 закриті тестами; `cli pairs` і weekly-audit зелені |
-| 1 | Paper vs backtest tracking error; % unfilled post-only; тижні без розриву обліку |
-| 2 | Розходження позицій з біржею = 0; час до kill-switch |
-| 3 | Новий кандидат: OOS>0, DSR, ≥100 угод або чесне «мало угод — лише paper» |
-| 4 | Не починати без живого PnL з Phase 2 |
+| Фаза | Головна метрика | Статус |
+|---|---|---|
+| 0 | Усі P0 закриті тестами; `cli pairs` і weekly-audit зелені | ✅ Закрито |
+| 1 | Paper vs backtest tracking error; % unfilled post-only; 8 тижнів без розриву | ⏳ В процесі моніторингу |
+| 2 | Hardening: reconciliation, kill-switch, risk budget, exit ladders, OLS/Johansen | ✅ Реалізовано в коді |
+| 3 | ML meta-labeling, CFI, micro-price, sparse basket, stress/cohort валідація | ✅ Реалізовано в коді |
+| 4 | L2 Tardis дані, черга лімітних ордерів, live під реальний капітал | 🔜 Наступний етап |

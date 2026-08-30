@@ -119,7 +119,7 @@ Round-trip taker ≈ **0.10%** ноціоналу — це ~10 повних уг
 ## Тести
 
 ```bash
-.venv/bin/python -m pytest tests/ -q   # 9 тестів: no-lookahead, метрики, DSR, CV, кеш, WF
+uv run pytest tests/ -q   # 238 тестів у 15 тестових сюїтах
 ```
 
 ## Аудит стратегій (90 днів 1m-даних, комісії + slippage)
@@ -141,38 +141,23 @@ Round-trip taker ≈ **0.10%** ноціоналу — це ~10 повних уг
 | funding_carry (збір фандінгу) | BTC −0.10%, ETH −0.05%, SOL −0.54% | ⚠ відхилено (OOS −0.35, DSR=0) |
 | funding_arb (delta-neutral) | −0.4…−2.2% (maker/taker) | ⚠ відхилено (тертя > фандінг за поточних ставок) |
 | basis_reversion (1m) | овертрейдинг, −31…−85% | ⚠ відхилено (fee-drag) |
-| **pairs_arb (BTC/ETH, 1h, maker)** | **+8.3%/рік**, 47 угод, maxDD −4%, WF OOS>0 | ✅ **перший валідований кандидат** (деталі: docs/pairs_audit.md) |
+| **pairs_arb (XRP/BTC, LINK/BTC, BTC/ETH)** | **+8.3…+15.9%/рік**, maxDD −3.6…−6.5% | ✅ **валідовані кандидати** (деталі: docs/pairs_audit.md) |
 | market_maker (спрощена модель) | adverse selection > спред | ⚠ потребує L2-даних |
 | ob_imbalance (depth-weighted) | даних замало | ⏳ накопичення іде (systemd-сервіс активний) |
 
-**Чесний висновок**: жодна стратегія не пройшла аудит за поточних ринкових умов —
-це правильний результат циклу. Система відхиляє edge, якого немає, а валідаційні
-шари (бектест ↔ paper-replay ↔ юніт-тести) ловлять баги обліку (funding ~480×).
-Наступні кроки: maker post-only виконання (готово в клієнті), накопичення стакана
-для OB, моніторинг фандінг-режиму (weekly-audit).
+**Чесний висновок**: жодна 1m-скальпінг стратегія не пройшла аудит через комісійне тертя. Єдиний валідований напрямок — **портфель 1h пар з maker-виконанням (post-only)**.
+Наступні кроки: безперервний paper-прогін (≥8 тижнів), накопичення стакана для OB, моніторинг фандінг-режиму.
 
 ## Roadmap (цикл інвестігейт → реалізація → тест → аудит → покращення)
 
 1. **Дані**: історичні aggTrades через `data.binance.vision` (✅ реалізовано),
-   1s/5s свічки, накопичення bookTicker (✅ рекордер), Tardis.dev для L2.
-2. **Тіки**: підключення nautilus_trader як альтернативного L2-рушія (порівняльний аудит філів).
-3. **Live**: asyncio + ccxt.pro WebSocket-цикл, maker-ордери (post-only), телеграм-сповіщення.
-4. **ML**: triple-barrier labeling, hmmlearn regime, deflated Sharpe для ML-моделей.
-   ✅ Спринт 1 (docs/book_approaches_synthesis.md): bet sizing із імовірностей,
-   мета-лейблінг, confidence-фільтр через proba, Hedge-блендінг (ensemble mode='hedge'),
-   breakeven-гейт, cohort/lift аналіз.
-   ✅ Спринт 2: мікроструктурні фічі VPIN/Kyle λ/Roll/Amihud/Corwin–Schultz
-   (`features/microstructure.py`), HMM-режими (`features/hmm_regime.py`), GARCH σ_{t+1}
-   (`features/volatility.py`), емпіричні витрати (vol-scaled slippage + Square-Root
-   impact у `CostModel`), ERC-алокація (`portfolio/erc.py`, `pairs-portfolio --method erc`),
-   MDI/MDA/SFI feature importance (`ml/feature_importance.py`, CLI `featimp`).
-   ✅ Спринт 3: стрес-тест (`validation/stress.py`, CLI `stress`), портфельний risk
-   budget (`portfolio/risk_budget.py`), сигмоїдний sizing + лімітна ціна
-   (`ml/bet_sizing.py`, AFML Ch.10.6), capacity-тест (`validation/capacity.py`, CLI
-   `capacity`), Kaplan–Meier (`validation/survival.py`, CLI `survival`), інтеграція
-   micro/HMM/GARCH у ML-фічі (`ml` CLI: `--trades --hmm --garch`).
-   ✅ Спринт 4: MCP-сервер для трейдінгу (`scalper_hft/mcp_trading.py`, CLI `mcp`,
-   конфіг `.mcp/mcp-config.md`), alpha-гіпотеза `hmm_reversion` (HMM-гейтований
-   mean reversion, повний цикл валідації), live-інтеграція (vol-scaled sizing +
-   HMM-блок у `live/trader.py`), дашборд §5 (cohort/stress/capacity).
-5. **Dashboard**: Streamlit для моніторингу стратегій і параметрів у реальному часі.
+   генерація tick/volume/dollar/imbalance барів (✅ реалізовано), накопичення bookTicker (✅ рекордер).
+2. **Тіки та L2**: підключення Tardis.dev / nautilus_trader для моделювання черги заявок у маркет-мейкінгу.
+3. **Live**: paper-моніторинг pairs портфеля (≥8 тижнів), звірка reconciliation та kill-switch (✅ реалізовано).
+4. **ML та синтез методологій** ([docs/book_approaches_synthesis.md](docs/book_approaches_synthesis.md)):
+   ✅ Спринт 1: bet sizing із імовірностей, мета-лейблінг, Hedge-блендінг, breakeven-гейт, cohort/lift аналіз.
+   ✅ Спринт 2: мікроструктурні фічі VPIN/Kyle λ/Roll/Amihud, HMM-режими, GARCH(1,1), емпіричні витрати (Square-Root impact у `CostModel`), ERC-алокація, MDI/MDA/SFI.
+   ✅ Спринт 3: стрес-тест (`validation/stress.py`), портфельний risk budget (`portfolio/risk_budget.py`), сигмоїдний sizing + лімітна ціна (`ml/bet_sizing.py`), capacity-тест, Kaplan–Meier survival.
+   ✅ Спринт 4: MCP-сервер для трейдінгу (`scalper_hft/mcp_trading.py`, CLI `mcp`), alpha-гіпотеза `hmm_reversion`, live-інтеграція (vol-scaled sizing + HMM-блок), дашборд §5.
+   ✅ Спринт 5: micro-price котирування, price ladder exits (`live/exit_ladders.py`), Clustered Feature Importance (CLI `cfi`), Sparse Basket Arbitrage (`strategies/sparse_basket.py`), Exp3 онлайн-бандит (`strategies/bandit.py`).
+5. **Dashboard**: Streamlit для моніторингу стратегій і параметрів у реальному часі (✅ реалізовано).

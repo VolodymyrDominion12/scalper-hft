@@ -103,17 +103,11 @@ class ParquetStore:
             return out
         for path in sorted(self.data_dir.glob("*_klines.parquet")):
             parts = path.stem.split("_")
-            if len(parts) >= 3 and parts[-2] == "klines":
-                # {SYMBOL}_{interval}_klines — символ може містити '_' (напр. 1000SHIBUSDT — ні)
-                interval = parts[-1]
+            if len(parts) >= 3 and parts[-1] == "klines":
+                interval = parts[-2]
                 symbol = "_".join(parts[:-2])
                 out.append((symbol, interval))
         return out
-
-
-def _rows(df: pd.DataFrame, cols: list[str]) -> list[tuple]:
-    """Перетворити DataFrame у кортежі для bulk-вставки (індекс у першій колонці)."""
-    return [tuple([ts.to_pydatetime()] + [None if pd.isna(v) else float(v) for v in row]) for ts, row in df[cols].iterrows()]
 
 
 class PostgresStore:
@@ -187,8 +181,8 @@ class PostgresStore:
     def _query(self, sql: str, params: tuple) -> pd.DataFrame | None:
         import psycopg
 
-        self.ensure_schema()
         try:
+            self.ensure_schema()
             with self._connect() as conn, conn.cursor() as cur:
                 cur.execute(sql, params)
                 cols = [d.name for d in cur.description] if cur.description else []
@@ -202,30 +196,30 @@ class PostgresStore:
         df["ts"] = pd.to_datetime(df["ts"], utc=True).dt.tz_localize(None)
         return df.set_index("ts").sort_index()
 
-    def _replace(self, table: str, symbol: str, df: pd.DataFrame, extra_where: str = "") -> None:
-        """Атомарна заміна рядків (symbol[, interval]) на новий вміст df."""
-        import psycopg
+    def _replace_klines(self, symbol: str, interval: str, df: pd.DataFrame) -> None:
+        """Атомарна заміна рядків klines для (symbol, interval)."""
+        self.ensure_schema()
+        cols = ["symbol", "interval", "ts", *self._KLINES_COLS]
+        rows = [
+            (symbol, interval, ts.to_pydatetime(), *vals)
+            for ts, vals in ((i, tuple(r)) for i, r in df[self._KLINES_COLS].iterrows())
+        ]
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM klines WHERE symbol = %s AND interval = %s", (symbol, interval))
+                if rows:
+                    insert = f"INSERT INTO klines ({', '.join(cols)}) VALUES ({', '.join(['%s'] * len(cols))})"
+                    cur.executemany(insert, rows)
+            conn.commit()
 
+    def _replace(self, table: str, symbol: str, df: pd.DataFrame) -> None:
+        """Атомарна заміна рядків agg_trades / funding для символу."""
         self.ensure_schema()
         with self._connect() as conn:
             with conn.cursor() as cur:
-                if table == "klines":
-                    cur.execute("DELETE FROM klines WHERE symbol = %s AND interval = %s", (symbol, extra_where))
-                    cols = ["symbol", "interval", "ts", *self._KLINES_COLS]
-                    rows = [
-                        (symbol, extra_where, ts.to_pydatetime(), *vals)
-                        for ts, vals in ((i, tuple(r)) for i, r in df[self._KLINES_COLS].iterrows())
-                    ]
-                elif table == "spot_klines":
-                    cur.execute("DELETE FROM klines WHERE symbol = %s AND interval = %s", (symbol, "spot_" + extra_where))
-                    cols = ["symbol", "interval", "ts", *self._KLINES_COLS]
-                    rows = [
-                        (symbol, "spot_" + extra_where, ts.to_pydatetime(), *vals)
-                        for ts, vals in ((i, tuple(r)) for i, r in df[self._KLINES_COLS].iterrows())
-                    ]
-                elif table == "agg_trades":
+                if table == "agg_trades":
                     cur.execute("DELETE FROM agg_trades WHERE symbol = %s", (symbol,))
-                    cols = ["symbol", *self._TRADES_COLS]
+                    cols = ["symbol", "trade_id", "ts", "price", "amount", "side"]
                     rows = [
                         (symbol, int(tid), ts.to_pydatetime(), float(p), float(a), s)
                         for ts, tid, p, a, s in zip(df.index, df["trade_id"], df["price"], df["amount"], df["side"])
@@ -252,7 +246,7 @@ class PostgresStore:
     def save_klines(self, symbol: str, interval: str, df: pd.DataFrame) -> None:
         if df is None or df.empty:
             return
-        self._replace("klines", symbol, df, extra_where=interval)
+        self._replace_klines(symbol, interval, df)
         logger.info("Postgres: збережено klines %s %s (%d рядків)", symbol, interval, len(df))
 
     def load_spot_klines(self, symbol: str, interval: str) -> pd.DataFrame | None:
@@ -264,7 +258,7 @@ class PostgresStore:
     def save_spot_klines(self, symbol: str, interval: str, df: pd.DataFrame) -> None:
         if df is None or df.empty:
             return
-        self._replace("spot_klines", symbol, df, extra_where=interval)
+        self._replace_klines(symbol, f"spot_{interval}", df)
         logger.info("Postgres: збережено spot klines %s %s (%d рядків)", symbol, interval, len(df))
 
     # ── trades / funding ──────────────────────────────────────────────────────
@@ -296,8 +290,8 @@ class PostgresStore:
     def list_klines(self) -> list[tuple[str, str]]:
         import psycopg
 
-        self.ensure_schema()
         try:
+            self.ensure_schema()
             with self._connect() as conn, conn.cursor() as cur:
                 cur.execute("SELECT DISTINCT symbol, interval FROM klines ORDER BY symbol, interval")
                 return [tuple(r) for r in cur.fetchall()]
