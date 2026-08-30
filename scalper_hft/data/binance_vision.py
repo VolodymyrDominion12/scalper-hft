@@ -20,9 +20,6 @@ from datetime import date, timedelta
 import pandas as pd
 import requests
 
-from scalper_hft.config import get_settings
-from scalper_hft.data.storage import save_trades, trades_path
-
 logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://data.binance.vision/data/futures/um"
@@ -61,16 +58,16 @@ def _parse_zip(content: bytes) -> pd.DataFrame:
         with zf.open(name) as f:
             # архіви мають заголовок; перевіряємо і пропускаємо при потребі
             raw = pd.read_csv(f)
-            if "transact_time" in raw.columns:
-                df = raw
-            else:
+            if "transact_time" not in raw.columns:
                 raw = pd.read_csv(io.BytesIO(content), header=None, names=_COLUMNS)
-                df = raw
+                raw["agg_trade_id"] = raw["agg_trade_id"].astype("int64")
+    df = raw.copy()
     df["ts"] = pd.to_datetime(df["transact_time"], unit="ms")
+    df["trade_id"] = pd.to_numeric(df["agg_trade_id"], errors="coerce").fillna(0).astype("int64")
     df["side"] = df["is_buyer_maker"].map({True: "sell", False: "buy"})
     df["price"] = df["price"].astype(float)
     df["amount"] = df["quantity"].astype(float)
-    return df.set_index("ts")[["price", "amount", "side"]].sort_index()
+    return df.set_index("ts")[["trade_id", "price", "amount", "side"]].sort_index()
 
 
 def download_agg_trades_vision(
@@ -83,10 +80,15 @@ def download_agg_trades_vision(
 
     freq: 'daily' (файл на день) або 'monthly' (файл на місяць).
     """
-    settings = get_settings()
-    path = trades_path(settings.data_dir_abs, symbol)
     frames: list[pd.DataFrame] = []
     end = end or date.today()
+
+    def _advance(d: date, freq: str) -> date:
+        if freq == "monthly":
+            if d.month == 12:
+                return date(d.year + 1, 1, 1)
+            return date(d.year, d.month + 1, 1)
+        return d + timedelta(days=1)
 
     current = start
     while current <= end:
@@ -94,24 +96,12 @@ def download_agg_trades_vision(
         content = _download_zip(url)
         if content is None:
             logger.info("Файл не знайдено (404): %s", url)
-            if freq == "monthly":
-                # пропускаємо місяць цілком
-                if current.month == 12:
-                    current = date(current.year + 1, 1, 1)
-                else:
-                    current = date(current.year, current.month + 1, 1)
-                continue
-        else:
-            df = _parse_zip(content)
-            frames.append(df)
-            logger.info("%s: %d трейдів", url.split("/")[-1], len(df))
-            if freq == "daily":
-                current += timedelta(days=1)
-            else:
-                if current.month == 12:
-                    current = date(current.year + 1, 1, 1)
-                else:
-                    current = date(current.year, current.month + 1, 1)
+            current = _advance(current, freq)
+            continue
+        df = _parse_zip(content)
+        frames.append(df)
+        logger.info("%s: %d трейдів", url.split("/")[-1], len(df))
+        current = _advance(current, freq)
         time.sleep(0.3)  # ввічливість до архіву
 
     if not frames:
@@ -121,16 +111,13 @@ def download_agg_trades_vision(
     out = out[~out.index.duplicated(keep="last")]
 
     # злиття з наявним кешем (REST-частина, останні 2 доби)
-    existing = None
-    if path.exists():
-        try:
-            existing = pd.read_parquet(path)
-            existing.index = pd.to_datetime(existing.index)
-        except Exception:  # noqa: BLE001
-            existing = None
+    from scalper_hft.data.store import get_store
+
+    store = get_store()
+    existing = store.load_trades(symbol)
     if existing is not None and not existing.empty:
-        out = pd.concat([out, existing[["price", "amount", "side"]]]).sort_index()
+        out = pd.concat([out, existing[["trade_id", "price", "amount", "side"]]]).sort_index()
         out = out[~out.index.duplicated(keep="last")]
 
-    save_trades(path, out)
+    store.save_trades(symbol, out)
     return out

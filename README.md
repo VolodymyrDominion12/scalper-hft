@@ -9,15 +9,74 @@ Data та Research (бектест + анти-перенавчання). Дос�
 
 ```
 scalper_hft/
-├── data/        Binance klines / aggTrades / funding → parquet-кеш (ccxt)
+├── data/        Binance klines / aggTrades / funding → кеш: parquet або PostgreSQL (ccxt)
+│                store.py (бекенди) · resample.py (1m → 5m/15m/1h/...) · access.py (ensure_klines)
 ├── features/    RSI, EMA, BB, ATR, VWAP, волатильність + CVD, OB-imbalance, spread
 ├── strategies/  mean_reversion · cvd_momentum · ob_imbalance · market_maker (експерим.)
 ├── backtest/    векторизований рушій + подієвий (maker) + метрики + CostModel
-├── validation/  walk-forward · purged CV · Deflated Sharpe + PBO · sensitivity · Optuna
+├── validation/  walk-forward · purged CV · Deflated Sharpe + PBO · sensitivity · Optuna · sweep
 ├── ml/          LightGBM walk-forward класифікатор напрямку (FreqAI-стиль)
 ├── live/        paper/testnet/live трейдер з ризик-контролем
-└── cli.py       CLI: download / backtest / walkforward / optimize / overfit / ml / paper / report
+└── cli.py       CLI: download / backtest / walkforward / optimize / overfit / ml / paper / report / sweep
 ```
+
+## Кеш даних: parquet або PostgreSQL у Docker
+
+Дані завантажуються з Binance **один раз** і живуть у кеші. Два бекенди:
+
+- `DATA_BACKEND=parquet` (за замовчуванням) — файли у `data/*.parquet`;
+- `DATA_BACKEND=postgres` — **PostgreSQL у Docker** (зручно, коли інструментів багато):
+
+```bash
+docker compose up -d postgres          # піднімає scalper_postgres:16 на порту 5433
+# у .env:
+#   DATA_BACKEND=postgres
+#   POSTGRES_PORT=5433                  # (на цій машині 5432/5433 зайняті → 5440)
+cp .env.example .env
+```
+
+Схема створюється автоматично: `klines(symbol, interval, ts, ohlcv)`,
+`agg_trades(symbol, trade_id, ts, price, amount, side)`, `funding(symbol, ts, funding_rate)`.
+Дані переживають перезапуск контейнера (docker volume `postgres_data`).
+
+## Ресемплінг: 1m → 5m / 15m / 30m / 1h / 4h / 1d (без повторних запитів до API)
+
+Хвилинні дані покривають усі старші таймфрейми: завантажуємо базу один раз,
+решту агрегуємо локально (OHLCV: open=first, high=max, low=min, close=last, volume=sum;
+неповний останній бар відкидається):
+
+```bash
+# база качається один раз (1m)
+.venv/bin/python -m scalper_hft.cli download --symbol BTCUSDT --interval 1m --days 90
+
+# бектест на 5m/15m/1h — ресемплінг з 1m-кешу, нуль API-дзвінків
+.venv/bin/python -m scalper_hft.cli backtest --strategy mean_reversion --symbol BTCUSDT --interval 15m --days 90 --base 1m --derive
+```
+
+Логіка `data/access.py::ensure_klines`: кеш цільового таймфрейму → якщо немає і
+`derive=True` → ресемплінг із бази → результат зберігається в кеш. Будь-який
+нестандартний інтервал (3m, 45m, 2h, ...) автоматично виводиться з бази.
+
+## Матричний прогон: всі стратегії × таймфрейми × інструменти
+
+```bash
+# всі single-symbol стратегії × 8 символів × 6 таймфреймів × 30 днів
+.venv/bin/python -m scalper_hft.cli sweep --symbols BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT,LINKUSDT,BNBUSDT,DOGEUSDT,ADAUSDT \
+    --intervals 1m,5m,15m,30m,1h,4h --days 30 --workers 4
+# результат: results/sweep.csv + results/sweep.md
+
+# ML-стратегія та ensemble — повільно, окремим прогоном на старших таймфреймах
+.venv/bin/python -m scalper_hft.cli sweep --all --strategies ml_strategy,ensemble \
+    --symbols BTCUSDT,ETHUSDT --intervals 15m,1h,4h --days 30
+
+# walk-forward режим замість бектесту
+.venv/bin/python -m scalper_hft.cli sweep --mode walkforward --train 2000 --test 500 --days 60
+```
+
+База (1m) качається один раз на символ, решта таймфреймів — ресемплінг.
+Кожна клітинка — незалежний бектест з повними комісіями; помилки однієї клітинки
+не зупиняють прогон (status/error). Пари (`pairs_arb`, `sparse_basket`) і
+delta-neutral `funding_arb` потребують двох ніг — у пер-символьний sweep не входять.
 
 ## Швидкий старт
 
@@ -53,8 +112,9 @@ uv venv .venv && uv pip install -e ".[optim,ml,dev]"
 
 | Команда | Призначення |
 |---|---|
-| `download` | klines / aggTrades / funding у parquet-кеш (`--trades-days` для aggTrades) |
-| `backtest` | бектест стратегії з комісіями та slippage (funding PnL для funding_carry) |
+| `download` | klines / aggTrades / funding у кеш (`--trades-days` для aggTrades; `--vision` — data.binance.vision) |
+| `backtest` | бектест стратегії з комісіями та slippage (funding PnL для funding_carry); `--base 1m --derive` — ресемплінг |
+| `sweep` | **матричний прогон: всі стратегії × символи × таймфрейми** → `results/sweep.csv` (+`--mode walkforward`, `--workers`) |
 | `walkforward` | ковзні IS/OOS вікна — середній OOS Sharpe |
 | `optimize` | Optuna-пошук параметрів з purged CV цільовою функцією |
 | `overfit` | аудит: WF + sensitivity (плато vs пік) + Deflated Sharpe |

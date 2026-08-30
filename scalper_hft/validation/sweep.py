@@ -217,6 +217,22 @@ def run_sweep(
         if name not in REGISTRY:
             raise KeyError(f"Невідома стратегія '{name}' (доступні: {sorted(REGISTRY)})")
 
+    # прогріти базовий таймфрейм послідовно — один API-прохід на символ,
+    # щоб паралельні клітинки не качали базу одночасно (гонка)
+    if data_provider is None:
+        need_funding = any(getattr(REGISTRY[n], "needs_funding", False) for n in strategies)
+        if base_interval in intervals:
+            from scalper_hft.data.access import warm_base_cache
+
+            logger.info("Прогрів бази %s для %s символів (%d днів)...", base_interval, len(symbols), days)
+            warm_base_cache(symbols, days, base_interval=base_interval)
+        if need_funding:
+            from scalper_hft.data.downloader import download_funding
+
+            logger.info("Прогрів funding для %s символів...", len(symbols))
+            for sym in symbols:
+                download_funding(sym, days)
+
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
     cell = _build_cell_runner(
         days=days,

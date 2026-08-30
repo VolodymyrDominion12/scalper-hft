@@ -196,6 +196,21 @@ class PostgresStore:
         df["ts"] = pd.to_datetime(df["ts"], utc=True).dt.tz_localize(None)
         return df.set_index("ts").sort_index()
 
+    @staticmethod
+    def _copy(conn, table: str, cols: list[str], rows: list[tuple]) -> None:
+        """Bulk-insert через COPY (швидко для мільйонів рядків). NaN → NULL."""
+        import math
+
+        clean = []
+        for row in rows:
+            clean.append(
+                tuple(None if isinstance(v, float) and math.isnan(v) else v for v in row)
+            )
+        with conn.cursor() as cur:
+            with cur.copy(f"COPY {table} ({', '.join(cols)}) FROM STDIN") as copy:
+                for row in clean:
+                    copy.write_row(row)
+
     def _replace_klines(self, symbol: str, interval: str, df: pd.DataFrame) -> None:
         """Атомарна заміна рядків klines для (symbol, interval)."""
         self.ensure_schema()
@@ -207,9 +222,8 @@ class PostgresStore:
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM klines WHERE symbol = %s AND interval = %s", (symbol, interval))
-                if rows:
-                    insert = f"INSERT INTO klines ({', '.join(cols)}) VALUES ({', '.join(['%s'] * len(cols))})"
-                    cur.executemany(insert, rows)
+            if rows:
+                self._copy(conn, "klines", cols, rows)
             conn.commit()
 
     def _replace(self, table: str, symbol: str, df: pd.DataFrame) -> None:
@@ -232,8 +246,7 @@ class PostgresStore:
                     raise ValueError(f"невідома таблиця {table}")
 
                 if rows:
-                    insert = f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join(['%s'] * len(cols))})"
-                    cur.executemany(insert, rows)
+                    self._copy(conn, table, cols, rows)
             conn.commit()
 
     # ── klines ────────────────────────────────────────────────────────────────
