@@ -10,6 +10,8 @@
 
 Основні функції:
     make_backtest_figure — повний графік угод;
+    trade_detail_figure — деталі однієї угоди (клік по маркеру);
+    find_trade_by_ts — пошук угоди за часом входу/виходу;
     equity_figure — equity + drawdown;
     trades_table — людсько-читабельна таблиця угод;
     drawdown_series — серія просадки.
@@ -26,7 +28,9 @@ from scalper_hft.visualization.charts import (
     auto_indicator_columns,
     drawdown_series,
     equity_figure,
+    find_trade_by_ts,
     make_backtest_figure,
+    trade_detail_figure,
     trades_table,
 )
 
@@ -39,6 +43,8 @@ __all__ = [
     "auto_indicator_columns",
     "drawdown_series",
     "equity_figure",
+    "find_trade_by_ts",
     "make_backtest_figure",
+    "trade_detail_figure",
     "trades_table",
 ]

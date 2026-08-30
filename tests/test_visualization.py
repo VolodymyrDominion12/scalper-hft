@@ -229,3 +229,66 @@ class TestEquityHelpers:
         ]
         assert set(tb["Сторона"].dropna().unique()) <= {"Лонг", "Шорт"}
         assert np.allclose(tb["PnL, $"], tb["PnL, %"] / 100.0 * 10_000.0)
+
+
+# ── 5. exit_levels інших стратегій ───────────────────────────────────────────
+class TestExitLevels:
+    def test_hmm_reversion_delegates_to_mean_reversion(self):
+        from scalper_hft.strategies.hmm_reversion import HmmReversionScalper
+
+        df = _make_df()
+        mr = get_strategy("mean_reversion", stop_atr_mult=2.5)
+        hmm = HmmReversionScalper(stop_atr_mult=2.5)
+        lv_mr = mr.exit_levels(df)
+        lv_hmm = hmm.exit_levels(df)
+        pd.testing.assert_frame_equal(lv_mr, lv_hmm)
+
+    def test_ml_strategy_levels_are_close_relative(self):
+        from scalper_hft.strategies.ml_strategy import MLStrategy
+
+        df = _make_df()
+        lv = MLStrategy(pt=1.5, sl=2.0).exit_levels(df)
+        close = df["close"]
+        assert set(lv.columns) == {"sl_long", "tp_long", "sl_short", "tp_short"}
+        # лонг: tp вище close, sl нижче; шорт — дзеркально (після warmup σ)
+        assert (lv["tp_long"] > close).iloc[60:].all() and (lv["sl_long"] < close).iloc[60:].all()
+        assert (lv["tp_short"] < close).iloc[60:].all() and (lv["sl_short"] > close).iloc[60:].all()
+        # симетрія з однаковою волатильністю σ: лонг/шорт TP і SL дзеркальні
+        np.testing.assert_allclose(lv["tp_long"] - close, -(lv["tp_short"] - close), rtol=1e-12)
+        np.testing.assert_allclose(lv["sl_long"] - close, -(lv["sl_short"] - close), rtol=1e-12)
+
+
+# ── 6. Деталі угоди (клік по маркеру) ───────────────────────────────────────
+class TestTradeDetail:
+    def _res(self):
+        return run_backtest(_make_df(), get_strategy("mean_reversion"), cost=CostModel())
+
+    def test_find_trade_by_ts(self):
+        from scalper_hft.visualization.charts import find_trade_by_ts
+
+        res = self._res()
+        t = res.trades.iloc[0]
+        assert find_trade_by_ts(res.trades, t["entry_ts"])["entry_ts"] == t["entry_ts"]
+        assert find_trade_by_ts(res.trades, t["exit_ts"])["entry_ts"] == t["entry_ts"]
+        assert find_trade_by_ts(res.trades, pd.Timestamp("2020-01-01")) is None
+        assert find_trade_by_ts(res.trades, "not-a-date") is None
+        assert find_trade_by_ts(pd.DataFrame(), t["entry_ts"]) is None
+
+    def test_trade_detail_figure(self):
+        from scalper_hft.visualization.charts import trade_detail_figure
+
+        df = _make_df()
+        res = self._res()
+        t = res.trades.iloc[0]
+        fig = trade_detail_figure(df, res, t["entry_ts"])
+        names = {tr.name for tr in fig.data}
+        assert "OHLC" in names and "Equity" in names
+        assert "Лонг" in names or "Шорт" in names
+
+    def test_trade_detail_figure_unknown_trade_raises(self):
+        from scalper_hft.visualization.charts import trade_detail_figure
+
+        df = _make_df()
+        res = self._res()
+        with pytest.raises(ValueError):
+            trade_detail_figure(df, res, pd.Timestamp("2020-01-01"))

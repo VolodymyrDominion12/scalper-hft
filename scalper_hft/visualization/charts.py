@@ -534,3 +534,137 @@ def equity_figure(
     fig.update_yaxes(title_text="Equity", row=1, col=1)
     fig.update_yaxes(title_text="DD, %", row=2, col=1)
     return fig
+
+
+# ── Деталі однієї угоди (клік по маркеру) ───────────────────────────────────
+def find_trade_by_ts(trades: pd.DataFrame, ts) -> pd.Series | None:
+    """Знайти угоду за часом входу/виходу (для кліку по маркеру на графіку).
+
+    ts: pd.Timestamp (або ISO-строка) з маркера входу/виходу. None, якщо
+    угоди з таким часом немає або ts непарсований.
+    """
+    if trades is None or trades.empty or ts is None:
+        return None
+    try:
+        ts = pd.Timestamp(ts)
+    except (ValueError, TypeError):
+        return None
+    hit = trades[(trades["entry_ts"] == ts) | (trades["exit_ts"] == ts)]
+    return hit.iloc[0] if not hit.empty else None
+
+
+def trade_detail_figure(
+    df: pd.DataFrame,
+    result: BacktestResult,
+    entry_ts: pd.Timestamp,
+    *,
+    before: int = 40,
+    after: int = 20,
+    indicators: Sequence[str] | None = None,
+    template: str = "plotly_white",
+    title: str | None = None,
+) -> go.Figure:
+    """Детальний графік однієї угоди — вікно навколо входу.
+
+    Панелі: ціна (свічки + індикатори + маркер входу/виходу + сегмент SL/TP),
+    позиція, equity. Викликається при кліку по маркеру угоди у дашборді.
+    """
+    trade = find_trade_by_ts(result.trades, entry_ts)
+    if trade is None:
+        raise ValueError(f"Немає угоди з входом {entry_ts}")
+
+    i_entry = df.index.get_indexer([trade["entry_ts"]], method="nearest")[0]
+    i_exit = df.index.get_indexer([trade["exit_ts"]], method="nearest")[0]
+    lo = max(0, i_entry - before)
+    hi = min(len(df), i_exit + after)
+    sub = df.iloc[lo:hi]
+    sub_pos = result.positions.reindex(sub.index).fillna(0.0)
+    sub_eq = result.equity.reindex(sub.index)
+    one = pd.DataFrame([trade])
+
+    fig = make_subplots(
+        rows=3,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.04,
+        row_heights=[0.6, 0.18, 0.22],
+        subplot_titles=["Ціна", "Позиція", "Equity"],
+    )
+    fig.add_trace(
+        go.Candlestick(
+            x=sub.index,
+            open=sub["open"],
+            high=sub["high"],
+            low=sub["low"],
+            close=sub["close"],
+            name="OHLC",
+            increasing_line_color=LONG_COLOR,
+            decreasing_line_color=SHORT_COLOR,
+            increasing_fillcolor=LONG_COLOR,
+            decreasing_fillcolor=SHORT_COLOR,
+        ),
+        row=1,
+        col=1,
+    )
+    if indicators is None:
+        indicators = auto_indicator_columns(df)
+    add_indicator_overlays(fig, sub, indicators, row=1)
+    add_trade_markers(fig, one, df=sub, row=1)
+    add_sl_tp_levels(fig, one, row=1, max_trades=1)
+
+    fig.add_hline(y=0, line_dash="dot", line_color="gray", line_width=1, row=2, col=1)
+    for sign, name, color, fill in (
+        (1.0, "Лонг", LONG_COLOR, "rgba(0,184,148,0.25)"),
+        (-1.0, "Шорт", SHORT_COLOR, "rgba(239,83,80,0.25)"),
+    ):
+        fig.add_trace(
+            go.Scatter(
+                x=sub_pos.index,
+                y=sub_pos.where(sub_pos * sign > 0, 0.0),
+                mode="lines",
+                line_shape="hv",
+                line=dict(color=color, width=1),
+                fill="tozeroy",
+                fillcolor=fill,
+                name=name,
+                legendgroup="position",
+                hovertemplate=f"{name}: %{{y:.4f}}<extra></extra>",
+            ),
+            row=2,
+            col=1,
+        )
+    fig.add_trace(
+        go.Scatter(
+            x=sub_eq.index,
+            y=sub_eq.values,
+            mode="lines",
+            name="Equity",
+            line=dict(color=EQUITY_COLOR, width=1.5),
+            fill="tozeroy",
+            fillcolor="rgba(44,62,80,0.08)",
+            hovertemplate="Equity: %{y:,.2f}<extra></extra>",
+        ),
+        row=3,
+        col=1,
+    )
+
+    side = "Лонг" if trade["side"] == 1 else "Шорт"
+    t0 = pd.Timestamp(trade["entry_ts"])
+    if title is None:
+        title = (
+            f"{side} · вхід {t0:%d.%m %H:%M} · "
+            f"{trade['entry_price']:.2f} → {trade['exit_price']:.2f} · PnL {trade['ret']:.2%}"
+        )
+    fig.update_layout(
+        title=title,
+        template=template,
+        height=560,
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.0, font=dict(size=10)),
+        margin=dict(l=10, r=10, t=55, b=10),
+    )
+    fig.update_xaxes(rangeslider_visible=True, row=3, col=1)
+    fig.update_yaxes(title_text="Ціна", row=1, col=1)
+    fig.update_yaxes(title_text="Позиція", row=2, col=1)
+    fig.update_yaxes(title_text="Equity", row=3, col=1)
+    return fig
