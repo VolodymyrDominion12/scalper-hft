@@ -373,6 +373,31 @@ def cmd_report(args: argparse.Namespace) -> None:
         except Exception as exc:  # noqa: BLE001
             sens_md = f"\n## Sensitivity\n\nпомилка: {exc}"
 
+    # ── Quintile study (Narang гл. 9) ────────────────────────────────────────
+    quintile_md = ""
+    try:
+        from scalper_hft.validation.quintile import quintile_spread_study
+
+        signals = strategy.generate_signals(df, trades=trades, funding=funding)
+        fwd_ret = df["close"].pct_change().shift(-1).fillna(0.0)
+        if signals.abs().sum() > 5:
+            q_res = quintile_spread_study(signals.astype(float), fwd_ret)
+            quintile_md = f"\n## Quintile Study (монотонність сигналу)\n\n```\n{q_res.summary()}\n```\n"
+    except Exception as exc:  # noqa: BLE001
+        quintile_md = f"\n## Quintile Study\n\nпомилка: {exc}\n"
+
+    # ── Time-decay test (Narang гл. 9) ───────────────────────────────────────
+    decay_md = ""
+    try:
+        from scalper_hft.validation.time_decay import time_decay_test
+
+        td_res = time_decay_test(df, strategy, max_lag=3, cost=cost, trades=trades, funding=funding)
+        decay_md = f"\n## Time-Decay Test (лаг входу)\n\n```\n{td_res.summary()}\n```\n"
+        if len(td_res.sharpes) >= 2 and td_res.sharpes[0] > 0 and td_res.sharpes[1] < td_res.sharpes[0] * 0.5:
+            decay_md += "\n> ⚠ Альфа різко втрачається при лазі 1 — бектест може переоцінювати edge!\n"
+    except Exception as exc:  # noqa: BLE001
+        decay_md = f"\n## Time-Decay Test\n\nпомилка: {exc}\n"
+
     md = f"""# Звіт: {args.strategy} · {args.symbol} · {args.interval}
 
 Дані: {len(df)} барів ({df.index[0]} … {df.index[-1]}), {args.days} днів.
@@ -395,8 +420,7 @@ def cmd_report(args: argparse.Namespace) -> None:
 - raw Sharpe: {res.metrics.sharpe:.3f}
 - trials: {n_trials}
 - **DSR: {dsr:.3f}** {"✅ edge значущий" if dsr > 0.95 else "⚠ edge не підтверджено"}
-{sens_md}
-
+{sens_md}{quintile_md}{decay_md}
 ## Висновок
 
 - OOS Sharpe: {wf.avg_oos_sharpe:.3f} ({wf.positive_windows_frac:.0%} вікон > 0)
@@ -409,6 +433,7 @@ def cmd_report(args: argparse.Namespace) -> None:
     out_path.write_text(md, encoding="utf-8")
     print(md)
     print(f"\nЗвіт збережено: {out_path}")
+
 
 
 def cmd_cscv(args: argparse.Namespace) -> None:
