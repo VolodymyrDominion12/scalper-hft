@@ -172,7 +172,7 @@ class MLStrategy(Strategy):
             # Confidence-фільтр через proba (раніше був no-op без proba)
             side = self._apply_confidence_filter(side, p_side, confidence_thr)
 
-            if prob_size:
+            if prob_size and p_side is not None:
                 size = np.abs(prob_to_size(p_side.values))
                 signals = side.astype(float) * size
             else:

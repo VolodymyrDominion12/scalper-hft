@@ -129,6 +129,7 @@ class PairsEngine:
         self.daily_loss_limit = settings.daily_loss_limit
         self.weekly_loss_limit = settings.weekly_loss_limit
         self.week_start_equity = account.equity
+        self._last_day: object | None = None
         self._last_week: tuple[int, int] | None = None
         from scalper_hft.live.is_log import IsJournal
 

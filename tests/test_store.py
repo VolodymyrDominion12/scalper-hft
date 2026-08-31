@@ -12,7 +12,6 @@ import os
 
 import pandas as pd
 import pytest
-
 from scalper_hft.data.store import ParquetStore, PostgresStore, get_store
 
 

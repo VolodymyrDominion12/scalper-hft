@@ -46,7 +46,13 @@ class PassiveMarketMaker(Strategy):
             adverse_sel_haircut=adverse_sel_haircut,
         )
 
-    def generate_signals(self, df: pd.DataFrame) -> pd.Series:
+    def generate_signals(
+        self,
+        df: pd.DataFrame,
+        trades: pd.DataFrame | None = None,
+        funding: pd.DataFrame | None = None,
+    ) -> pd.Series:
         """Повертає бажану позицію 0 завжди — market maker керується
         інвентарем, а не напрямком. Сигнали для нього генерує event_engine."""
         return pd.Series(0, index=df.index, dtype=int)
+

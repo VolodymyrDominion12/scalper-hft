@@ -51,17 +51,21 @@ pythonpath = ["."]
 
 [tool.ruff]
 line-length = 120
-target-version = "py311"
+target-version = "py312"
 src = ["scalper_hft", "tests", "scripts"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
 ignore = ["E501"]
 
+[tool.ruff.lint.per-file-ignores]
+"*.ipynb" = ["E402"]
+
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 strict = false
 files = ["scalper_hft"]
+ignore_missing_imports = true
 
 [tool.uv]
 package = true

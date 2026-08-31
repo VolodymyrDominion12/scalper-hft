@@ -86,7 +86,7 @@ class TestPurgedKFold:
             list(pkf.split(X, t1=t1))
 
     def test_cross_val_score_returns_array(self):
-        lgbm = pytest.importorskip("lightgbm")
+        pytest.importorskip("lightgbm")
         from lightgbm import LGBMClassifier
         from scalper_hft.validation.cv import PurgedKFold
 
@@ -102,7 +102,7 @@ class TestPurgedKFold:
         assert all(0.0 <= s <= 1.0 for s in scores)
 
     def test_cross_val_neg_log_loss(self):
-        lgbm = pytest.importorskip("lightgbm")
+        pytest.importorskip("lightgbm")
         from lightgbm import LGBMClassifier
         from scalper_hft.validation.cv import PurgedKFold
 

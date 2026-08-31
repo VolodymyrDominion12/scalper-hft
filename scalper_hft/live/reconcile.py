@@ -42,10 +42,17 @@ def reconcile_positions(
     size_tol: float = 1e-8,
 ) -> tuple[bool, str]:
     """Порівняти локальні ноги з біржею. Ключі account можуть бути `pair:SYMBOL`."""
-    local: dict[str, tuple[str, float]] = {}
+    local_net: dict[str, float] = {}
     for key, pos in account.positions.items():
         sym = key.split(":")[-1]
-        local[sym] = (pos.side, pos.size)
+        signed = pos.size if pos.side == "long" else -pos.size
+        local_net[sym] = local_net.get(sym, 0.0) + signed
+
+    local: dict[str, tuple[str, float]] = {}
+    for sym, net_val in local_net.items():
+        if abs(net_val) > size_tol:
+            side = "long" if net_val > 0 else "short"
+            local[sym] = (side, abs(net_val))
 
     for sym, (side, size) in local.items():
         ex = exchange.get(sym)

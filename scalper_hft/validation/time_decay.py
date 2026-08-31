@@ -23,18 +23,20 @@ class TimeDecayResult:
         return f"Time-decay: {rows}"
 
 
-class _Lagged:
+class _Lagged(Strategy):
     name = "lagged"
-    param_space: dict = {}
-    needs_trades = False
-    needs_funding = False
+    param_space: dict[str, tuple[float, float, float]] = {}
+    needs_trades: bool = False
+    needs_funding: bool = False
 
     def __init__(self, base: Strategy, lag: int) -> None:
+        super().__init__()
         self.base = base
         self.lag = lag
         self.name = f"{base.name}_lag{lag}"
         self.needs_trades = getattr(base, "needs_trades", False)
         self.needs_funding = getattr(base, "needs_funding", False)
+
 
     def generate_signals(self, df, trades=None, funding=None):
         if self.needs_funding:

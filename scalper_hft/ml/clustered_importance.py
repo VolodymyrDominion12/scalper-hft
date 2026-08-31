@@ -12,6 +12,7 @@ CFI групує ознаки в ієрархічні кластери та пе
 from __future__ import annotations
 
 from dataclasses import dataclass
+
 import numpy as np
 import pandas as pd
 from scipy.cluster.hierarchy import fcluster, linkage

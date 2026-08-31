@@ -79,7 +79,7 @@ if run_bt:
             else:
                 f1 = load_funding(data_dir / f"{leg1}_funding.parquet")
                 f2 = load_funding(data_dir / f"{leg2}_funding.parquet")
-                res = run_pairs_backtest(
+                res_pairs = run_pairs_backtest(
                     d1,
                     d2,
                     strategy,
@@ -89,13 +89,13 @@ if run_bt:
                     cost=cost,
                     maker_execution=True,
                 )
-                m = res.metrics
+                m = res_pairs.metrics
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("Дохідність", f"{m.total_return:.2%}")
                 c2.metric("Sharpe (год.)", f"{m.sharpe_hourly:.2f}")
                 c3.metric("Угоди", f"{m.n_trades}")
                 c4.metric("Max DD", f"{m.max_drawdown:.2%}")
-                fig = go.Figure(go.Scatter(x=res.equity.index, y=res.equity.values, mode="lines", name="Equity"))
+                fig = go.Figure(go.Scatter(x=res_pairs.equity.index, y=res_pairs.equity.values, mode="lines", name="Equity"))
                 fig.update_layout(title=f"pairs_arb · {leg1}/{leg2} {interval} maker", height=350)
                 st.plotly_chart(fig, use_container_width=True)
                 with st.expander("Повні метрики"):
@@ -194,15 +194,15 @@ if run_diag:
                     if getattr(strategy, "needs_funding", False)
                     else None
                 )
-                res = run_backtest(
+                res_val = run_backtest(
                     df, strategy, cost=cost, trades=trades, funding=funding, position_pct=settings.position_pct
                 )
-                ret = res.equity.pct_change().dropna()
+                ret = res_val.equity.pct_change().dropna()
 
                 with st.expander("Cohort decay (Predictive Marketing)", expanded=False):
                     from scalper_hft.validation.cohort import cohort_report
 
-                    st.text(cohort_report(res.trades))
+                    st.text(cohort_report(res_val.trades))
                 with st.expander("Стрес-тест (Narang гл. 10)", expanded=False):
                     from scalper_hft.validation.stress import stress_report
 

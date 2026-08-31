@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 from scalper_hft.backtest.execution import CostModel
-from scalper_hft.backtest.metrics import compute_metrics
+from scalper_hft.backtest.metrics import BacktestMetrics, compute_metrics
 from scalper_hft.strategies.base import Strategy
 
 
@@ -28,7 +28,7 @@ class PairsResult:
     positions: pd.Series
     spread: pd.Series
     funding_pnl: float
-    metrics: object
+    metrics: BacktestMetrics
     params: dict = field(default_factory=dict)
 
     def summary(self) -> str:
@@ -52,6 +52,18 @@ def _align(leg1: pd.DataFrame, leg2: pd.DataFrame) -> pd.DataFrame:
             ]
         )
     return frames[0].join(frames[1:], how="inner").dropna()
+
+
+def _extract_leg_df(df: pd.DataFrame, leg_num: int) -> pd.DataFrame:
+    close_col = f"leg{leg_num}"
+    high_col = f"l{leg_num}_high"
+    low_col = f"l{leg_num}_low"
+    res = pd.DataFrame({"close": df[close_col]}, index=df.index)
+    if high_col in df.columns and low_col in df.columns:
+        res["high"] = df[high_col]
+        res["low"] = df[low_col]
+    return res
+
 
 
 def _maker_pair_positions(
@@ -214,8 +226,8 @@ def run_pairs_walk_forward(
     while start + train_bars + test_bars <= len(common):
         tr = common.iloc[start : start + train_bars]
         te = common.iloc[start + train_bars : start + train_bars + test_bars]
-        l1_tr, l2_tr = tr[["leg1"]].rename(columns={"leg1": "close"}), tr[["leg2"]].rename(columns={"leg2": "close"})
-        l1_te, l2_te = te[["leg1"]].rename(columns={"leg1": "close"}), te[["leg2"]].rename(columns={"leg2": "close"})
+        l1_tr, l2_tr = _extract_leg_df(tr, 1), _extract_leg_df(tr, 2)
+        l1_te, l2_te = _extract_leg_df(te, 1), _extract_leg_df(te, 2)
         f1_tr = _slice_by_time(funding1, tr.index[0], tr.index[-1])
         f2_tr = _slice_by_time(funding2, tr.index[0], tr.index[-1])
         f1_te = _slice_by_time(funding1, te.index[0], te.index[-1])

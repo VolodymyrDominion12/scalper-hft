@@ -13,9 +13,13 @@ try:
     import torch
     import torch.nn as nn
 except ImportError:
-    # Заглушка, якщо PyTorch не встановлено (напр. у CI без ML-середовища)
-    class nn:
+    torch = None  # type: ignore[assignment]
+
+    class _NNMock:
         Module = object
+
+    nn = _NNMock  # type: ignore[assignment]
+
 
 
 class DeepLOB(nn.Module):

@@ -55,7 +55,7 @@ def hedge_weights(
 
     if eta is None:
         # адаптивне η з відносної квадратичної варіації loss
-        q = np.sum((loss - loss.mean(axis=1, keepdims=True)) ** 2, axis=1).sum()
+        q = float(np.sum((loss - loss.mean(axis=1, keepdims=True)) ** 2, axis=1).sum())
         q = max(q, 1e-12)
         eta = float(np.sqrt((8.0 / q) * np.log(n)))
 

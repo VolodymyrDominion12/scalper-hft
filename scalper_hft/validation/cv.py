@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -118,7 +119,6 @@ class PurgedKFold:
 
             # Часові межі test-фолду
             t_test_start = X.index[test_start]
-            t_test_end = X.index[test_end - 1]
 
             # Purging: видаляємо train-зразки чиї t1 потрапляє в test-період
             train_mask = np.ones(len(X), dtype=bool)
@@ -145,7 +145,7 @@ class PurgedKFold:
 
     def cross_val_score(
         self,
-        estimator: object,
+        estimator: Any,
         X: pd.DataFrame,
         y: pd.Series,
         t1: pd.Series,

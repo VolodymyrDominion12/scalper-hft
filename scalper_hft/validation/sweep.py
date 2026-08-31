@@ -17,14 +17,14 @@ total_return, sharpe, max_dd, win_rate, profit_factor, avg_trade, exposure
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 import pandas as pd
 
 from scalper_hft.backtest.execution import CostModel
-from scalper_hft.config import get_settings
 
 logger = logging.getLogger(__name__)
 

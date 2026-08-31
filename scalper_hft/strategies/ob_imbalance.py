@@ -41,7 +41,12 @@ class ObImbalanceScalper(Strategy):
             lookback=int(lookback),
         )
 
-    def generate_signals(self, df: pd.DataFrame, trades: pd.DataFrame | None = None) -> pd.Series:
+    def generate_signals(
+        self,
+        df: pd.DataFrame,
+        trades: pd.DataFrame | None = None,
+        funding: pd.DataFrame | None = None,
+    ) -> pd.Series:
         """Працює з DataFrame, що містить колонку 'imbalance' (з bookTicker),
         або будує синтетичний imbalance з buy_ratio aggTrades."""
         if "imbalance" in df.columns:

@@ -15,7 +15,8 @@ PostgreSQL (DATA_BACKEND=postgres) — для майбутнього дослі�
 from __future__ import annotations
 
 import logging
-from typing import Protocol
+from pathlib import Path
+from typing import Any, Protocol
 
 import pandas as pd
 
@@ -47,10 +48,10 @@ class MarketDataStore(Protocol):
 class ParquetStore:
     """Старий добрий parquet-кеш у data/ (повна зворотна сумісність)."""
 
-    def __init__(self, data_dir: pd.DataFrame | None = None) -> None:  # type: ignore[valid-type]
+    def __init__(self, data_dir: Path | str | None = None) -> None:
         from scalper_hft.config import get_settings
 
-        self.data_dir = data_dir or get_settings().data_dir_abs
+        self.data_dir = Path(data_dir) if data_dir else get_settings().data_dir_abs
 
     def ensure_schema(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -93,7 +94,7 @@ class ParquetStore:
         return load_funding(funding_path(self.data_dir, symbol))
 
     def save_funding(self, symbol: str, df: pd.DataFrame) -> None:
-        from scalper_hft.data.storage import save_funding, funding_path
+        from scalper_hft.data.storage import funding_path, save_funding
 
         save_funding(funding_path(self.data_dir, symbol), df)
 
@@ -231,6 +232,7 @@ class PostgresStore:
         self.ensure_schema()
         with self._connect() as conn:
             with conn.cursor() as cur:
+                rows: list[tuple[Any, ...]]
                 if table == "agg_trades":
                     cur.execute("DELETE FROM agg_trades WHERE symbol = %s", (symbol,))
                     cols = ["symbol", "trade_id", "ts", "price", "amount", "side"]

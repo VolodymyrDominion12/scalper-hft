@@ -52,7 +52,7 @@ def parameter_sensitivity(
     """
     rows: list[dict] = []
     values = sorted(values)
-    sec_values = secondary_values or [None]
+    sec_values: list[float | None] = list(secondary_values) if secondary_values is not None else [None]
 
     for v in values:
         for s in sec_values:

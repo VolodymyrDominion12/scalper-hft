@@ -1,14 +1,15 @@
 """Тести системи: рушій без lookahead, метрики, DSR, індикатори, downloader-кеш."""
 
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
 from scalper_hft.backtest.engine import run_backtest
 from scalper_hft.backtest.execution import CostModel
 from scalper_hft.backtest.metrics import compute_metrics
 
 
-def make_klines(n: int = 300, seed: int = 1, start_price: float = 100.0) -> "pd.DataFrame":
-    import numpy as np
-    import pandas as pd
-
+def make_klines(n: int = 300, seed: int = 1, start_price: float = 100.0) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     idx = pd.date_range("2025-01-01", periods=n, freq="1min", tz=None)
     close = start_price * np.exp(np.cumsum(rng.normal(0, 0.001, n)))
@@ -389,7 +390,10 @@ def test_pairs_portfolio_combines():
     from scalper_hft.strategies.pairs_arb import PairsArb
 
     idx = pd.date_range("2025-01-01", periods=500, freq="1min")
-    make = lambda base, slope: pd.DataFrame({"close": base + slope * np.arange(500)}, index=idx)
+
+    def make(base: float, slope: float) -> pd.DataFrame:
+        return pd.DataFrame({"close": base + slope * np.arange(500)}, index=idx)
+
     data = {
         "A": make(100.0, 0.001),
         "B": make(100.0, 0.0),

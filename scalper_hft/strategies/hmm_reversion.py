@@ -106,6 +106,9 @@ class HmmReversionScalper(Strategy):
         except ValueError:
             return pd.Series(True, index=close.index)
 
+        if model.covars_ is None:
+            return pd.Series(True, index=close.index)
+
         # «спокійний» стан = мінімальна дисперсія на vol-фічі (індекс 2)
         calm = int(np.argmin(model.covars_[:, 2]))
         post = model.filtered_proba(obs.values)

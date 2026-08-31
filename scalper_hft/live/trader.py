@@ -238,6 +238,8 @@ class LiveTrader:
             if len(obs) < self.hmm_states * 20:
                 return False
             model = GaussianHMM(n_states=self.hmm_states, seed=42).fit(obs.iloc[:2000].values)
+            if model.covars_ is None:
+                return False
             calm = int(np.argmin(model.covars_[:, 2]))  # стан з найменшою vol
             post = model.filtered_proba(obs.values)
             return bool(post[-1, calm] < self.hmm_threshold)

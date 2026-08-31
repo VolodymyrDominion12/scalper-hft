@@ -14,7 +14,7 @@ class SimpleKalmanFilter:
         self.q = process_variance  # Q: Дисперсія шуму процесу
         self.r = measurement_variance  # R: Дисперсія шуму вимірювань
         self.p = 1.0  # Початкова дисперсія помилки оцінки
-        self.x = None  # Поточна оцінка стану (ціни)
+        self.x: float | None = None  # Поточна оцінка стану (ціни)
 
     def update(self, measurement: float) -> float:
         """Оновлює стан фільтра на основі нового вимірювання (ціни)."""

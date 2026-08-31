@@ -53,6 +53,7 @@ def frac_diff_ffd(
     series: pd.Series,
     d: float,
     threshold: float = 1e-4,
+    thres: float | None = None,
 ) -> pd.Series:
     """Fixed-Width Window Fractional Differencing.
 
@@ -60,11 +61,14 @@ def frac_diff_ffd(
         series: вхідний часовий ряд (ціни або лог-ціни).
         d: ступінь диференціювання ∈ (0, 1].
         threshold: відсікання малих ваг.
+        thres: аліас для threshold (сумісність з features/fractional_diff).
 
     Returns:
         Series тієї ж довжини зі збереженим індексом.
         Перші len(w)−1 значень = NaN (необхідний контекст).
     """
+    if thres is not None:
+        threshold = thres
     w = _get_weights_ffd(d, threshold)
     width = len(w) - 1
     output = pd.Series(np.nan, index=series.index, dtype=float)

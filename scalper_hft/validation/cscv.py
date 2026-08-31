@@ -17,8 +17,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from itertools import combinations
+from typing import TYPE_CHECKING
 
 import numpy as np
+import pandas as pd
+
+if TYPE_CHECKING:
+    from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.strategies.base import Strategy
 
 
 @dataclass

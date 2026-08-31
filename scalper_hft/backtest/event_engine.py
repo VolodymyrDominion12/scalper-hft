@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 
 from scalper_hft.backtest.execution import CostModel
-from scalper_hft.backtest.metrics import compute_metrics
+from scalper_hft.backtest.metrics import BacktestMetrics, compute_metrics
 from scalper_hft.strategies.base import Strategy
 
 
@@ -35,7 +35,7 @@ from scalper_hft.strategies.base import Strategy
 class EventBacktestResult:
     equity: pd.Series
     trades: pd.DataFrame
-    metrics: object
+    metrics: BacktestMetrics
     params: dict = field(default_factory=dict)
 
     def summary(self) -> str:
@@ -76,7 +76,6 @@ def run_event_backtest(
     # Одиниці: inventory у "філл-одиницях"; ноціонал однієї одиниці фіксований
     notional_per_unit = quote_size_pct * initial_capital
 
-    cash = initial_capital
     inventory = 0.0  # у філл-одиницях (signed)
     avg_cost = 0.0  # середня ціна входу ($)
     realized_pnl = 0.0

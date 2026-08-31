@@ -188,14 +188,14 @@ class GaussianHMM:
         return self
 
     def predict(self, X: np.ndarray) -> np.ndarray:
-        if self.means_ is None:
+        if self.means_ is None or self.covars_ is None or self.transmat_ is None or self.startprob_ is None:
             raise RuntimeError("Модель не навчена — викличте fit()")
         X = np.asarray(X, dtype=float)
         log_B = np.column_stack([_log_gaussian(X, self.means_[i], self.covars_[i]) for i in range(self.n_states)])
         return _viterbi(log_B, np.log(self.transmat_ + 1e-12), np.log(self.startprob_ + 1e-12))
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
-        if self.means_ is None:
+        if self.means_ is None or self.covars_ is None or self.transmat_ is None or self.startprob_ is None:
             raise RuntimeError("Модель не навчена — викличте fit()")
         X = np.asarray(X, dtype=float)
         B = np.column_stack([np.exp(_log_gaussian(X, self.means_[i], self.covars_[i])) for i in range(self.n_states)])
@@ -213,7 +213,7 @@ class GaussianHMM:
         у момент t не залежить від майбутніх даних — на відміну від
         predict_proba (згладжена, forward+backward).
         """
-        if self.means_ is None:
+        if self.means_ is None or self.covars_ is None or self.transmat_ is None or self.startprob_ is None:
             raise RuntimeError("Модель не навчена — викличте fit()")
         X = np.asarray(X, dtype=float)
         B = np.column_stack([np.exp(_log_gaussian(X, self.means_[i], self.covars_[i])) for i in range(self.n_states)])
@@ -263,8 +263,12 @@ def hmm_regime_features(
         if window is not None and len(X) > window:
             X = X[-window:]
         model = GaussianHMM(n_states=n_states, n_iter=n_iter, seed=seed).fit(X)
-        states = model.states_
-        post = model.posteriors_
+        if model.states_ is not None and model.posteriors_ is not None:
+            states = model.states_
+            post = model.posteriors_
+        else:
+            states = np.zeros(len(X), dtype=int)
+            post = np.zeros((len(X), n_states))
 
     out = pd.DataFrame(index=close.index, dtype=float)
     out.loc[obs.index[-len(states) :], "hmm_state"] = states.astype(float)

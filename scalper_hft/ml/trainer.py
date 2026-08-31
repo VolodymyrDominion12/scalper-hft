@@ -186,7 +186,7 @@ def train_walk_forward(
         model = LGBMClassifier(**params)
         model.fit(X_tr, y_tr, sample_weight=w_tr)
 
-        proba = model.predict_proba(X_te)
+        proba = np.asarray(model.predict_proba(X_te))
         classes = list(model.classes_)
 
         # ймовірність класу +1
@@ -424,7 +424,7 @@ def train_walk_forward_meta(
             X_meta_te["primary_pred"] = side_te
             meta = LGBMClassifier(**params)
             meta.fit(X_meta_tr, y_meta_tr, sample_weight=w_tr)
-            proba = meta.predict_proba(X_meta_te)
+            proba = np.asarray(meta.predict_proba(X_meta_te))
             classes = list(meta.classes_)
             p_meta_te = proba[:, classes.index(1)] if 1 in classes else np.full(len(X_te), 0.5)
 

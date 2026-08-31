@@ -123,8 +123,8 @@ def run_backtest(
         prob_touch = 0.5  # 50% chance to fill if low/high equals limit
 
         curr_pos = 0.0
-        np.random.seed(42)  # Для відтворюваності бектестів
-        rands = np.random.rand(len(df))
+        rng = np.random.default_rng(42)  # Для відтворюваності бектестів
+        rands = rng.random(len(df))
 
         for i in range(1, len(df)):
             t_pos = target_vals[i]

@@ -38,7 +38,7 @@ class EnsembleStrategy(Strategy):
                 # Можна передати параметри через формат name:param1=val1:param2=val2
                 parts = s.split(":")
                 name = parts[0]
-                p = {}
+                p: dict[str, Any] = {}
                 for part in parts[1:]:
                     if "=" in part:
                         k, v = part.split("=")

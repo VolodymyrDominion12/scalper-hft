@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 from scalper_hft.backtest.execution import CostModel
-from scalper_hft.backtest.metrics import compute_metrics
+from scalper_hft.backtest.metrics import BacktestMetrics, compute_metrics
 from scalper_hft.backtest.pairs import run_pairs_backtest
 from scalper_hft.strategies.base import Strategy
 
@@ -25,7 +25,7 @@ from scalper_hft.strategies.base import Strategy
 class PairsPortfolioResult:
     equity: pd.Series
     pair_equities: dict[str, pd.Series]
-    metrics: object
+    metrics: BacktestMetrics
     details: dict = field(default_factory=dict)
 
     def summary(self) -> str:

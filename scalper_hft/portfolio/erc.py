@@ -80,7 +80,7 @@ def allocate_portfolio(
     returns: pd.DataFrame,
     weights: np.ndarray | None = None,
     turnover_rate: float = 0.0,
-    rebalance: str = "ME",
+    rebalance: str | None = "ME",
 ) -> pd.Series:
     """Портфельна прибутковість з (опційним) turnover tax.
 

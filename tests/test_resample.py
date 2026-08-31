@@ -5,7 +5,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-
 from scalper_hft.data.resample import (
     check_target_valid,
     infer_interval_minutes,

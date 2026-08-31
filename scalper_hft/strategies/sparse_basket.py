@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
@@ -136,6 +135,8 @@ class SparseBasketArb(Strategy):
     def generate_signals(
         self,
         df: pd.DataFrame,
+        trades: pd.DataFrame | None = None,
+        funding: pd.DataFrame | None = None,
         basket_df: pd.DataFrame | None = None,
     ) -> pd.Series:
         """Генерує торгові сигнали по розрідженому кошику.

@@ -182,3 +182,58 @@ def test_paper_replay_reverses_long_to_short():
     assert any(t["side"] == "long" for t in closed), "мав закрити лонг при реверсі"
     pos = acc.positions.get("BTCUSDT")
     assert pos is not None and pos.side == "short"
+
+
+def test_reconcile_multi_pair_net_positions():
+    """Перевірка коректної агрегації спільних символів у мультипарному портфелі."""
+    from scalper_hft.live.reconcile import ExchangePosition, reconcile_positions
+
+    acc = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
+    ts = pd.Timestamp("2025-01-01")
+    # Пара 1: XRP/BTC -> лонг BTC (0.1)
+    acc.open_position("XRPUSDT/BTCUSDT:BTCUSDT", "long", 0.1, 50_000.0, ts)
+    # Пара 2: BTC/ETH -> шорт BTC (0.04)
+    acc.open_position("BTCUSDT/ETHUSDT:BTCUSDT", "short", 0.04, 50_000.0, ts)
+    # Пара 3: LINK/BTC -> лонг BTC (0.01)
+    acc.open_position("LINKUSDT/BTCUSDT:BTCUSDT", "long", 0.01, 50_000.0, ts)
+    # Інша нога
+    acc.open_position("BTCUSDT/ETHUSDT:ETHUSDT", "long", 0.5, 3_000.0, ts)
+
+    # Нетто-позиція BTC = +0.1 - 0.04 + 0.01 = +0.07 long
+    exchange_ok = {
+        "BTCUSDT": ExchangePosition("BTCUSDT", "long", 0.07),
+        "ETHUSDT": ExchangePosition("ETHUSDT", "long", 0.5),
+    }
+    ok, reason = reconcile_positions(acc, exchange_ok)
+    assert ok, f"Має успішно звірити агреговані нетто-позиції: {reason}"
+
+    # Розходження на біржі
+    exchange_drift = {
+        "BTCUSDT": ExchangePosition("BTCUSDT", "long", 0.05),
+        "ETHUSDT": ExchangePosition("ETHUSDT", "long", 0.5),
+    }
+    ok_drift, reason_drift = reconcile_positions(acc, exchange_drift)
+    assert not ok_drift
+    assert "BTCUSDT: розмір 0.07 vs біржа 0.05" in reason_drift
+
+
+def test_pairs_walk_forward_preserves_range():
+    """Перевірка, що walk-forward для пар передає high/low і підтримує maker execution."""
+    from scalper_hft.backtest.pairs import run_pairs_walk_forward
+    from scalper_hft.strategies.pairs_arb import PairsArb
+
+    idx = pd.date_range("2025-01-01", periods=2500, freq="1h")
+    rng = np.random.default_rng(42)
+    p1 = 100.0 + np.cumsum(rng.normal(0, 0.5, len(idx)))
+    p2 = 100.0 + np.cumsum(rng.normal(0, 0.5, len(idx)))
+    d1 = pd.DataFrame(
+        {"open": p1, "high": p1 * 1.01, "low": p1 * 0.99, "close": p1, "volume": 100.0}, index=idx
+    )
+    d2 = pd.DataFrame(
+        {"open": p2, "high": p2 * 1.01, "low": p2 * 0.99, "close": p2, "volume": 100.0}, index=idx
+    )
+    strat = PairsArb(lookback=60, entry_z=1.5, exit_z=0.2)
+    res = run_pairs_walk_forward(d1, d2, strat, train_bars=1500, test_bars=500, maker_execution=True)
+    assert res["n_windows"] == 2
+    assert "avg_oos_sharpe" in res
+

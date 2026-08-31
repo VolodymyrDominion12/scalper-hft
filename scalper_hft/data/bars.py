@@ -82,7 +82,7 @@ def create_tick_imbalance_bars(
     bar_indices = []
 
     # Початкові оцінки
-    expected_T = expected_imbalance_window  # очікувана кількість тіків у барі
+    expected_T = float(expected_imbalance_window)  # очікувана кількість тіків у барі
     expected_imbalance = df["tick_rule"].ewm(span=ewma_window).mean()
 
     theta_t = 0.0
@@ -152,7 +152,7 @@ def create_dollar_imbalance_bars(
     df["signed_dollar"] = df["tick_rule"] * df["dollar_val"]
 
     bar_indices = []
-    expected_T = expected_imbalance_window
+    expected_T = float(expected_imbalance_window)
     expected_dollar_imb = df["signed_dollar"].ewm(span=ewma_window).mean()
 
     theta_t = 0.0
@@ -192,7 +192,7 @@ def create_tick_run_bars(
     prob_sell = 1.0 - prob_buy
 
     bar_indices = []
-    expected_T = expected_run_window
+    expected_T = float(expected_run_window)
     theta_buy = 0.0
     theta_sell = 0.0
     last_bar_idx = 0
@@ -240,7 +240,7 @@ def create_dollar_run_bars(
     exp_sell_d = df["sell_dollar"].ewm(span=ewma_window).mean()
 
     bar_indices = []
-    expected_T = expected_run_window
+    expected_T = float(expected_run_window)
     theta_buy_d = 0.0
     theta_sell_d = 0.0
     last_bar_idx = 0

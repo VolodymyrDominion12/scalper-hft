@@ -59,9 +59,9 @@ def _default_objective(
 ) -> float:
     """Середній Sharpe по purged K-fold на OOS-зрізах."""
     oos_sharpes: list[float] = []
-    for train_idx, test_idx in purged_kfold_indices(len(df), n_splits, purge=50, embargo=embargo):
-        tr, te = df.iloc[train_idx], df.iloc[test_idx]
-        trades_tr = trades.iloc[train_idx] if trades is not None else None
+    for _train_idx, test_idx in purged_kfold_indices(len(df), n_splits, purge=50, embargo=embargo):
+        te = df.iloc[test_idx]
+        trades_tr = trades.iloc[_train_idx] if trades is not None else None
         funding_tr = _slice_funding(funding, te.index[0], te.index[-1]) if funding is not None else None
         try:
             res = run_backtest(

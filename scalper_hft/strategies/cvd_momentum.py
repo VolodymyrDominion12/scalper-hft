@@ -44,7 +44,12 @@ class CvdMomentumScalper(Strategy):
             min_vol_ratio=min_vol_ratio,
         )
 
-    def generate_signals(self, df: pd.DataFrame, trades: pd.DataFrame | None = None) -> pd.Series:
+    def generate_signals(
+        self,
+        df: pd.DataFrame,
+        trades: pd.DataFrame | None = None,
+        funding: pd.DataFrame | None = None,
+    ) -> pd.Series:
         f = add_standard_features(df)
         if trades is not None and not trades.empty:
             cvd_df = cvd_from_trades(trades, resample=_infer(df))
@@ -54,8 +59,7 @@ class CvdMomentumScalper(Strategy):
             )
             cvd_mom = cvd_mom.reindex(f.index).ffill().fillna(0.0)
         else:
-            # фолбек: buy_ratio зміна як проксі потоку
-            br = f["volume"] * 0  # немає даних — нульовий сигнал потоку
+            # фолбек: немає даних — нульовий сигнал потоку
             cvd_mom = pd.Series(0.0, index=f.index)
 
         ema_fast = ema(f["close"], int(self.get("ema_fast", 9)))

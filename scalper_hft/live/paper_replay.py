@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from scalper_hft.backtest.execution import CostModel
+from scalper_hft.backtest.metrics import BacktestMetrics, compute_metrics
 from scalper_hft.config import get_settings
 from scalper_hft.live.account import PaperAccount
 from scalper_hft.strategies.base import Strategy
@@ -32,7 +33,7 @@ class PaperReplayResult:
     trades: pd.DataFrame
     risk_blocks: list[dict]
     funding_pnl: float
-    metrics: object
+    metrics: BacktestMetrics
     details: dict = field(default_factory=dict)
 
     def summary(self) -> str:
@@ -156,7 +157,6 @@ def paper_replay(
 
     equity = pd.Series(dict(equity_points)).sort_index()
     trades = pd.DataFrame(account.trades) if account.trades else pd.DataFrame(columns=["type", "symbol"])
-    from scalper_hft.backtest.metrics import compute_metrics
 
     metrics = compute_metrics(equity, exposure=0.0, turnover=0.0)
     return PaperReplayResult(

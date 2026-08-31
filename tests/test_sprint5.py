@@ -12,7 +12,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-
 from scalper_hft.backtest.execution import CostModel, ImplementationShortfallTracker
 from scalper_hft.backtest.micro_price import (
     QueuePositionModel,

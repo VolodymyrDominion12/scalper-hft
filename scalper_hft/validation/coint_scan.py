@@ -43,9 +43,15 @@ def _half_life(spread: pd.Series) -> float:
 
 def _adf_pvalue(spread: pd.Series) -> float:
     try:
+        import warnings
+
         from statsmodels.tsa.stattools import adfuller
 
-        return float(adfuller(spread.dropna(), maxlag=1, autolag=None)[1])
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            res = adfuller(spread.dropna(), maxlag=1, autolag=None)
+            p_val = getattr(res, "pvalue", None)
+            return float(p_val if p_val is not None else res[1])
     except Exception:  # noqa: BLE001
         return 1.0
 

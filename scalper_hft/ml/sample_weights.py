@@ -13,6 +13,8 @@ Sequential Bootstrap (AFML §4.5):
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 
@@ -72,7 +74,7 @@ def seq_bootstrap(
     if s_length is None:
         s_length = ind_m.shape[1]
 
-    phi = []
+    phi: list[Any] = []
     for _ in range(s_length):
         avg_u = pd.Series(dtype=float)
         for i in ind_m.columns:

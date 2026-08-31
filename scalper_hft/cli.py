@@ -472,8 +472,9 @@ def cmd_paper_run(args: argparse.Namespace) -> None:
     if args.notify:
         from scalper_hft.live.telegram import send_telegram
 
+        eq_str = f"{result.account.equity:.2f}" if result.account else "N/A"
         send_telegram(
-            f"Paper-run {args.strategy} {args.symbol}: {result.actions[-1]}, equity={result.account.equity:.2f}"
+            f"Paper-run {args.strategy} {args.symbol}: {result.actions[-1]}, equity={eq_str}"
         )
 
 
@@ -644,6 +645,7 @@ def cmd_paper_run_pairs(args: argparse.Namespace) -> None:
 
     store = PaperStore()
     interval = args.interval or "1h"
+    runner: PairsPaperRunner | PairsPortfolioRunner
     if args.portfolio:
         runner = PairsPortfolioRunner(interval=interval, store=store, is_maker=True)
     else:
@@ -661,9 +663,10 @@ def cmd_paper_run_pairs(args: argparse.Namespace) -> None:
     if args.notify:
         from scalper_hft.live.telegram import send_telegram
 
+        eq_str = f"{result.account.equity:.2f}" if result.account else "N/A"
         send_telegram(
             f"Paper pairs {result.pair}: {result.actions[-1] if result.actions else '-'} | "
-            f"equity={result.account.equity:.2f} fill={result.n_filled}/{result.n_filled + result.n_unfilled}"
+            f"equity={eq_str} fill={result.n_filled}/{result.n_filled + result.n_unfilled}"
         )
 
 
