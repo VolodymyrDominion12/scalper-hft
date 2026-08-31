@@ -85,37 +85,15 @@ def warm_base_cache(symbols: list[str], days: int, base_interval: str = DEFAULT_
     """Попереднє завантаження базового таймфрейму для набору символів.
 
     Викликається один раз на початку sweep: далі всі старші таймфрейми
-    будуються локально без жодного звернення до Binance.
-
-    Порядок джерел:
-        1) data.binance.vision (архіви, ~1 запит на місяць замість ~44 REST-батчів);
-        2) REST-дотяжка останніх днів (архіви публікуються із затримкою).
+    будуються локально без жодного звернення до Binance. Послідовно
+    (спільний ccxt-клієнт пейсить запити глобально, 429-бекф).
     """
     from scalper_hft.data.downloader import download_klines
 
     out: dict[str, pd.DataFrame] = {}
     for sym in symbols:
-        try:
-            _vision_warm(sym, days, base_interval)
-        except Exception as exc:  # noqa: BLE001 — архів недоступний → REST
-            logger.info("Vision klines %s недоступні (%s) — REST", sym, exc)
-        out[sym] = download_klines(sym, base_interval, days)  # кеш або REST-дотяжка
+        out[sym] = download_klines(sym, base_interval, days)
     return out
-
-
-def _vision_warm(symbol: str, days: int, interval: str) -> None:
-    """Завантажити архівні klines з vision у кеш (без REST-батчів)."""
-    from datetime import timedelta
-
-    from scalper_hft.data.binance_vision import download_klines_vision
-
-    now = pd.Timestamp.now(tz="UTC").tz_localize(None)
-    start = (now - pd.Timedelta(days=days)).date()
-    end = (now - timedelta(days=2)).date()  # архіви відстають на 1-2 дні
-    if start >= end:
-        return
-    df = download_klines_vision(symbol, interval, start, end)
-    logger.info("Vision klines %s %s: %d барів (%s … %s)", symbol, interval, len(df), df.index[0], df.index[-1])
 
 
 __all__ = ["ensure_klines", "warm_base_cache", "DEFAULT_BASE_INTERVAL"]
