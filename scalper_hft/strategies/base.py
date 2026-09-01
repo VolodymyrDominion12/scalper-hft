@@ -45,5 +45,17 @@ class Strategy(abc.ABC):
     ) -> pd.Series:
         """Повертає Series позицій, індексовану як df.index."""
 
+    def exit_levels(self, df: pd.DataFrame) -> pd.DataFrame | None:
+        """Опційні рівні SL/TP для візуалізації угод (ціни).
+
+        Повертає DataFrame, індексований як df, з колонками:
+            sl_long, tp_long, sl_short, tp_short — рівні стоп-лосу та
+        тейк-профіту для лонга/шорта на кожному барі. Рушій бектесту бере
+        рівні на барі входу угоди за її стороною і кладе у trades
+        (`sl_price`/`tp_price`). None — стратегія не має явних рівнів,
+        візуалізація просто не малює SL/TP.
+        """
+        return None
+
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({self.params})"

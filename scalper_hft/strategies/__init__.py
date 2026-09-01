@@ -5,6 +5,7 @@ from __future__ import annotations
 from scalper_hft.strategies.bandit import Exp3Bandit, exp3_select_signals
 from scalper_hft.strategies.base import Strategy
 from scalper_hft.strategies.basis_reversion import BasisReversion
+from scalper_hft.strategies.cross_momentum import CrossMomentum
 from scalper_hft.strategies.cvd_momentum import CvdMomentumScalper
 from scalper_hft.strategies.ensemble import EnsembleStrategy
 from scalper_hft.strategies.funding_arb import FundingArb
@@ -32,6 +33,7 @@ REGISTRY: dict[str, type[Strategy]] = {
         EnsembleStrategy,
         HmmReversionScalper,
         SparseBasketArb,
+        CrossMomentum,
     )
 }
 
@@ -39,14 +41,8 @@ REGISTRY: dict[str, type[Strategy]] = {
 def get_strategy(name: str, **params: float | int | str) -> Strategy:
     if name not in REGISTRY:
         raise KeyError(f"Невідома стратегія '{name}'. Доступні: {sorted(REGISTRY)}")
-    # breakeven-гейт — крос-стратегійний прапорець (Narang гл. 5):
-    # не передаємо в __init__ (явні сигнатури його не приймають)
-    breakeven_gate = params.pop("breakeven_gate", None)
-    strat = REGISTRY[name](**params)
-    if breakeven_gate:
-        strat.use_breakeven_gate = bool(breakeven_gate)
-    return strat
+    return REGISTRY[name](**params)
 
 
-__all__ = ["Strategy", "REGISTRY", "get_strategy", "SparseBasketArb", "Exp3Bandit", "exp3_select_signals"]
+__all__ = ["Strategy", "REGISTRY", "get_strategy", "SparseBasketArb", "Exp3Bandit", "exp3_select_signals", "CrossMomentum"]
 

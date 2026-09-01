@@ -34,12 +34,31 @@ class BacktestResult:
         return self.metrics.summary()
 
 
-def _extract_trades(positions: pd.Series, ret: pd.Series, fees: pd.Series) -> pd.DataFrame:
-    """Виділення окремих угод з позиційної серії (вхід/вихід)."""
+def _fill_price(prev_close: pd.Series, close: pd.Series, ts) -> float:
+    """Ціна виконання за моделлю рушія: закриття бару, що передує бару позиції.
+
+    Рішення приймається на закритті бару t, позиція діє з бару t+1 → філ
+    за ціною close[t]. Якщо попереднього бару немає — fallback на close[ts].
+    """
+    px = prev_close.get(ts, np.nan)
+    if not np.isfinite(px):
+        px = close.get(ts, np.nan)
+    return float(px) if np.isfinite(px) else float("nan")
+
+
+def _extract_trades(
+    positions: pd.Series, ret: pd.Series, fees: pd.Series, close: pd.Series
+) -> pd.DataFrame:
+    """Виділення окремих угод з позиційної серії (вхід/вихід).
+
+    Окрім часових міток додаються `entry_price`/`exit_price` — ціни виконання
+    за моделлю рушія (потрібні для візуалізації точок входу/виходу).
+    """
     rows: list[dict] = []
     cur_pos = 0
     entry_ts = None
     cum_ret = 0.0
+    prev_close = close.shift(1)
     for ts, pos in positions.items():
         if pos != cur_pos:
             if cur_pos != 0 and entry_ts is not None:
@@ -49,6 +68,8 @@ def _extract_trades(positions: pd.Series, ret: pd.Series, fees: pd.Series) -> pd
                         "exit_ts": ts,
                         "side": int(cur_pos / abs(cur_pos)) if cur_pos else 0,
                         "ret": cum_ret,
+                        "entry_price": _fill_price(prev_close, close, entry_ts),
+                        "exit_price": _fill_price(prev_close, close, ts),
                     }
                 )
             if pos != 0:
@@ -62,9 +83,32 @@ def _extract_trades(positions: pd.Series, ret: pd.Series, fees: pd.Series) -> pd
             cum_ret += bar_ret
     if cur_pos != 0 and entry_ts is not None:
         rows.append(
-            {"entry_ts": entry_ts, "exit_ts": positions.index[-1], "side": int(cur_pos / abs(cur_pos)), "ret": cum_ret}
+            {
+                "entry_ts": entry_ts,
+                "exit_ts": positions.index[-1],
+                "side": int(cur_pos / abs(cur_pos)) if cur_pos else 0,
+                "ret": cum_ret,
+                "entry_price": _fill_price(prev_close, close, entry_ts),
+                "exit_price": _fill_price(prev_close, close, positions.index[-1]),
+            }
         )
-    return pd.DataFrame(rows, columns=["entry_ts", "exit_ts", "side", "ret"])
+    return pd.DataFrame(rows, columns=["entry_ts", "exit_ts", "side", "ret", "entry_price", "exit_price"])
+
+
+def _attach_exit_levels(trades: pd.DataFrame, levels: pd.DataFrame | None) -> pd.DataFrame:
+    """Прикріпити рівні SL/TP (ціни) до угод.
+
+    Рівні беруться на барі ВХОДУ угоди, за її стороною (лонг/шорт).
+    levels: DataFrame з колонками sl_long/tp_long/sl_short/tp_short,
+    індексований як df — зі стратегії через Strategy.exit_levels().
+    """
+    if levels is None or trades is None or trades.empty:
+        return trades
+    t = trades.copy()
+    lv = levels.reindex(t["entry_ts"])
+    t["sl_price"] = np.where(t["side"] == 1, lv["sl_long"], lv["sl_short"]).astype(float)
+    t["tp_price"] = np.where(t["side"] == 1, lv["tp_long"], lv["tp_short"]).astype(float)
+    return t
 
 
 def run_backtest(
@@ -183,7 +227,9 @@ def run_backtest(
 
     equity = (1.0 + strat_ret).cumprod() * initial_capital
 
-    trades_df = _extract_trades(pos, ret, fees)
+    trades_df = _extract_trades(pos, ret, fees, close)
+    exit_levels = getattr(strategy, "exit_levels", None)
+    trades_df = _attach_exit_levels(trades_df, exit_levels(df) if exit_levels is not None else None)
     exposure = float((pos != 0).mean())
     metrics = compute_metrics(
         equity,

@@ -145,10 +145,33 @@ def run_pairs_backtest(
     if funding2 is not None and not funding2.empty:
         funding_impact = funding_impact + _leg_funding(pos, funding2, common)
 
-    # комісії: turnover × 2 ноги
-    leg_cost = cost.maker_cost_per_side() if maker_execution else cost.taker_cost_per_side()
+    # комісії: turnover × 2 ноги з vol-aware slippage
+    # обчислюємо поточну волатильність для masштабування slippage
+    if {"l1_high", "l1_low", "l2_high", "l2_low"}.issubset(common.columns):
+        from scalper_hft.backtest.execution import _atr_from_ohlc
+
+        # середня волатильність двох ніг як частка ціни
+        _l1_df = common[["l1_high", "l1_low", "leg1"]].rename(columns={"l1_high": "high", "l1_low": "low", "leg1": "close"})
+        _l2_df = common[["l2_high", "l2_low", "leg2"]].rename(columns={"l2_high": "high", "l2_low": "low", "leg2": "close"})
+        atr1 = _atr_from_ohlc(_l1_df) / common["leg1"].replace(0, np.nan)
+        atr2 = _atr_from_ohlc(_l2_df) / common["leg2"].replace(0, np.nan)
+        vol_frac_series = ((atr1 + atr2) / 2.0).fillna(cost.vol_ref if cost.vol_ref > 0 else 0.0)
+    else:
+        vol_frac_series = pd.Series(0.0, index=common.index)
+
+    # vol-aware cost per side (vectorized через Series)
+    if cost.vol_ref > 0:
+        slip_series = cost.vol_aware_slippage(vol_frac_series)
+        if maker_execution:
+            leg_cost_series = cost.maker_fee + slip_series * 0.0  # maker: без slippage
+        else:
+            leg_cost_series = cost.taker_fee + slip_series
+    else:
+        base_cost = cost.maker_cost_per_side() if maker_execution else cost.taker_cost_per_side()
+        leg_cost_series = pd.Series(base_cost, index=common.index)
+
     turnover = (pos - pos.shift(1)).abs().fillna(pos.abs())
-    fees = turnover * 2 * leg_cost
+    fees = turnover * 2 * leg_cost_series
 
     strat_ret = spread_pnl + funding_impact - fees
     equity = (1.0 + strat_ret).cumprod() * initial_capital

@@ -97,32 +97,37 @@ def garch_forecast(
 
     На кожному барі t прогноз використовує лише дані до t (без lookahead):
     параметри рефітяться кожні `refit_every` барів; рекурсія волатильності
-    продовжується інкрементально між рефітами (O(T + T·window/refit_every)).
+    продовжується інкрементально між рефітами.
+
+    Виправлення: прибрано вкладений loop що перегравав рекурсію при кожному рефіті
+    (O(window×T/refit_every) → O(T)).
     """
     r = returns.astype(float)
     n = len(r)
     out = np.full(n, np.nan)
-    omega = alpha = beta = 0.0
-    v = 1e-8  # σ²_{t−1} на поточному кроці
+    omega, alpha, beta = 0.0, 0.0, 0.0
+    v = 1e-8  # поточна дисперсія σ²_{t-1}
     t = 0
     while t < n:
         if t < warmup:
             t += 1
             continue
         if t % refit_every == 0:
-            omega, alpha, beta = garch11_fit(r.iloc[max(0, t - window) : t].values)
-            hist = r.iloc[max(0, t - window) : t]
-            v = float(np.var(hist.values)) if len(hist) > 1 else 1e-8
-            # рекурсія до σ²_{t−1}
-            for prev in range(max(0, t - window) + 1, t):
-                v = omega + alpha * r.iloc[prev - 1] ** 2 + beta * v
-        # σ²_t з поточного стану, потім прогноз на t+1
+            # рефіт параметрів на останньому вікні
+            hist = r.iloc[max(0, t - window): t]
+            omega, alpha, beta = garch11_fit(hist.values)
+            # ініціалізуємо v з довгострокової дисперсії при першому рефіті
+            if t == warmup or v <= 0:
+                v = float(np.var(hist.values)) if len(hist) > 1 else 1e-8
+            # v продовжується інкрементально (не перегравається)
+        # σ²_t → прогноз σ²_{t+1}
         var_t = omega + alpha * r.iloc[t - 1] ** 2 + beta * v
         var_t1 = omega + alpha * r.iloc[t] ** 2 + beta * var_t
         out[t] = float(np.sqrt(max(var_t1, 1e-12)))
         v = var_t
         t += 1
     return pd.Series(out, index=r.index)
+
 
 
 def ewma_vol(returns: pd.Series, span: int = 20) -> pd.Series:

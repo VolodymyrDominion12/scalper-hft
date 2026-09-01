@@ -120,20 +120,8 @@ class GaussianHMM:
             B = np.column_stack([np.exp(_log_gaussian(X, means[i], covars[i])) for i in range(k)])
             B = np.maximum(B, 1e-300)  # захист від underflow
 
-            # ── масштабований forward–backward (Rabiner 1989) ──
-            alpha = np.zeros((t, k))
-            c = np.zeros(t)
-            alpha[0] = startprob * B[0]
-            c[0] = alpha[0].sum()
-            if c[0] <= 0:
-                break
-            alpha[0] /= c[0]
-            for t_ in range(1, t):
-                alpha[t_] = (alpha[t_ - 1] @ transmat) * B[t_]
-                c[t_] = alpha[t_].sum()
-                if c[t_] <= 0:
-                    break
-                alpha[t_] /= c[t_]
+            # ── масштабований forward–backward через вже наявні helpers ──
+            alpha, c = _scaled_forward(B, startprob, transmat)
             log_lik = float(np.sum(np.log(np.maximum(c, 1e-300))))
             if not np.isfinite(log_lik):
                 break
@@ -142,30 +130,32 @@ class GaussianHMM:
                 break
             prev_ll = log_lik
 
-            beta = np.zeros((t, k))
-            beta[-1] = 1.0
-            for t_ in range(t - 2, -1, -1):
-                beta[t_] = (transmat @ (B[t_ + 1] * beta[t_ + 1])) / c[t_ + 1]
+            beta = _scaled_backward(B, transmat, c)
 
             gamma = alpha * beta
-            gamma /= gamma.sum(axis=1, keepdims=True)
-            xi = np.zeros((t - 1, k, k))
+            row_sum = gamma.sum(axis=1, keepdims=True)
+            gamma /= np.where(row_sum > 0, row_sum, 1.0)
+
+            # xi[t]: нормуємо кожен часовий зріз окремо (оригінальна нормалізація)
+            xi_sum = np.zeros((k, k))
             for t_ in range(t - 1):
-                xi[t_] = alpha[t_][:, None] * transmat * B[t_ + 1][None, :] * beta[t_ + 1][None, :]
-                s = xi[t_].sum()
+                xi_t = alpha[t_][:, None] * transmat * B[t_ + 1][None, :] * beta[t_ + 1][None, :]
+                s = xi_t.sum()
                 if s > 0:
-                    xi[t_] /= s
-            xi_sum = xi.sum(axis=0)
+                    xi_t /= s
+                xi_sum += xi_t
 
             # M-крок
-            startprob = gamma[0] / gamma[0].sum()
-            transmat = xi_sum / xi_sum.sum(axis=1, keepdims=True)
+            startprob = gamma[0] / max(gamma[0].sum(), 1e-300)
+            xi_row = xi_sum.sum(axis=1, keepdims=True)
+            transmat = xi_sum / np.where(xi_row > 0, xi_row, 1.0)
             denom = gamma.sum(axis=0)
-            means = (gamma.T @ X) / denom[:, None]
+            means = (gamma.T @ X) / np.where(denom[:, None] > 0, denom[:, None], 1.0)
             for i in range(k):
                 diff = X - means[i]
-                covars[i] = (gamma[:, i][:, None] * diff**2).sum(axis=0) / denom[i]
-            covars = np.maximum(covars, 1e-10)
+                covars[i] = (gamma[:, i][:, None] * diff**2).sum(axis=0) / max(denom[i], 1e-300)
+            covars = np.maximum(covars, var_all * 0.01)
+
 
         # фінальний прогін (масштабований forward–backward)
         B = np.column_stack([np.exp(_log_gaussian(X, means[i], covars[i])) for i in range(k)])

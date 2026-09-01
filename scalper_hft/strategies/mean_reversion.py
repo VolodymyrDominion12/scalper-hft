@@ -91,3 +91,23 @@ class MeanReversionScalper(Strategy):
         sig[exit_long | exit_short] = 0.0
 
         return sig.ffill().fillna(0.0).astype(int)
+
+    def exit_levels(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Рівні виходу для візуалізації: ціль = середина BB, стоп = середина ∓ ATR×mult.
+
+        Лонг: tp = bb_mid (повернення до середини), sl = bb_mid − atr×mult;
+        шорт — дзеркально. Збігається з логікою виходів у generate_signals.
+        Увага: рівні відносні СЕРЕДИНИ смуг, а не ціни входу — стратегія
+        входить глибоко за bb_low/bb_up, тому sl може опинитись вище входу
+        (лонг) — це чесна картина фактичної логіки виходу, не баг.
+        """
+        from scalper_hft.features.indicators import add_standard_features
+
+        f = add_standard_features(df)
+        stop = f["atr_14"] * self.get("stop_atr_mult", 2.0)
+        out = pd.DataFrame(index=df.index, dtype=float)
+        out["sl_long"] = f["bb_mid"] - stop
+        out["tp_long"] = f["bb_mid"]
+        out["sl_short"] = f["bb_mid"] + stop
+        out["tp_short"] = f["bb_mid"]
+        return out

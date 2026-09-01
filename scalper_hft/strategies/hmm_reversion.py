@@ -116,11 +116,9 @@ class HmmReversionScalper(Strategy):
         mask = pd.Series(p_calm >= threshold, index=obs.index)
         return mask.reindex(close.index).fillna(False).astype(bool)
 
-    def generate_signals(
-        self, df: pd.DataFrame, trades: pd.DataFrame | None = None, funding: pd.DataFrame | None = None
-    ) -> pd.Series:
-        # базові mean-reversion сигнали (перевикористовуємо MeanReversionScalper)
-        base = MeanReversionScalper(
+    def _base_scalper(self) -> MeanReversionScalper:
+        """Базовий mean-reversion скальпер з поточними параметрами."""
+        return MeanReversionScalper(
             rsi_period=int(self.get("rsi_period", 14)),
             oversold=self.get("oversold", 30.0),
             overbought=self.get("overbought", 70.0),
@@ -130,7 +128,12 @@ class HmmReversionScalper(Strategy):
             max_trend=self.get("max_trend", 0.6),
             skip_high_vol=bool(self.get("skip_high_vol", True)),
         )
-        signals = base.generate_signals(df)
+
+    def generate_signals(
+        self, df: pd.DataFrame, trades: pd.DataFrame | None = None, funding: pd.DataFrame | None = None
+    ) -> pd.Series:
+        # базові mean-reversion сигнали (перевикористовуємо MeanReversionScalper)
+        signals = self._base_scalper().generate_signals(df)
 
         # HMM-гейт: лише у «спокійному» стані
         calm = self._calm_state_mask(
@@ -140,3 +143,7 @@ class HmmReversionScalper(Strategy):
             threshold=float(self.get("hmm_threshold", 0.5)),
         )
         return signals.where(calm, other=0)
+
+    def exit_levels(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Рівні SL/TP — ті самі, що в MeanReversionScalper (ціль = середина BB)."""
+        return self._base_scalper().exit_levels(df)

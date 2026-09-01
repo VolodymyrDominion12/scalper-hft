@@ -210,3 +210,23 @@ class MLStrategy(Strategy):
             return side
         conf = pd.concat([p_side, 1.0 - p_side], axis=1).max(axis=1)
         return side.where(conf >= threshold, other=0)
+
+    def exit_levels(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Рівні SL/TP за логікою triple-barrier labeling (ml/labeling.py).
+
+        Бар'єри відносні close бару: tp = close ± pt·σ, sl = close ∓ sl·σ,
+        σ = `_daily_vol(close, span=100)` — той самий волатильнісний таргет,
+        що використовується при побудові навчальних міток (label_from_ohlcv).
+        """
+        from scalper_hft.ml.labeling import _daily_vol
+
+        close = df["close"]
+        sigma = _daily_vol(close, span=100).fillna(0.0)
+        pt = float(self.get("pt", 1.0))
+        sl = float(self.get("sl", 1.0))
+        out = pd.DataFrame(index=df.index, dtype=float)
+        out["tp_long"] = close + pt * sigma
+        out["sl_long"] = close - sl * sigma
+        out["tp_short"] = close - pt * sigma
+        out["sl_short"] = close + sl * sigma
+        return out
