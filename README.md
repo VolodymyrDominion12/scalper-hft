@@ -49,13 +49,14 @@ cp .env.example .env
 # база качається один раз (1m)
 .venv/bin/python -m scalper_hft.cli download --symbol BTCUSDT --interval 1m --days 90
 
-# бектест на 5m/15m/1h — ресемплінг з 1m-кешу, нуль API-дзвінків
-.venv/bin/python -m scalper_hft.cli backtest --strategy mean_reversion --symbol BTCUSDT --interval 15m --days 90 --base 1m --derive
+# бектест на 5m/15m/1h — за замовчуванням ресемплінг з 1m-кешу (мережа лише якщо бази не вистачає)
+.venv/bin/python -m scalper_hft.cli backtest --strategy mean_reversion --symbol BTCUSDT --interval 15m --days 90
 ```
 
-Логіка `data/access.py::ensure_klines`: кеш цільового таймфрейму → якщо немає і
-`derive=True` → ресемплінг із бази → результат зберігається в кеш. Будь-який
-нестандартний інтервал (3m, 45m, 2h, ...) автоматично виводиться з бази.
+Логіка `data/access.py::ensure_klines`: 1m — джерело істини в кеші; старші таймфрейми
+ресемпляться в пам'яті і **не** записуються назад (щоб похідний 5m не роз'їхався
+з докачаним 1m). `--no-derive` качає нативний інтервал з Binance. Будь-який
+нестандартний інтервал (3m, 45m, 2h, ...) виводиться з бази.
 
 ## Матричний прогон: всі стратегії × таймфрейми × інструменти
 
@@ -113,7 +114,7 @@ uv venv .venv && uv pip install -e ".[optim,ml,dev]"
 | Команда | Призначення |
 |---|---|
 | `download` | klines / aggTrades / funding у кеш (`--trades-days` для aggTrades; `--vision` — data.binance.vision) |
-| `backtest` | бектест стратегії з комісіями та slippage (funding PnL для funding_carry); `--base 1m --derive` — ресемплінг |
+| `backtest` | бектест стратегії з комісіями та slippage; старші ТФ ресемпляться з 1m (`--no-derive` — нативний інтервал з біржі) |
 | `plot` | **інтерактивний HTML-графік бектесту**: свічки + індикатори + точки входу/виходу + рівні SL/TP (Plotly, standalone, `--bars/--start/--end/--out`) |
 | `sweep` | **матричний прогон: всі стратегії × символи × таймфрейми** → `results/sweep.csv` (+`--mode walkforward`, `--workers`) |
 | `walkforward` | ковзні IS/OOS вікна — середній OOS Sharpe |

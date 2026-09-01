@@ -8,7 +8,6 @@ from pathlib import Path
 import pandas as pd
 
 from scalper_hft.config import get_settings
-from scalper_hft.data.storage import klines_path, load_klines
 from scalper_hft.data.validate import BarQualityReport, validate_bars
 from scalper_hft.strategies.base import Strategy
 
@@ -72,11 +71,18 @@ def load_research_data(
     force: bool = False,
     load_l2: bool = True,
     validate: bool = True,
+    base: str = "1m",
+    derive: bool = True,
 ) -> MarketDataBundle:
-    """Один вхід для CLI/dashboard: klines + опційно trades/funding/L2."""
-    from scalper_hft.data.downloader import download_agg_trades, download_funding, download_klines
+    """Один вхід для CLI/dashboard: klines + опційно trades/funding/L2.
 
-    klines = download_klines(symbol, interval, days, force=force)
+    Старші таймфрейми за замовчуванням ресемпляться з `base` (1m) і не
+    записуються в кеш — джерело істини лишається хвилинний ряд.
+    """
+    from scalper_hft.data.access import ensure_klines
+    from scalper_hft.data.downloader import download_agg_trades, download_funding
+
+    klines = ensure_klines(symbol, interval, days, base_interval=base, derive=derive, force=force)
     trades = None
     funding = None
     if strategy is not None and getattr(strategy, "needs_trades", False):
@@ -91,8 +97,6 @@ def load_research_data(
         klines = attach_imbalance(klines, book)
 
     quality = validate_bars(klines, interval=interval) if validate else None
-    _ = klines_path(settings.data_dir_abs, symbol, interval)
-    _ = load_klines
     return MarketDataBundle(
         klines=klines,
         trades=trades,

@@ -7,13 +7,15 @@
 
 Кеш іде через scalper_hft.data.store.get_store(): DATA_BACKEND=parquet (файли
 у data/) або DATA_BACKEND=postgres (PostgreSQL у Docker). Дані завантажуються
-з Binance лише тоді, коли кеш не покриває період або застарів.
+з Binance лише тоді, коли кеш не покриває період, має дірки або застарів.
+Закриті бари не перекачуються: дописуються префікс, внутрішні пропуски і хвіст.
 """
 
 from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 
 import pandas as pd
@@ -27,6 +29,7 @@ logger = logging.getLogger(__name__)
 _MS = 1_000
 _S = 60_000
 _H = 3_600_000
+_OHLCV_COLS = ["open", "high", "low", "close", "volume"]
 
 
 def _utc_now() -> pd.Timestamp:
@@ -40,6 +43,97 @@ def _interval_ms(interval: str) -> int:
     num = int(interval[:-1])
     per_unit = {"s": 1_000, "m": 60_000, "h": 3_600_000, "d": 86_400_000}[unit]
     return num * per_unit
+
+
+def _to_ms(ts: pd.Timestamp) -> int:
+    """Datetime64/Timestamp → epoch milliseconds (naive UTC)."""
+    t = pd.Timestamp(ts)
+    if t.tzinfo is not None:
+        t = t.tz_convert("UTC").tz_localize(None)
+    return int(t.value // 1_000_000)
+
+
+def merge_windows(windows: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Злити перекривні/суміжні півінтервали [start, end)."""
+    ordered = sorted((s, e) for s, e in windows if s < e)
+    if not ordered:
+        return []
+    out: list[tuple[int, int]] = [ordered[0]]
+    for start, end in ordered[1:]:
+        prev_s, prev_e = out[-1]
+        if start <= prev_e:
+            out[-1] = (prev_s, max(prev_e, end))
+        else:
+            out.append((start, end))
+    return out
+
+
+def _index_ms(index: pd.DatetimeIndex) -> Any:
+    """Epoch-ms для кожного бару. Pandas 3 тримає DatetimeIndex у us, не ns."""
+    idx = index.tz_convert("UTC").tz_localize(None) if index.tz is not None else index
+    if hasattr(idx, "as_unit"):
+        return idx.as_unit("ms").asi8
+    return idx.asi8 // 1_000_000
+
+
+def _gap_windows(index: pd.DatetimeIndex, interval_ms: int, since_ms: int) -> list[tuple[int, int]]:
+    """Внутрішні дірки, що перетинаються з [since_ms, …)."""
+    if len(index) < 2:
+        return []
+    ms = _index_ms(index)
+    diffs = ms[1:] - ms[:-1]
+    threshold = interval_ms + interval_ms // 2  # 1.5× інтервалу, як validate_bars
+    windows: list[tuple[int, int]] = []
+    for i, delta in enumerate(diffs):
+        if int(delta) <= threshold:
+            continue
+        start = max(int(ms[i]) + interval_ms, since_ms)
+        end = int(ms[i + 1])
+        if start < end:
+            windows.append((start, end))
+    return windows
+
+
+def missing_klines_windows(
+    existing: pd.DataFrame | None,
+    requested_start_ms: int,
+    now_ms: int,
+    interval_ms: int,
+) -> list[tuple[int, int]]:
+    """Вікна, яких немає в кеші: префікс, внутрішні дірки, застарілий хвіст.
+
+    Кожне вікно — півінтервал [start_ms, end_ms) у epoch-ms. Хвіст стартує
+    з last_ts (включно), щоб оновити незакритий бар; середина не чіпається.
+    """
+    if existing is None or existing.empty:
+        return [(requested_start_ms, now_ms + interval_ms)]
+
+    idx = existing.index
+    if not isinstance(idx, pd.DatetimeIndex):
+        idx = pd.to_datetime(idx)
+    if not idx.is_monotonic_increasing:
+        idx = idx.sort_values()
+
+    first_ms = _to_ms(idx[0])
+    last_ms = _to_ms(idx[-1])
+    windows: list[tuple[int, int]] = []
+    if requested_start_ms < first_ms:
+        windows.append((requested_start_ms, first_ms))
+    windows.extend(_gap_windows(idx, interval_ms, requested_start_ms))
+    staleness_ms = max(2 * interval_ms, 60_000)
+    if last_ms < now_ms - staleness_ms:
+        windows.append((last_ms, now_ms + interval_ms))
+    return merge_windows(windows)
+
+
+def _empty_ohlcv() -> pd.DataFrame:
+    return pd.DataFrame(columns=_OHLCV_COLS)
+
+
+def _batch_to_ohlcv(batch: list[list[Any]]) -> pd.DataFrame:
+    df = pd.DataFrame(batch, columns=["ts", *_OHLCV_COLS])
+    df["ts"] = pd.to_datetime(df["ts"], unit="ms")
+    return df.set_index("ts")
 
 
 def _trade_id(t: dict[str, Any], fallback: int) -> int:
@@ -96,77 +190,81 @@ class Downloader:
                 time.sleep(sleep_s)
         raise RuntimeError(f"Не вдалося завантажити дані після {self.retries} спроб: {last}")
 
-    def klines(self, symbol: str, interval: str, days: int) -> pd.DataFrame:
-        """Завантажити klines за останні `days` днів, доповнюючи кеш."""
-        existing = self.store.load_klines(symbol, interval)
-        requested_start = int((_utc_now() - pd.Timedelta(days=days)).value // 1_000_000)
-        if existing is not None and not existing.empty:
-            first_ts = int(existing.index[0].value // 1_000_000)
-            last_ts = int(existing.index[-1].value // 1_000_000)
-            if first_ts <= requested_start:
-                # кеш покриває початок вікна — до-качуємо лише відсутній хвіст
-                start_ms = last_ts
-            else:
-                # кеш починається пізніше — розширюємо назад
-                start_ms = min(requested_start, first_ts)
-        else:
-            start_ms = requested_start
+    def _fetch_klines_windows(
+        self,
+        fetch_fn: Callable[..., list[list[Any]]],
+        symbol: str,
+        interval: str,
+        windows: list[tuple[int, int]],
+        interval_ms: int,
+    ) -> list[pd.DataFrame]:
+        """Качати лише задані вікна; бари з ts >= end_ms відкидаються (без overlap)."""
+        frames: list[pd.DataFrame] = []
+        for start_ms, end_ms in windows:
+            since = start_ms
+            end_ts = pd.Timestamp(end_ms, unit="ms")
+            guard = 0
+            while since < end_ms:
+                guard += 1
+                if guard > 10_000:
+                    raise RuntimeError("Забагато батчів — ймовірно застрягли у циклі завантаження")
+                batch = self._with_retry(fetch_fn, symbol, interval, since)
+                if not batch:
+                    break
+                df = _batch_to_ohlcv(batch)
+                df = df[df.index < end_ts]
+                if df.empty:
+                    break
+                frames.append(df)
+                since = _to_ms(df.index[-1]) + interval_ms
+                if len(batch) < 1000:
+                    break
+        return frames
 
-        frames: list[pd.DataFrame] = [existing] if existing is not None and not existing.empty else []
-        since = start_ms
+    def _extend_klines(
+        self,
+        existing: pd.DataFrame | None,
+        fetch_fn: Callable[..., list[list[Any]]],
+        symbol: str,
+        interval: str,
+        days: int,
+        *,
+        force: bool = False,
+    ) -> pd.DataFrame:
+        """Долити в кеш лише відсутні вікна (префікс / дірки / хвіст)."""
         interval_ms = _interval_ms(interval)
-        guard = 0
-        while True:
-            guard += 1
-            if guard > 10_000:
-                raise RuntimeError("Забагато батчів — ймовірно застрягли у циклі завантаження")
-            batch = self._with_retry(self.client.fetch_klines, symbol, interval, since)
-            if not batch:
-                break
-            df = pd.DataFrame(batch, columns=["ts", "open", "high", "low", "close", "volume"])
-            df["ts"] = pd.to_datetime(df["ts"], unit="ms")
-            df = df.set_index("ts")
-            frames.append(df)
-            since = int(df.index[-1].value // 1_000_000) + interval_ms
-            if len(batch) < 1000:
-                break
+        requested_start = _to_ms(_utc_now() - pd.Timedelta(days=days))
+        now_ms = _to_ms(_utc_now())
+        windows = missing_klines_windows(existing, requested_start, now_ms, interval_ms)
+        if force and existing is not None and not existing.empty:
+            last_ms = _to_ms(existing.index[-1])
+            windows = merge_windows([*windows, (last_ms, now_ms + interval_ms)])
+        if not windows:
+            return existing if existing is not None and not existing.empty else _empty_ohlcv()
+        logger.info("Докачую klines %s %s: %d вікон %s", symbol, interval, len(windows), windows)
+        frames: list[pd.DataFrame] = [existing] if existing is not None and not existing.empty else []
+        frames.extend(self._fetch_klines_windows(fetch_fn, symbol, interval, windows, interval_ms))
+        if not frames:
+            return _empty_ohlcv()
         out = pd.concat(frames).sort_index()
-        out = out[~out.index.duplicated(keep="last")]
+        return out[~out.index.duplicated(keep="last")]
+
+    def klines(self, symbol: str, interval: str, days: int, force: bool = False) -> pd.DataFrame:
+        """Завантажити klines за останні `days` днів, доповнюючи кеш без перезапису середини."""
+        existing = self.store.load_klines(symbol, interval)
+        out = self._extend_klines(existing, self.client.fetch_klines, symbol, interval, days, force=force)
+        if out.empty:
+            return out
         self.store.save_klines(symbol, interval, out)
         return out
 
-    def spot_klines(self, symbol: str, interval: str, days: int) -> pd.DataFrame:
+    def spot_klines(self, symbol: str, interval: str, days: int, force: bool = False) -> pd.DataFrame:
         """Спотові klines (для delta-neutral арбітражу) у окремий кеш."""
         existing = self.store.load_spot_klines(symbol, interval)
-        requested_start = int((_utc_now() - pd.Timedelta(days=days)).value // 1_000_000)
-        if existing is not None and not existing.empty:
-            first_ts = int(existing.index[0].value // 1_000_000)
-            last_ts = int(existing.index[-1].value // 1_000_000)
-            start_ms = last_ts if first_ts <= requested_start else min(requested_start, first_ts)
-        else:
-            start_ms = requested_start
-
         spot_client = BinanceClient(market_type="spot")
-        frames: list[pd.DataFrame] = [existing] if existing is not None and not existing.empty else []
-        since = start_ms
-        interval_ms = _interval_ms(interval)
-        guard = 0
-        while True:
-            guard += 1
-            if guard > 10_000:
-                raise RuntimeError("Забагато батчів spot klines")
-            batch = self._with_retry(spot_client.fetch_klines, symbol, interval, since)
-            if not batch:
-                break
-            df = pd.DataFrame(batch, columns=["ts", "open", "high", "low", "close", "volume"])
-            df["ts"] = pd.to_datetime(df["ts"], unit="ms")
-            df = df.set_index("ts")
-            frames.append(df)
-            since = int(df.index[-1].value // 1_000_000) + interval_ms
-            if len(batch) < 1000:
-                break
-        out = pd.concat(frames).sort_index()
-        out = out[~out.index.duplicated(keep="last")]
+        out = self._extend_klines(existing, spot_client.fetch_klines, symbol, interval, days, force=force)
+        if out.empty:
+            return out
         self.store.save_spot_klines(symbol, interval, out)
         return out
 
@@ -269,30 +367,37 @@ class Downloader:
 
 
 # ── зручні функції верхнього рівня ───────────────────────────────────────────
-def _klines_fresh(existing: pd.DataFrame, days: int, interval: str) -> tuple[bool, bool]:
-    """(покриває період, свіжий) — спільна логіка для klines-кешів."""
-    now = _utc_now()
-    oldest = existing.index[0]
-    newest = existing.index[-1]
-    needed_from = now - pd.Timedelta(days=days)
-    staleness = max(2 * _interval_ms(interval), 60_000)
-    stale = newest < now - pd.Timedelta(milliseconds=staleness)
-    return oldest <= needed_from, not stale
+def _klines_windows_for(existing: pd.DataFrame, days: int, interval: str) -> list[tuple[int, int]]:
+    interval_ms = _interval_ms(interval)
+    requested_start = _to_ms(_utc_now() - pd.Timedelta(days=days))
+    return missing_klines_windows(existing, requested_start, _to_ms(_utc_now()), interval_ms)
 
 
 def download_klines(symbol: str, interval: str, days: int, force: bool = False) -> pd.DataFrame:
-    """Завантажити/оновити klines. Кеш повертається лише якщо покриває період
-    І свіжий (останній бар < 1 год тому); інакше — розширюється в обидва боки."""
+    """Завантажити/оновити klines. Старі бари не видаляються: докачуються
+    лише префікс, внутрішні дірки та застарілий хвіст."""
     store = get_store()
     cached = None if force else store.load_klines(symbol, interval)
-    if cached is not None and not cached.empty:
-        covers, fresh = _klines_fresh(cached, days, interval)
-        if covers and fresh:
-            logger.info("Кеш klines %s %s покриває період і свіжий: %d рядків (до %s)", symbol, interval, len(cached), cached.index[-1])
+    if cached is not None and not cached.empty and not force:
+        windows = _klines_windows_for(cached, days, interval)
+        if not windows:
+            logger.info(
+                "Кеш klines %s %s покриває період і свіжий: %d рядків (до %s)",
+                symbol,
+                interval,
+                len(cached),
+                cached.index[-1],
+            )
             return cached
-        logger.info("Розширення кешу klines %s %s: %d рядків (до %s)", symbol, interval, len(cached), cached.index[-1])
+        logger.info(
+            "Розширення/латання кешу klines %s %s: %d вікон, було %d рядків",
+            symbol,
+            interval,
+            len(windows),
+            len(cached),
+        )
     logger.info("Завантаження klines %s %s за %d днів", symbol, interval, days)
-    return Downloader(store=store).klines(symbol, interval, days)
+    return Downloader(store=store).klines(symbol, interval, days, force=force)
 
 
 def download_agg_trades(symbol: str, days: int, force: bool = False) -> pd.DataFrame:
@@ -336,10 +441,10 @@ def download_spot_klines(symbol: str, interval: str, days: int, force: bool = Fa
     """Спотові klines (для delta-neutral арбітражу) з окремим кешем."""
     store = get_store()
     cached = None if force else store.load_spot_klines(symbol, interval)
-    if cached is not None and not cached.empty:
-        covers, fresh = _klines_fresh(cached, days, interval)
-        if covers and fresh:
+    if cached is not None and not cached.empty and not force:
+        windows = _klines_windows_for(cached, days, interval)
+        if not windows:
             logger.info("Кеш spot klines %s %s свіжий: %d рядків", symbol, interval, len(cached))
             return cached
     logger.info("Завантаження spot klines %s %s за %d днів", symbol, interval, days)
-    return Downloader(store=store).spot_klines(symbol, interval, days)
+    return Downloader(store=store).spot_klines(symbol, interval, days, force=force)

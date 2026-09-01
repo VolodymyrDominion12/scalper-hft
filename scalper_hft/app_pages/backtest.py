@@ -14,7 +14,8 @@ from scalper_hft.backtest.engine import run_backtest
 from scalper_hft.backtest.execution import CostModel
 from scalper_hft.backtest.pairs import run_pairs_backtest
 from scalper_hft.config import get_settings
-from scalper_hft.data.storage import klines_path, load_funding, load_klines, load_trades
+from scalper_hft.data.access import klines_from_store
+from scalper_hft.data.storage import load_funding, load_trades
 from scalper_hft.features.indicators import add_standard_features
 from scalper_hft.strategies import REGISTRY, get_strategy
 from scalper_hft.validation.deflated_sharpe import deflated_sharpe_ratio, estimate_n_trials
@@ -96,9 +97,7 @@ def _render_bt_chart(view: dict) -> None:
             with_sl_tp=with_sl_tp,
             indicators=auto_indicator_columns(fdf) if with_inds else [],
         )
-        sel = st.plotly_chart(
-            fig, width="stretch", key="bt_fig", on_select="rerun", selection_mode="points"
-        )
+        sel = st.plotly_chart(fig, width="stretch", key="bt_fig", on_select="rerun", selection_mode="points")
         if sel is not None and getattr(sel, "selection", None):
             # шукаємо угоду серед усіх вибраних точок (клік може зачепити
             # лінію індикатора на тому ж барі — ts все одно співпаде)
@@ -155,8 +154,8 @@ if run_bt:
         strategy = get_strategy(strategy_name)
         if is_pairs:
             st.session_state.pop("bt_view", None)
-            d1 = load_klines(klines_path(data_dir, leg1, interval))
-            d2 = load_klines(klines_path(data_dir, leg2, interval))
+            d1 = klines_from_store(leg1, interval, days)
+            d2 = klines_from_store(leg2, interval, days)
             if d1 is None or d2 is None or len(d1) < 100 or len(d2) < 100:
                 st.warning(f"Немає даних {leg1}/{leg2} {interval} — download спершу")
             else:
@@ -184,7 +183,7 @@ if run_bt:
                 with st.expander("Повні метрики"):
                     st.text(m.summary())
         else:
-            df = load_klines(klines_path(data_dir, symbol, interval))
+            df = klines_from_store(symbol, interval, days)
             if df is None or len(df) < 100:
                 st.warning(f"Немає даних {symbol} {interval} — запустіть download спершу")
             else:
@@ -227,7 +226,7 @@ if run_diag:
         if is_pairs:
             st.warning("Діагностика працює для одиночних стратегій (не pairs_arb).")
         else:
-            df = load_klines(klines_path(data_dir, symbol, interval))
+            df = klines_from_store(symbol, interval, days)
             if df is None or len(df) < 100:
                 st.warning(f"Немає даних {symbol} {interval} — download спершу")
             else:
