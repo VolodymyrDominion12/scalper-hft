@@ -51,6 +51,7 @@ def cmd_download(args: argparse.Namespace) -> None:
     batch_delay = getattr(args, "delay", None)
     checkpoint_batches = getattr(args, "checkpoint_batches", None)
 
+    logger.info("Спочатку сверю кеш: докачаю лише відсутні дні/вікна (--force оновлює хвіст)")
     for sym in symbols:
         for iv in intervals:
             df = download_klines(
@@ -1426,10 +1427,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--trades", action="store_true", help="Також aggTrades")
     p.add_argument("--trades-days", type=int, default=None, help="Глибина aggTrades (Binance обмежує 2 доби)")
     p.add_argument("--funding", action="store_true", help="Також funding")
-    p.add_argument("--force", action="store_true", help="Ігнорувати кеш")
+    p.add_argument("--force", action="store_true", help="Оновити хвіст навіть якщо кеш уже покриває період")
     p.add_argument("--retries", type=int, default=None, help="Кількість спроб при помилках/лімітах (за замовч. 8)")
     p.add_argument("--delay", type=float, default=None, help="Затримка між батчами у сек (за замовч. 0.15)")
-    p.add_argument("--checkpoint-batches", type=int, default=None, help="Періодичність збереження чекпоінтів (за замовч. 50)")
+    p.add_argument(
+        "--checkpoint-batches", type=int, default=None, help="Періодичність збереження чекпоінтів (за замовч. 50)"
+    )
     p.add_argument("--vision", action="store_true", help="Історичні aggTrades з data.binance.vision")
     p.add_argument("--vision-start", default=None, help="YYYY-MM-DD початок Vision-дампів")
     p.add_argument("--vision-freq", default="daily", choices=["daily", "monthly"])

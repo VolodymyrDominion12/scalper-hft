@@ -131,6 +131,72 @@ def missing_klines_windows(
     return merge_windows(windows)
 
 
+def format_ms_windows(windows: list[tuple[int, int]]) -> str:
+    """Людиночитний список вікон [start, end) з тривалістю."""
+    if not windows:
+        return "—"
+    parts: list[str] = []
+    for start_ms, end_ms in windows:
+        start = pd.Timestamp(start_ms, unit="ms")
+        end = pd.Timestamp(end_ms, unit="ms")
+        parts.append(f"{start} → {end} ({end - start})")
+    return "; ".join(parts)
+
+
+@dataclass(frozen=True, slots=True)
+class CacheCoverage:
+    """Що вже є в кеші і яких вікон бракує для запиту `--days`."""
+
+    n_rows: int
+    have_start: pd.Timestamp | None
+    have_end: pd.Timestamp | None
+    requested_start: pd.Timestamp
+    now: pd.Timestamp
+    windows: tuple[tuple[int, int], ...]
+
+    @property
+    def complete(self) -> bool:
+        return len(self.windows) == 0
+
+    def summary(self, symbol: str, interval: str) -> str:
+        need = f"потрібно {self.requested_start} … {self.now}"
+        if self.n_rows == 0:
+            return f"{symbol} {interval}: кеш порожній; {need}; качаю {format_ms_windows(list(self.windows))}"
+        have = f"у кеші {self.have_start} … {self.have_end} ({self.n_rows} барів)"
+        if self.complete:
+            return f"{symbol} {interval}: {have}; період покрито — нічого докачувати"
+        return (
+            f"{symbol} {interval}: {have}; {need}; "
+            f"бракує {len(self.windows)} вікон: {format_ms_windows(list(self.windows))}"
+        )
+
+
+def klines_coverage(
+    existing: pd.DataFrame | None,
+    days: int,
+    interval: str,
+    *,
+    now: pd.Timestamp | None = None,
+) -> CacheCoverage:
+    """Інвентар кешу: діапазон наявних барів і вікна, які треба докачати."""
+    now_ts = now if now is not None else _utc_now()
+    requested_start = now_ts - pd.Timedelta(days=days)
+    windows = missing_klines_windows(
+        existing,
+        _to_ms(requested_start),
+        _to_ms(now_ts),
+        _interval_ms(interval),
+    )
+    if existing is None or existing.empty:
+        return CacheCoverage(0, None, None, requested_start, now_ts, tuple(windows))
+    idx = existing.index
+    if not isinstance(idx, pd.DatetimeIndex):
+        idx = pd.to_datetime(idx)
+    return CacheCoverage(
+        len(existing), pd.Timestamp(idx[0]), pd.Timestamp(idx[-1]), requested_start, now_ts, tuple(windows)
+    )
+
+
 def _empty_ohlcv() -> pd.DataFrame:
     return pd.DataFrame(columns=_OHLCV_COLS)
 
@@ -344,7 +410,7 @@ class Downloader:
         if not windows:
             return existing if existing is not None and not existing.empty else _empty_ohlcv()
 
-        logger.info("Докачую klines %s %s: %d вікон %s", symbol, interval, len(windows), windows)
+        logger.info("Докачую klines %s %s: %s", symbol, interval, format_ms_windows(windows))
         frames: list[pd.DataFrame] = [existing] if existing is not None and not existing.empty else []
         new_frames: list[pd.DataFrame] = []
 
@@ -434,12 +500,22 @@ class Downloader:
         (див. docs/RESEARCH.md). Тут вікно автоматично обрізається до 2 днів.
         """
         existing = self.store.load_trades(symbol)
-        end_ms = int(_utc_now().value // 1_000_000)
+        end_ms = _to_ms(_utc_now())
         max_window_ms = 2 * 24 * 3600 * 1000  # обмеження Binance: 2 доби
-        begin_ms = start_ms or int((_utc_now() - pd.Timedelta(days=days)).value // 1_000_000)
+        begin_ms = start_ms if start_ms is not None else _to_ms(_utc_now() - pd.Timedelta(days=days))
         begin_ms = max(begin_ms, end_ms - max_window_ms)
         if existing is not None and not existing.empty:
-            begin_ms = min(begin_ms, max(existing.index[-1].value // 1_000_000, end_ms - max_window_ms))
+            last_ms = _to_ms(existing.index[-1])
+            if last_ms >= begin_ms:
+                begin_ms = last_ms
+            logger.info(
+                "aggTrades %s: у кеші %s … %s (%d); REST з %s",
+                symbol,
+                existing.index[0],
+                existing.index[-1],
+                len(existing),
+                pd.Timestamp(begin_ms, unit="ms"),
+            )
 
         frames: list[pd.DataFrame] = [existing] if existing is not None and not existing.empty else []
         new_frames: list[pd.DataFrame] = []
@@ -521,9 +597,21 @@ class Downloader:
     def funding(self, symbol: str, days: int) -> pd.DataFrame:
         """Історія ставок фандінгу (зазвичай кожні 8 годин)."""
         existing = self.store.load_funding(symbol)
-        start_ms = int((_utc_now() - pd.Timedelta(days=days)).value // 1_000_000)
-        if existing is not None and not existing.empty:
-            start_ms = min(start_ms, int(existing.index[-1].value // 1_000_000))
+        needed_from_ms = _to_ms(_utc_now() - pd.Timedelta(days=days))
+        if existing is None or existing.empty:
+            start_ms = needed_from_ms
+        else:
+            oldest_ms = _to_ms(existing.index[0])
+            newest_ms = _to_ms(existing.index[-1])
+            start_ms = needed_from_ms if oldest_ms > needed_from_ms else newest_ms
+            logger.info(
+                "funding %s: у кеші %s … %s (%d); докачую з %s",
+                symbol,
+                existing.index[0],
+                existing.index[-1],
+                len(existing),
+                pd.Timestamp(start_ms, unit="ms"),
+            )
 
         frames: list[pd.DataFrame] = [existing] if existing is not None and not existing.empty else []
         new_frames: list[pd.DataFrame] = []
@@ -578,12 +666,6 @@ class Downloader:
 
 
 # ── зручні функції верхнього рівня ───────────────────────────────────────────
-def _klines_windows_for(existing: pd.DataFrame, days: int, interval: str) -> list[tuple[int, int]]:
-    interval_ms = _interval_ms(interval)
-    requested_start = _to_ms(_utc_now() - pd.Timedelta(days=days))
-    return missing_klines_windows(existing, requested_start, _to_ms(_utc_now()), interval_ms)
-
-
 def download_klines(
     symbol: str,
     interval: str,
@@ -596,26 +678,13 @@ def download_klines(
     """Завантажити/оновити klines. Старі бари не видаляються: докачуються
     лише префікс, внутрішні дірки та застарілий хвіст."""
     store = get_store()
-    cached = None if force else store.load_klines(symbol, interval)
-    if cached is not None and not cached.empty and not force:
-        windows = _klines_windows_for(cached, days, interval)
-        if not windows:
-            logger.info(
-                "Кеш klines %s %s покриває період і свіжий: %d рядків (до %s)",
-                symbol,
-                interval,
-                len(cached),
-                cached.index[-1],
-            )
-            return cached
-        logger.info(
-            "Розширення/латання кешу klines %s %s: %d вікон, було %d рядків",
-            symbol,
-            interval,
-            len(windows),
-            len(cached),
-        )
-    logger.info("Завантаження klines %s %s за %d днів", symbol, interval, days)
+    cached = store.load_klines(symbol, interval)
+    coverage = klines_coverage(cached, days, interval)
+    logger.info("%s", coverage.summary(symbol, interval))
+    if coverage.complete and not force:
+        return cached if cached is not None and not cached.empty else _empty_ohlcv()
+    if force and coverage.complete:
+        logger.info("force: оновлюю хвіст %s %s", symbol, interval)
     return Downloader(
         store=store,
         retries=retries,
@@ -690,13 +759,13 @@ def download_spot_klines(
 ) -> pd.DataFrame:
     """Спотові klines (для delta-neutral арбітражу) з окремим кешем."""
     store = get_store()
-    cached = None if force else store.load_spot_klines(symbol, interval)
-    if cached is not None and not cached.empty and not force:
-        windows = _klines_windows_for(cached, days, interval)
-        if not windows:
-            logger.info("Кеш spot klines %s %s свіжий: %d рядків", symbol, interval, len(cached))
-            return cached
-    logger.info("Завантаження spot klines %s %s за %d днів", symbol, interval, days)
+    cached = store.load_spot_klines(symbol, interval)
+    coverage = klines_coverage(cached, days, interval)
+    logger.info("spot %s", coverage.summary(symbol, interval))
+    if coverage.complete and not force:
+        return cached if cached is not None and not cached.empty else _empty_ohlcv()
+    if force and coverage.complete:
+        logger.info("force: оновлюю хвіст spot %s %s", symbol, interval)
     return Downloader(
         store=store,
         retries=retries,

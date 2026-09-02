@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 _BASE_URL = "https://data.binance.vision/data/futures/um"
 _HEADERS = {"User-Agent": "scalper-hft/0.1"}
 _COLUMNS = ["agg_trade_id", "price", "quantity", "first_trade_id", "last_trade_id", "transact_time", "is_buyer_maker"]
+_MIN_COMPLETE_DAY = pd.Timedelta(hours=20)
 
 
 def _url_for(symbol: str, d: date, freq: str) -> str:
@@ -73,6 +74,72 @@ def _parse_zip(content: bytes) -> pd.DataFrame:
     return df.set_index("ts")[["trade_id", "price", "amount", "side"]].sort_index()
 
 
+def _advance_period(d: date, freq: str) -> date:
+    if freq == "monthly":
+        if d.month == 12:
+            return date(d.year + 1, 1, 1)
+        return date(d.year, d.month + 1, 1)
+    return d + timedelta(days=1)
+
+
+def complete_trade_days(existing: pd.DataFrame | None, today: date) -> set[date]:
+    """UTC-дні з кешу, які вже виглядають повними (span ≥ 20 год, не today)."""
+    if existing is None or existing.empty:
+        return set()
+    idx = existing.index
+    if not isinstance(idx, pd.DatetimeIndex):
+        idx = pd.to_datetime(idx)
+    if idx.tz is not None:
+        idx = idx.tz_convert("UTC").tz_localize(None)
+    out: set[date] = set()
+    for day_ts, stamps in idx.to_series().groupby(idx.floor("D")):
+        day = pd.Timestamp(day_ts).date()
+        if day >= today:
+            continue
+        if stamps.iloc[-1] - stamps.iloc[0] >= _MIN_COMPLETE_DAY:
+            out.add(day)
+    return out
+
+
+def _month_days_needed(month_start: date, end: date, today: date) -> set[date]:
+    start = date(month_start.year, month_start.month, 1)
+    if start.month == 12:
+        next_m = date(start.year + 1, 1, 1)
+    else:
+        next_m = date(start.year, start.month + 1, 1)
+    last = min(end, today - timedelta(days=1), next_m - timedelta(days=1))
+    if last < start:
+        return set()
+    days: set[date] = set()
+    current = start
+    while current <= last:
+        days.add(current)
+        current += timedelta(days=1)
+    return days
+
+
+def missing_vision_periods(
+    existing: pd.DataFrame | None,
+    start: date,
+    end: date,
+    freq: str,
+    today: date,
+) -> list[date]:
+    """Дати/місяці архівів, яких немає в кеші (повні дні пропускаються)."""
+    covered = complete_trade_days(existing, today)
+    missing: list[date] = []
+    current = start
+    while current <= end:
+        if freq == "monthly":
+            needed = _month_days_needed(current, end, today)
+            if needed and not needed.issubset(covered):
+                missing.append(current)
+        elif current not in covered:
+            missing.append(current)
+        current = _advance_period(current, freq)
+    return missing
+
+
 def download_agg_trades_vision(
     symbol: str,
     start: date,
@@ -82,42 +149,51 @@ def download_agg_trades_vision(
     """Завантажити aggTrades з архівів Binance за [start, end] і зберегти в кеш.
 
     freq: 'daily' (файл на день) або 'monthly' (файл на місяць).
+    Повні календарні дні в кеші не перекачуються.
     """
-    frames: list[pd.DataFrame] = []
-    end = end or date.today()
-
-    def _advance(d: date, freq: str) -> date:
-        if freq == "monthly":
-            if d.month == 12:
-                return date(d.year + 1, 1, 1)
-            return date(d.year, d.month + 1, 1)
-        return d + timedelta(days=1)
-
-    current = start
-    while current <= end:
-        url = _url_for(symbol, current, freq)
-        content = _download_zip(url)
-        if content is None:
-            logger.info("Файл не знайдено (404): %s", url)
-            current = _advance(current, freq)
-            continue
-        df = _parse_zip(content)
-        frames.append(df)
-        logger.info("%s: %d трейдів", url.split("/")[-1], len(df))
-        current = _advance(current, freq)
-        time.sleep(0.3)  # ввічливість до архіву
-
-    if not frames:
-        raise FileNotFoundError(f"Жодного файлу не завантажено для {symbol} з {start} по {end}")
-
-    out = pd.concat(frames).sort_index()
-    out = out[~out.index.duplicated(keep="last")]
-
-    # злиття з наявним кешем (REST-частина, останні 2 доби)
     from scalper_hft.data.store import get_store
 
     store = get_store()
     existing = store.load_trades(symbol)
+    end = end or date.today()
+    today = date.today()
+    periods = missing_vision_periods(existing, start, end, freq, today)
+    if existing is not None and not existing.empty:
+        have = f"{existing.index[0].date()} … {existing.index[-1].date()} ({len(existing)} трейдів)"
+    else:
+        have = "порожній"
+    preview = ", ".join(p.isoformat() for p in periods[:12])
+    if len(periods) > 12:
+        preview += "…"
+    logger.info(
+        "vision aggTrades %s: у кеші %s; качаю %d %s періодів%s",
+        symbol,
+        have,
+        len(periods),
+        freq,
+        f" ({preview})" if preview else "",
+    )
+
+    frames: list[pd.DataFrame] = []
+    for current in periods:
+        url = _url_for(symbol, current, freq)
+        content = _download_zip(url)
+        if content is None:
+            logger.info("Файл не знайдено (404): %s", url)
+            continue
+        df = _parse_zip(content)
+        frames.append(df)
+        logger.info("%s: %d трейдів", url.split("/")[-1], len(df))
+        time.sleep(0.3)  # ввічливість до архіву
+
+    if not frames:
+        if existing is not None and not existing.empty:
+            logger.info("vision aggTrades %s: нічого докачувати", symbol)
+            return existing
+        raise FileNotFoundError(f"Жодного файлу не завантажено для {symbol} з {start} по {end}")
+
+    out = pd.concat(frames).sort_index()
+    out = out[~out.index.duplicated(keep="last")]
     if existing is not None and not existing.empty:
         out = pd.concat([out, existing[["trade_id", "price", "amount", "side"]]]).sort_index()
         out = out[~out.index.duplicated(keep="last")]
