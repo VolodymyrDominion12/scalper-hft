@@ -92,14 +92,31 @@ def frac_diff_expanding(
 
     Повільніше, але без NaN на початку (окрім першого рядка).
     Корисна для коротких рядів.
+
+    Ваги рахуються ОДИН раз на весь ряд (не залежать від t) з реальним
+    порогом обрізання: раніше тут викликався `_get_weights_ffd(threshold=0.0)`,
+    цикл якого ніколи не завершується (|w_k| поліноміально спадає, але не до 0;
+    при d=1.0 w_k стає рівно 0.0, але `0.0 < 0.0` — False → нескінченний цикл).
+    Додатково ваги обмежені довжиною ряду n: для барів t < n потрібні лише
+    w_0..w_t, тому більше n ваг ніколи не використовується.
     """
     values = series.values.astype(float)
     n = len(values)
     output = np.full(n, np.nan)
+    if n < 2:
+        return pd.Series(output, index=series.index)
+
+    # w_k = -w_{k-1} * (d - k + 1) / k, w_0 = 1; зупинка за порогом або на n вагах
+    weights = [1.0]
+    while len(weights) < n:
+        k = len(weights)
+        w_k = -weights[-1] * (d - k + 1) / k
+        if threshold > 0 and abs(w_k) < threshold:
+            break
+        weights.append(w_k)
+    w_full = np.asarray(weights[::-1])
 
     for t in range(1, n):
-        w_full = _get_weights_ffd(d, threshold=0.0)
-        # обрізаємо до доступних спостережень
         k = min(len(w_full), t + 1)
         w_slice = w_full[-k:]
         # нормуємо на суму ваг

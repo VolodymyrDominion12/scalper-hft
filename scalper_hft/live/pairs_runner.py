@@ -260,6 +260,12 @@ class PairsEngine:
     def _quote(self, ts: pd.Timestamp, want: int, p1: float, p2: float) -> str:
         if want == self.have:
             return "hold"
+        # Прямий реверс (want = -have): спершу закрити обидві ноги (reduce_only,
+        # all-or-none), новий вхід — лише після підтвердженого закриття наступним
+        # баром. Інакше котирували б відкриття поверх відкритої позиції →
+        # ValueError у open_position (позиція вже існує) і вічно заклинений рушій.
+        if want != 0 and self.have != 0 and want != self.have:
+            want = 0  # реверс = спочатку flat; новий напрямок — коли сигнал ще активний
         if want != 0 and self.have == 0:
             ok, reason = self._can_open(ts)
             if not ok:
