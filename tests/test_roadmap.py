@@ -171,7 +171,10 @@ def test_attach_imbalance_and_router_names() -> None:
     out = attach_imbalance(klines, book)
     assert "imbalance" in out.columns
     assert abs(float(out["imbalance"].iloc[-1]) - (1 / 3)) < 1e-9
-    assert "ob_imbalance" in EVENT_STRATEGIES
+    # event-рушій лишається лише для пасивного MM; ob_imbalance — напрямкова
+    # стратегія з власним generate_signals → векторний рушій (див. router.py)
+    assert "market_maker" in EVENT_STRATEGIES
+    assert "ob_imbalance" not in EVENT_STRATEGIES
 
 
 def test_router_vector_path() -> None:

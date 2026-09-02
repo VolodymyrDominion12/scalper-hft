@@ -128,6 +128,16 @@ class BinanceClient:
     def cancel_order(self, order_id: str, symbol: str) -> dict[str, Any]:
         return self.exchange.cancel_order(order_id, symbol)
 
+    def fetch_order(self, order_id: str, symbol: str) -> dict[str, Any]:
+        """Статус ордера за id (для live maker-філів: заповнений/скасований)."""
+        return self.exchange.fetch_order(order_id, symbol)
+
+    def fetch_open_orders(self, symbol: str | None = None) -> list[dict[str, Any]]:
+        """Робочі (незаповнені) ордери — для звірки локального стану з біржею."""
+        if symbol:
+            return self.exchange.fetch_open_orders(symbol)
+        return self.exchange.fetch_open_orders()
+
     def fetch_balance(self) -> dict[str, Any]:
         return self.exchange.fetch_balance()
 
