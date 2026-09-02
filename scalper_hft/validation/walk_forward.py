@@ -99,8 +99,11 @@ def run_walk_forward(
     while start + train_bars + test_bars <= len(df):
         tr = df.iloc[start : start + train_bars]
         te = df.iloc[start + train_bars : start + train_bars + test_bars]
-        trades_tr = trades.iloc[start : start + train_bars] if trades is not None else None
-        trades_te = trades.iloc[start + train_bars : start + train_bars + test_bars] if trades is not None else None
+        # trades — це потік aggTrades (індекс = час трейду), НЕ бари: ріжемо
+        # за ЧАСОМ вікна, а не позиційним зсувом барів (раніше trades.iloc[
+        # start:...] давав невірні часові вікна для needs_trades стратегій).
+        trades_tr = _slice_by_time(trades, tr.index[0], tr.index[-1]) if trades is not None else None
+        trades_te = _slice_by_time(trades, te.index[0], te.index[-1]) if trades is not None else None
         # funding має ВЛАСНИЙ (рідкісний) індекс — ріжемо за часом, не за позицією
         funding_tr = _slice_by_time(funding, tr.index[0], tr.index[-1]) if funding is not None else None
         funding_te = _slice_by_time(funding, te.index[0], te.index[-1]) if funding is not None else None

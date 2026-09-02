@@ -49,6 +49,11 @@ class BinanceClient:
         if auth and api_key and api_secret:
             params.update({"apiKey": api_key, "secret": api_secret})
         self.exchange: ccxt.Exchange = exchange_cls(params)  # type: ignore[arg-type]
+        # ccxt не має класу "binance-testnet": тестнет вмикається через
+        # set_sandbox_mode() на базовому класі. Інакше exchange_id мовчазно
+        # падав на mainnet (ризик для live-ордерів).
+        if str(exchange_id).lower().endswith("testnet") and hasattr(self.exchange, "set_sandbox_mode"):
+            self.exchange.set_sandbox_mode(True)
         self.market_type = market_type
         self._market_cache: dict[str, dict[str, Any]] = {}
 

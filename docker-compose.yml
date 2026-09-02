@@ -7,7 +7,7 @@
 #
 # pgAdmin UI:
 #   URL:      http://localhost:5050
-#   Email:    admin@scalper.local (або ${PGADMIN_DEFAULT_EMAIL})
+#   Email:    admin@scalper.com (або ${PGADMIN_DEFAULT_EMAIL})
 #   Password: scalper (або ${PGADMIN_DEFAULT_PASSWORD})
 #   Host підключення в pgAdmin: postgres, Port: 5432
 #
@@ -45,7 +45,7 @@ services:
     container_name: scalper_pgadmin
     restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@scalper.local}
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@scalper.com}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-scalper}
       PGADMIN_CONFIG_SERVER_MODE: "False"
     ports:

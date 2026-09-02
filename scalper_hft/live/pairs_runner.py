@@ -368,6 +368,12 @@ class PairsEngine:
         day = ts.date()
         if getattr(self, "_last_day", None) is not None and day != self._last_day:
             self.account.roll_to_new_day(equity)
+            # пауза/cooldown діє лише до кінця дня (як у LiveTrader): скидаємо
+            # і парний лічильник серії збитків, інакше пара гальмує «назавжди»
+            # після max_consecutive_losses збитків, розтягнутих на кілька днів.
+            # Активне cooldown-вікно (CooldownState.until) зберігається, як і в
+            # LiveTrader.risk_check — воно само згасне за часом.
+            self.consecutive_pair_losses = 0
         self._last_day = day
         iso = ts.isocalendar()
         week = (int(iso.year), int(iso.week))

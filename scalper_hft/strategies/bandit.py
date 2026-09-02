@@ -113,15 +113,18 @@ def exp3_select_signals(
     sig_vals = signals_df.values
     ret_vals = returns_df.values
 
+    last_arm: int | None = None
     for i in range(t):
         arm = bandit.select_arm()
         chosen_signals.append(sig_vals[i, arm])
 
-        # Оновлення бандита за попередній спостережений крок
-        if i > 0:
-            # Винагорода за попередній крок
-            prev_arm = bandit.history[-1]["arm"] if bandit.history else 0
-            prev_ret = ret_vals[i - 1, int(prev_arm)]
-            bandit.update(int(prev_arm), prev_ret)
+        # Винагорода за ПОПЕРЕДНІЙ обраний крок. select_arm() НЕ пише у history
+        # (туди пише лише update()), тому history[-1] не відповідає обраній руці —
+        # раніше це давало fixed point: update() завжди цілив у руку 0, і бандит
+        # не навчався. Тримаємо обрану руку явно.
+        if last_arm is not None:
+            prev_ret = ret_vals[i - 1, int(last_arm)]
+            bandit.update(int(last_arm), prev_ret)
+        last_arm = arm
 
     return pd.Series(chosen_signals, index=signals_df.index, dtype=float).clip(-1.0, 1.0)

@@ -246,6 +246,25 @@ def cmd_ml_opt(args: argparse.Namespace) -> None:
     print(res.summary())
 
 
+def _param_combinations(strategy) -> int:
+    """Кількість комбінацій параметрів у param_space (добуток розмірів ґраток).
+
+    Раніше в DSR передавався `len(param_space)` (кількість ПАРАМЕТРІВ, напр. 3),
+    а не кількість спроб/комбінацій → корекція на множинне тестування була
+    занижена в рази. Тут — добуток кількості значень по кожному параметру
+    (обрізаний зверху, щоб не вибухало).
+    """
+    ps = getattr(strategy, "param_space", {}) or {}
+    if not ps:
+        return 1
+    combos = 1
+    for lo, hi, step in ps.values():
+        step = float(step) if step else 1.0
+        n_vals = max(int((float(hi) - float(lo)) / step) + 1, 1)
+        combos *= n_vals
+    return min(max(combos, 1), 100_000)
+
+
 def cmd_overfit(args: argparse.Namespace) -> None:
     """Повний аудит на перенавчання: WF + sensitivity + deflated Sharpe + CV."""
     from scalper_hft.backtest.engine import run_backtest
@@ -304,7 +323,7 @@ def cmd_overfit(args: argparse.Namespace) -> None:
     equity = res_full.equity
     ret = equity.pct_change().dropna()
     n_trials = estimate_n_trials(
-        param_combinations=len(getattr(strategy, "param_space", {}) or {1}) or 1,
+        param_combinations=_param_combinations(strategy),
         backtests_per_combo=args.trials or 1,
     )
     dsr = deflated_sharpe_ratio(ret.values, n_trials=n_trials)
@@ -422,7 +441,7 @@ def cmd_report(args: argparse.Namespace) -> None:
         position_pct=settings.position_pct,
     )
     ret = res.equity.pct_change().dropna()
-    n_trials = estimate_n_trials(max(len(strategy.param_space), 1), args.trials or 1)
+    n_trials = estimate_n_trials(_param_combinations(strategy), args.trials or 1)
     dsr = deflated_sharpe_ratio(ret.values, n_trials=n_trials)
 
     sens_md = ""
