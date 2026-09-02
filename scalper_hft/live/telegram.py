@@ -8,9 +8,10 @@
 from __future__ import annotations
 
 import logging
-import os
 
 import requests
+
+from scalper_hft.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +19,12 @@ _API = "https://api.telegram.org/bot{token}/sendMessage"
 
 
 def _creds() -> tuple[str, str] | None:
-    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+    # .env завантажується через scalper_hft.config (load_dotenv у config.py);
+    # раніше os.getenv читав процесні змінні, а .env — лише якщо config вже
+    # імпортували → standalone-виклик мовчки втрачав алерти.
+    s = get_settings()
+    token = (s.telegram_bot_token or "").strip()
+    chat_id = (s.telegram_chat_id or "").strip()
     if not token or not chat_id:
         return None
     return token, chat_id

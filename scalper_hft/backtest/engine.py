@@ -52,6 +52,12 @@ def _extract_trades(positions: pd.Series, ret: pd.Series, fees: pd.Series, close
 
     Окрім часових міток додаються `entry_price`/`exit_price` — ціни виконання
     за моделлю рушія (потрібні для візуалізації точок входу/виходу).
+
+    Облік комісій на угоду: fee бару зміни позиції розщеплюється пропорційно
+    розмірам сторін — exit-частка йде закритій позиції, entry-частка новій.
+    Раніше fee бару закриття (або половина flip-бару) губилась → per-trade
+    ret/avg_trade_return були завищені на ~одну сторону витрат (equity не
+    страждала — там fee врахована через turnover).
     """
     rows: list[dict] = []
     cur_pos = 0
@@ -60,26 +66,36 @@ def _extract_trades(positions: pd.Series, ret: pd.Series, fees: pd.Series, close
     prev_close = close.shift(1)
     for ts, pos in positions.items():
         if pos != cur_pos:
+            turnover = abs(pos - cur_pos)
+            fee_bar = fees.get(ts, 0.0)
+            # ефективна ставка на барі зміни (fee/turnover, вкл. adverse)
+            rate_eff = fee_bar / turnover if turnover > 0 else 0.0
+            exit_fee = rate_eff * abs(cur_pos) if cur_pos != 0 else 0.0
             if cur_pos != 0 and entry_ts is not None:
+                # закриття старої позиції: ціновий PnL вже накопичено за бари
+                # [entry..ts-1]; додаємо exit-частку комісії цього бару.
                 rows.append(
                     {
                         "entry_ts": entry_ts,
                         "exit_ts": ts,
                         "side": int(cur_pos / abs(cur_pos)) if cur_pos else 0,
-                        "ret": cum_ret,
+                        "ret": cum_ret - exit_fee,
                         "entry_price": _fill_price(prev_close, close, entry_ts),
                         "exit_price": _fill_price(prev_close, close, ts),
                     }
                 )
             if pos != 0:
+                # відкриття (з flat або flip): бар ts — перший активний бар нової
+                # позиції: PnL бару мінус entry-частка комісії.
                 entry_ts = ts
-                cum_ret = 0.0
+                cum_ret = ret.get(ts, 0.0) * pos - (fee_bar - exit_fee)
             else:
                 entry_ts = None
+                cum_ret = 0.0
             cur_pos = pos
-        if cur_pos != 0 and entry_ts is not None:
-            bar_ret = ret.get(ts, 0.0) * cur_pos - fees.get(ts, 0.0)
-            cum_ret += bar_ret
+        elif cur_pos != 0 and entry_ts is not None:
+            # без зміни позиції: fee на таких барах = 0 (turnover немає)
+            cum_ret += ret.get(ts, 0.0) * cur_pos
     if cur_pos != 0 and entry_ts is not None:
         rows.append(
             {

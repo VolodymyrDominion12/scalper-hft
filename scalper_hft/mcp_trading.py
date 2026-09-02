@@ -163,11 +163,19 @@ def _run_analysis(kind: str, args: dict) -> dict:
 
 
 def _paper_step(args: dict) -> dict:
-    """Один крок paper-торгівлі (dry-run, без реальних ордерів)."""
+    """Один крок paper-торгівлі (dry-run, без реальних ордерів).
+
+    Belt-and-braces: хендлер явно забороняє live (DRY_RUN=false), навіть якщо
+    config-гейт обійшли (напр. MCP-процес з ключами в env).
+    """
+    from scalper_hft.config import get_settings
     from scalper_hft.data.downloader import download_klines
     from scalper_hft.live.trader import LiveTrader, run_trader_once
     from scalper_hft.strategies import get_strategy
 
+    settings = get_settings()
+    if not settings.dry_run:
+        raise RuntimeError("paper_step дозволений лише у DRY_RUN=true (paper)")
     symbol = str(args.get("symbol", "BTCUSDT"))
     interval = str(args.get("interval", "5m"))
     strategy = get_strategy(str(args.get("strategy", "mean_reversion")), **dict(args.get("params", {})))

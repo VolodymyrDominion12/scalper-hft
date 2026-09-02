@@ -51,7 +51,7 @@ def cmd_download(args: argparse.Namespace) -> None:
     batch_delay = getattr(args, "delay", None)
     checkpoint_batches = getattr(args, "checkpoint_batches", None)
 
-    logger.info("Спочатку сверю кеш: докачаю лише відсутні дні/вікна (--force оновлює хвіст)")
+    logger.info("Спочатку звірю кеш: докачаю лише відсутні дні/вікна (--force оновлює хвіст)")
     for sym in symbols:
         for iv in intervals:
             df = download_klines(

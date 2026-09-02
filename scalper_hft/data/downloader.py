@@ -20,6 +20,7 @@ import random
 import re
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from functools import partial
 from typing import Any
 
@@ -165,10 +166,9 @@ class CacheCoverage:
         have = f"у кеші {self.have_start} … {self.have_end} ({self.n_rows} барів)"
         if self.complete:
             return f"{symbol} {interval}: {have}; період покрито — нічого докачувати"
-        return (
-            f"{symbol} {interval}: {have}; {need}; "
-            f"бракує {len(self.windows)} вікон: {format_ms_windows(list(self.windows))}"
-        )
+        n = len(self.windows)
+        noun = "вікно" if n == 1 else "вікон"
+        return f"{symbol} {interval}: {have}; {need}; бракує {n} {noun}: {format_ms_windows(list(self.windows))}"
 
 
 def klines_coverage(

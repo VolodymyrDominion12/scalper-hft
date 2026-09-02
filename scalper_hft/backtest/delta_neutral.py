@@ -114,7 +114,11 @@ def run_delta_neutral_backtest(
 
 
 def _extract_pair_trades(pos: pd.Series, strat_ret: pd.Series) -> pd.DataFrame:
-    """Угоди пари: вхід/вихід carry-позиції."""
+    """Угоди пари: вхід/вихід carry-позиції.
+
+    Exit-комісія на барі закриття (pos → 0) додається до ret закритої угоди
+    (strat_ret[ts] там = −fees, бо basis-PnL при pos=0 = 0) — раніше губилась.
+    """
     rows: list[dict] = []
     cur = 0.0
     entry_ts = None
@@ -122,8 +126,9 @@ def _extract_pair_trades(pos: pd.Series, strat_ret: pd.Series) -> pd.DataFrame:
     for ts, p in pos.items():
         if p != cur:
             if cur != 0 and entry_ts is not None:
+                exit_extra = strat_ret.get(ts, 0.0) if p == 0 else 0.0
                 rows.append(
-                    {"entry_ts": entry_ts, "exit_ts": ts, "side": int(cur / abs(cur)) if cur else 0, "ret": cum}
+                    {"entry_ts": entry_ts, "exit_ts": ts, "side": int(cur / abs(cur)) if cur else 0, "ret": cum + exit_extra}
                 )
             entry_ts = ts if p != 0 else None
             cum = 0.0

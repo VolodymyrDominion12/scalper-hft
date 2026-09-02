@@ -7,6 +7,8 @@ from scalper_hft.data.downloader import (
     Downloader,
     _interval_ms,
     _to_ms,
+    format_ms_windows,
+    klines_coverage,
     merge_windows,
     missing_klines_windows,
 )
@@ -31,6 +33,8 @@ def _rows_from_df(df: pd.DataFrame) -> list[list[float | int]]:
 class _MemStore:
     def __init__(self) -> None:
         self.data: dict[tuple[str, str], pd.DataFrame] = {}
+        self.funding: dict[str, pd.DataFrame] = {}
+        self.trades: dict[str, pd.DataFrame] = {}
 
     def load_klines(self, symbol: str, interval: str) -> pd.DataFrame | None:
         df = self.data.get((symbol, interval))
@@ -38,6 +42,20 @@ class _MemStore:
 
     def save_klines(self, symbol: str, interval: str, df: pd.DataFrame) -> None:
         self.data[(symbol, interval)] = df.copy()
+
+    def load_funding(self, symbol: str) -> pd.DataFrame | None:
+        df = self.funding.get(symbol)
+        return None if df is None else df.copy()
+
+    def save_funding(self, symbol: str, df: pd.DataFrame) -> None:
+        self.funding[symbol] = df.copy()
+
+    def load_trades(self, symbol: str) -> pd.DataFrame | None:
+        df = self.trades.get(symbol)
+        return None if df is None else df.copy()
+
+    def save_trades(self, symbol: str, df: pd.DataFrame) -> None:
+        self.trades[symbol] = df.copy()
 
 
 class _FakeKlines:
@@ -87,6 +105,40 @@ def test_missing_windows_no_work_when_fresh_and_complete() -> None:
     existing = _bars_df("2024-01-09 12:00", 24 * 60)  # до 12:00 наступного дня виключно → last=11:59
     windows = missing_klines_windows(existing, _to_ms(pd.Timestamp("2024-01-09 12:00")), _to_ms(now), interval_ms)
     assert windows == []
+
+
+def test_format_ms_windows_empty() -> None:
+    assert format_ms_windows([]) == "—"
+
+
+def test_klines_coverage_empty_is_full_range() -> None:
+    now = pd.Timestamp("2024-01-10 12:00:00")
+    cov = klines_coverage(None, days=1, interval="1m", now=now)
+    assert not cov.complete
+    assert cov.n_rows == 0
+    text = cov.summary("BTCUSDT", "1m")
+    assert "кеш порожній" in text
+    assert "2024-01-09 12:00:00" in text
+
+
+def test_klines_coverage_complete() -> None:
+    now = pd.Timestamp("2024-01-10 12:00:00")
+    existing = _bars_df("2024-01-09 12:00", 24 * 60)
+    cov = klines_coverage(existing, days=1, interval="1m", now=now)
+    assert cov.complete
+    assert cov.n_rows == 24 * 60
+    assert "нічого докачувати" in cov.summary("BTCUSDT", "1m")
+
+
+def test_klines_coverage_prefix_lists_missing_window() -> None:
+    now = pd.Timestamp("2024-01-10 12:00:00")
+    existing = _bars_df("2024-01-09 18:00", 18 * 60)
+    cov = klines_coverage(existing, days=1, interval="1m", now=now)
+    assert not cov.complete
+    text = cov.summary("ETHUSDT", "1m")
+    assert "бракує 1 вікно" in text
+    assert "2024-01-09 12:00:00" in text
+    assert "2024-01-09 18:00:00" in text
 
 
 def test_klines_does_not_refetch_closed_middle(monkeypatch) -> None:
@@ -271,3 +323,84 @@ def test_downloader_saves_partial_progress_on_failure(monkeypatch) -> None:
     saved = store.load_klines("BTCUSDT", "1m")
     assert saved is not None
     assert len(saved) == 1000
+
+
+def test_download_klines_skips_downloader_when_cache_complete(monkeypatch) -> None:
+    from scalper_hft.data import downloader as dl
+
+    now = pd.Timestamp("2024-01-10 12:00:00")
+    monkeypatch.setattr(dl, "_utc_now", lambda: now)
+    existing = _bars_df("2024-01-09 12:00", 24 * 60)
+
+    class _Store:
+        def load_klines(self, symbol: str, interval: str) -> pd.DataFrame:
+            return existing
+
+        def save_klines(self, symbol: str, interval: str, df: pd.DataFrame) -> None:
+            raise AssertionError("повний кеш не перезаписується")
+
+    monkeypatch.setattr(dl, "get_store", lambda: _Store())
+
+    class _Boom:
+        def __init__(self, **kwargs: object) -> None:
+            raise AssertionError("Downloader не має створюватися")
+
+    monkeypatch.setattr(dl, "Downloader", _Boom)
+    out = dl.download_klines("BTCUSDT", "1m", days=1)
+    assert len(out) == len(existing)
+
+
+def test_funding_fetches_only_from_last_when_history_covers(monkeypatch) -> None:
+    from scalper_hft.data import downloader as dl
+
+    now = pd.Timestamp("2024-01-10 12:00:00")
+    monkeypatch.setattr(dl, "_utc_now", lambda: now)
+    existing = pd.DataFrame(
+        {"fundingRate": [0.0001] * 6},
+        index=pd.date_range("2024-01-08 00:00", periods=6, freq="8h"),
+    )
+    store = _MemStore()
+    store.save_funding("BTCUSDT", existing)
+
+    class _Client:
+        def __init__(self) -> None:
+            self.calls: list[int] = []
+
+        def fetch_funding_rate_history(self, symbol: str, since_ms: int, limit: int = 1000) -> list[dict]:
+            self.calls.append(int(since_ms))
+            return []
+
+    client = _Client()
+    Downloader(client=client, retries=1, store=store, batch_delay=0.0).funding("BTCUSDT", days=2)
+    assert client.calls
+    last_ms = _to_ms(existing.index[-1])
+    assert all(c >= last_ms for c in client.calls)
+    needed_from = _to_ms(now - pd.Timedelta(days=2))
+    assert client.calls[0] > needed_from
+
+
+def test_agg_trades_continues_from_last_cached_trade(monkeypatch) -> None:
+    from scalper_hft.data import downloader as dl
+
+    now = pd.Timestamp("2024-01-10 12:00:00")
+    monkeypatch.setattr(dl, "_utc_now", lambda: now)
+    last = pd.Timestamp("2024-01-10 10:00:00")
+    existing = pd.DataFrame(
+        {"trade_id": [1], "price": [100.0], "amount": [0.1], "side": ["buy"]},
+        index=[last],
+    )
+    store = _MemStore()
+    store.save_trades("BTCUSDT", existing)
+
+    class _Client:
+        def __init__(self) -> None:
+            self.calls: list[int] = []
+
+        def fetch_agg_trades(self, symbol: str, since_ms: int, limit: int = 1000) -> list[dict]:
+            self.calls.append(int(since_ms))
+            return []
+
+    client = _Client()
+    Downloader(client=client, retries=1, store=store, batch_delay=0.0).agg_trades("BTCUSDT", days=2)
+    assert client.calls
+    assert client.calls[0] >= _to_ms(last)

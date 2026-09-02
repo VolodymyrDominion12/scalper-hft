@@ -86,6 +86,10 @@ class Settings:
     postgres_password: str = field(default_factory=lambda: os.getenv("POSTGRES_PASSWORD", "scalper"))
     postgres_dsn: str = field(default_factory=lambda: os.getenv("POSTGRES_DSN", ""))
 
+    # Telegram (опційно; без ключів send — no-op)
+    telegram_bot_token: str = field(default_factory=lambda: os.getenv("TELEGRAM_BOT_TOKEN", ""))
+    telegram_chat_id: str = field(default_factory=lambda: os.getenv("TELEGRAM_CHAT_ID", ""))
+
     @property
     def postgres_conninfo(self) -> str:
         """libpq conninfo для psycopg: пріоритет має явний POSTGRES_DSN."""

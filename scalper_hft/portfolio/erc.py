@@ -36,8 +36,24 @@ def erc_weights(
     r = np.asarray(returns, dtype=float)
     if r.ndim != 2 or r.shape[1] < 2:
         raise ValueError("returns має бути 2D (T × N), N ≥ 2")
-    if np.allclose(r.std(axis=0), 0):
+    stds = r.std(axis=0)
+    tol = max(float(stds.max()) * 1e-10, 1e-12)
+    dead = stds <= tol
+    if dead.all():
         return np.full(r.shape[1], 1.0 / r.shape[1])
+    if dead.any():
+        # «мертвий» актив (≈нульова дисперсія) не має ризику → нульова вага;
+        # решта — ERC на живих активах. Раніше нульова дисперсія одного
+        # активу спотворювала коваріацію і могла захопити ERC-портфель.
+        live = ~dead
+        if live.sum() == 1:
+            w = np.zeros(r.shape[1])
+            w[live] = 1.0
+            return w
+        w_live = erc_weights(r[:, live], max_weight=max_weight)
+        w = np.zeros(r.shape[1])
+        w[live] = w_live
+        return w
     cov = np.cov(r, rowvar=False)
     # робастність: floor на дисперсії
     cov = cov + np.eye(cov.shape[0]) * 1e-10

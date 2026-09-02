@@ -78,13 +78,27 @@ def compute_metrics(
     ret = equity.pct_change().dropna()
     total_return = equity.iloc[-1] / equity.iloc[0] - 1.0
 
-    years = max((equity.index[-1] - equity.index[0]).total_seconds() / (365 * 24 * 3600), 1e-9)
-    cagr = (equity.iloc[-1] / equity.iloc[0]) ** (1 / years) - 1.0
+    # CAGR: на вікнах ≪ 1 року (500 годинних барів ≈ 0.057 року) показник
+    # степеня 1/years експлодує (×~17.5 річного множника) — це вводить в оману.
+    # Для вікон < 1 року повертаємо НЕ ануалізовану дохідність (total_return),
+    # щоб метрика лишалась змістовною.
+    span_seconds = (equity.index[-1] - equity.index[0]).total_seconds()
+    years = max(span_seconds / (365 * 24 * 3600), 1e-9)
+    if years >= 1.0:
+        cagr = (equity.iloc[-1] / equity.iloc[0]) ** (1 / years) - 1.0
+    else:
+        cagr = total_return
 
     # Auto-detect timeframe to scale properly
     # Calculate median time delta between bars in seconds
-    delta_s = equity.index.to_series().diff().median().total_seconds()
-    bars_per_year = (365 * 24 * 3600) / max(delta_s, 1.0) if pd.notna(delta_s) else _TRADING_DAYS * 24 * 60
+    diffs = equity.index.to_series().diff().dropna()
+    if len(diffs) and diffs.gt(pd.Timedelta(0)).all() and diffs.notna().all():
+        delta_s = diffs.median().total_seconds()
+    else:
+        # дублікати індексу/нульові дельти: median = 0 → bars_per_year = 31.5M
+        # (Sharpe/vol завищені ×5616). Fallback на хвилинний масштаб.
+        delta_s = 60.0
+    bars_per_year = (365 * 24 * 3600) / max(delta_s, 1.0)
 
     ann_vol = ret.std(ddof=0) * math.sqrt(bars_per_year) if len(ret) else 0.0
     sharpe = (ret.mean() / ret.std(ddof=0) * math.sqrt(bars_per_year)) if ret.std(ddof=0) > 0 else 0.0
@@ -135,9 +149,12 @@ def compute_metrics(
         hourly = equity.resample("1h").last().pct_change().dropna()
         if len(hourly) >= 2 and hourly.std(ddof=0) > 0:
             sharpe_hourly = float(hourly.mean() / hourly.std(ddof=0))
-            down = hourly[hourly < 0]
-            if len(down) >= 2 and down.std(ddof=0) > 0:
-                sortino_hourly = float(hourly.mean() / down.std(ddof=0))
+            # стандартне downside deviation (як у sortino вище), не std збитків
+            down_dev = float(np.sqrt((np.minimum(hourly.values, 0.0) ** 2).mean()))
+            if down_dev > 0:
+                sortino_hourly = float(hourly.mean() / down_dev)
+            elif hourly.mean() > 0:
+                sortino_hourly = float("inf")
     except Exception:  # noqa: BLE001 — нерегулярний індекс, не критично
         pass
 

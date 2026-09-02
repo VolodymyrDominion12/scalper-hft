@@ -676,3 +676,126 @@ class TestOrderSanitize:
         assert "submit_failed" in res
         assert len(fake.created) == 0, "ордер не мав дійти до create_order"
         assert "BTCUSDT" not in acc.positions
+
+
+# ── Дрібні фікси (раунд 4): telegram, mcp, metrics, exit-fee, erc, recorder ──
+
+
+class TestTelegramConfig:
+    def test_creds_read_via_settings(self, monkeypatch):
+        """telegram має читати .env через config (а не голий os.getenv)."""
+        import scalper_hft.live.telegram as tg
+        from scalper_hft.config import Settings
+
+        monkeypatch.setattr(tg, "get_settings", lambda: Settings(telegram_bot_token="tok", telegram_chat_id="123"))
+        assert tg._creds() == ("tok", "123")
+        monkeypatch.setattr(tg, "get_settings", lambda: Settings())
+        assert tg._creds() is None
+
+
+class TestMcpPaperStepGuard:
+    def test_paper_step_blocks_live(self, monkeypatch):
+        from types import SimpleNamespace
+
+        import scalper_hft.config as cfg
+        import scalper_hft.mcp_trading as mcp
+
+        monkeypatch.setattr(
+            cfg, "get_settings", lambda: SimpleNamespace(dry_run=False, position_pct=0.01, taker_fee=0.0, maker_fee=0.0)
+        )
+        with pytest.raises(RuntimeError, match="DRY_RUN=true"):
+            mcp._paper_step({})
+
+
+class TestMetricsMinor:
+    def test_cagr_not_exploding_on_short_window(self):
+        idx = pd.date_range("2024-01-01", periods=500, freq="1h")
+        eq = pd.Series((1.0 + 0.0005) ** np.arange(500) * 10_000.0, index=idx)
+        m = compute_metrics(eq)
+        # 500 годин ≈ 0.057 року: раніше CAGR був би ~×17 від total_return
+        assert m.cagr == pytest.approx(m.total_return, rel=1e-6)
+
+    def test_duplicate_index_sharpe_sane(self):
+        base = pd.date_range("2024-01-01", periods=40, freq="1min")
+        idx = pd.DatetimeIndex(sorted(list(base) + list(base[:5])))
+        rng = np.random.default_rng(0)
+        eq = pd.Series((1.0 + rng.normal(0.0001, 0.001, len(idx))).cumprod() * 10_000.0, index=idx)
+        m = compute_metrics(eq)
+        assert m.sharpe < 1_000, "дублікати індексу завищують Sharpe"
+
+
+class TestExitFeeInTradeRet:
+    def test_engine_round_trip_carries_both_fees(self):
+        """Flat close: ret угоди = entry fee + exit fee (раніше лише entry)."""
+        from scalper_hft.backtest.engine import _extract_trades
+
+        n = 40
+        idx = pd.date_range("2024-01-01", periods=n, freq="1min")
+        pos = pd.Series(0.0, index=idx)
+        pos.iloc[5:15] = 1.0  # вхід на барі 5, вихід на 15
+        ret = pd.Series(0.0, index=idx)
+        fees = pd.Series(0.0, index=idx)
+        fees.iloc[5] = 0.001  # entry fee
+        fees.iloc[15] = 0.001  # exit fee
+        close = pd.Series(100.0, index=idx)
+        tr = _extract_trades(pos, ret, fees, close)
+        assert len(tr) == 1
+        assert tr["ret"].iloc[0] == pytest.approx(-0.002)
+
+    def test_engine_flip_carries_both_sides(self):
+        """Flip ±1: кожна угода несе обидві сторони комісії (по 0.001)."""
+        from scalper_hft.backtest.engine import _extract_trades
+
+        n = 12
+        idx = pd.date_range("2024-01-01", periods=n, freq="1min")
+        pos = pd.Series(0.0, index=idx)
+        pos.iloc[1:] = np.where(np.arange(1, n) % 2 == 1, 1.0, -1.0)
+        ret = pd.Series(0.0, index=idx)
+        # fee за turnover: вхід 0→±1 = 0.001; flip ±1→∓1 = 0.002
+        fees = (pos - pos.shift(1)).abs().fillna(0.0) * 0.001
+        close = pd.Series(100.0, index=idx)
+        tr = _extract_trades(pos, ret, fees, close)
+        assert len(tr) >= 3
+        # кожна ЗАКРИТА угода несе entry-fee + exit-fee (0.002 при flat price);
+        # остання угода наприкінці серії ще відкрита — лише entry-fee (−0.001)
+        assert (tr["ret"].iloc[:-1] <= -0.0019).all(), tr["ret"].tolist()
+        assert tr["ret"].iloc[-1] == pytest.approx(-0.001)
+
+    def test_pairs_flat_exit_carries_exit_fee(self):
+        from scalper_hft.backtest.pairs import _extract_trades
+
+        n = 25
+        idx = pd.date_range("2024-01-01", periods=n, freq="1h")
+        pos = pd.Series(0.0, index=idx)
+        pos.iloc[5:15] = 1.0
+        turnover = (pos - pos.shift(1)).abs().fillna(pos.abs())
+        strat_ret = -turnover * 2 * 0.0005  # лише комісії (спред flat)
+        tr = _extract_trades(pos, strat_ret)
+        assert len(tr) == 1
+        assert tr["ret"].iloc[0] == pytest.approx(-0.002)  # entry+exit fee
+
+
+class TestErcDeadAsset:
+    def test_dead_asset_gets_zero_weight(self):
+        from scalper_hft.portfolio.erc import erc_weights
+
+        rng = np.random.default_rng(0)
+        n = 300
+        r = np.column_stack(
+            [rng.normal(0.001, 0.01, n), rng.normal(0.0005, 0.008, n), np.full(n, 0.002)]
+        )
+        w = erc_weights(r)
+        assert abs(w.sum() - 1.0) < 1e-6
+        assert w[2] == pytest.approx(0.0, abs=1e-12)
+        assert w[0] > 0 and w[1] > 0
+
+
+class TestRecorderEventTs:
+    def test_event_ts_prefers_server_time(self):
+        from scalper_hft.live.bookticker_recorder import _event_ts
+
+        ts = _event_ts({"E": 1_700_000_000_000, "b": "1", "B": "2", "a": "3", "A": "4"})
+        assert ts == pd.Timestamp("2023-11-14 22:13:20")
+        # fallback на now() без поля E
+        ts2 = _event_ts({"b": "1"})
+        assert abs((pd.Timestamp.now(tz="UTC").tz_localize(None) - ts2).total_seconds()) < 5

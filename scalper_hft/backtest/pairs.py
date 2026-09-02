@@ -210,6 +210,15 @@ def _leg_funding(actual_pos: pd.Series, funding: pd.DataFrame, common: pd.DataFr
 
 
 def _extract_trades(pos: pd.Series, strat_ret: pd.Series) -> pd.DataFrame:
+    """Угоди пари: вхід/вихід carry-позиції.
+
+    Exit-комісія: на барі закриття (pos → 0) turnover-комісія входить у
+    strat_ret[ts] (спред-PnL і funding там = 0, бо pos=0) — додаємо її до
+    ret закритої угоди. Раніше ця комісія губилась → per-trade ret був
+    завищений на ~одну сторону витрат (equity не страждала). Для прямого
+    flip (+→− без проміжного 0) весь flip-бар зараховується новій позиції —
+    задокументоване наближення.
+    """
     rows: list[dict] = []
     cur = 0.0
     entry_ts = None
@@ -217,8 +226,9 @@ def _extract_trades(pos: pd.Series, strat_ret: pd.Series) -> pd.DataFrame:
     for ts, p in pos.items():
         if p != cur:
             if cur != 0 and entry_ts is not None:
+                exit_extra = strat_ret.get(ts, 0.0) if p == 0 else 0.0
                 rows.append(
-                    {"entry_ts": entry_ts, "exit_ts": ts, "side": int(cur / abs(cur)) if cur else 0, "ret": cum}
+                    {"entry_ts": entry_ts, "exit_ts": ts, "side": int(cur / abs(cur)) if cur else 0, "ret": cum + exit_extra}
                 )
             entry_ts = ts if p != 0 else None
             cum = 0.0

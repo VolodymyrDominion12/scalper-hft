@@ -49,45 +49,64 @@ async def _record_symbol(
     url = _WS_URL.format(symbol.lower())
     logger.info("Підключення до %s на %d сек", url, duration_sec)
 
-    while time.monotonic() - start < duration_sec:
-        try:
-            async with websockets.connect(url, ping_interval=20) as ws:
-                while time.monotonic() - start < duration_sec:
-                    try:
-                        msg = await asyncio.wait_for(ws.recv(), timeout=10.0)
-                    except TimeoutError:
-                        logger.warning("Таймаут стріму — продовжую")
-                        continue
-                    except websockets.ConnectionClosed:
-                        logger.warning("Стрім закрито сервером — перепідключення")
-                        break
-                    import json
+    try:
+        while time.monotonic() - start < duration_sec:
+            try:
+                async with websockets.connect(url, ping_interval=20) as ws:
+                    while time.monotonic() - start < duration_sec:
+                        try:
+                            msg = await asyncio.wait_for(ws.recv(), timeout=10.0)
+                        except TimeoutError:
+                            logger.warning("Таймаут стріму — продовжую")
+                            continue
+                        except websockets.ConnectionClosed:
+                            logger.warning("Стрім закрито сервером — перепідключення")
+                            break
+                        import json
 
-                    data = json.loads(msg)
-                    rows.append(
-                        {
-                            "ts": pd.Timestamp.now(tz="UTC").tz_localize(None),
-                            "bid": float(data["b"]),
-                            "bid_qty": float(data["B"]),
-                            "ask": float(data["a"]),
-                            "ask_qty": float(data["A"]),
-                        }
-                    )
-                    if len(rows) >= flush_every:
-                        _flush(rows, out_path)
-                        written += len(rows)
-                        rows = []
-                        logger.info("bookTicker %s: %d записів", symbol, written)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Помилка рекордингу: %s — перепідключення", exc)
-        if time.monotonic() - start < duration_sec:
-            await asyncio.sleep(2.0)  # пауза перед реконектом
-
-    if rows:
-        _flush(rows, out_path)
-        written += len(rows)
+                        data = json.loads(msg)
+                        # ts = час ПОДІЇ від біржі (E), якщо є; інакше час прийому
+                        rows.append(
+                            {
+                                "ts": _event_ts(data),
+                                "bid": float(data["b"]),
+                                "bid_qty": float(data["B"]),
+                                "ask": float(data["a"]),
+                                "ask_qty": float(data["A"]),
+                            }
+                        )
+                        if len(rows) >= flush_every:
+                            _flush(rows, out_path)
+                            written += len(rows)
+                            rows = []
+                            logger.info("bookTicker %s: %d записів", symbol, written)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Помилка рекордингу: %s — перепідключення", exc)
+            if time.monotonic() - start < duration_sec:
+                await asyncio.sleep(2.0)  # пауза перед реконектом
+    finally:
+        # Ctrl+C/виключення: скидаємо буфер, щоб не втратити зібрані рядки
+        if rows:
+            _flush(rows, out_path)
+            written += len(rows)
     logger.info("Рекординг завершено: %d записів → %s", written, out_path)
     return written
+
+
+def _event_ts(data: dict) -> pd.Timestamp:
+    """Час події з повідомлення (E/T у мс) → naive UTC; fallback — час прийому.
+
+    Раніше скрізь штампувався час прийому (now()), що зміщувало таймстамп
+    на затримку мережі й псувало asof-вирівнювання з klines.
+    """
+    for key in ("E", "T"):
+        raw = data.get(key)
+        if raw is not None:
+            try:
+                return pd.Timestamp(int(raw), unit="ms", tz="UTC").tz_localize(None)
+            except (TypeError, ValueError):
+                continue
+    return pd.Timestamp.now(tz="UTC").tz_localize(None)
 
 
 def _flush(rows: list[dict], out_path: Path) -> None:
@@ -147,40 +166,46 @@ async def _record_depth(
     logger.info("Підключення до depth5 %s на %d сек", symbol, duration_sec)
 
     try:
-        async with websockets.connect(url, ping_interval=20) as ws:
-            while time.monotonic() - start < duration_sec:
-                try:
-                    msg = await asyncio.wait_for(ws.recv(), timeout=10.0)
-                except TimeoutError:
-                    continue
-                except websockets.ConnectionClosed:
-                    logger.warning("Стрім depth закрито — перепідключення")
-                    break
-                data = json.loads(msg)
-                # futures depth5 надсилає depthUpdate-формат (b/a), spot — bids/asks
-                bids_raw = data.get("bids") or data.get("b") or []
-                asks_raw = data.get("asks") or data.get("a") or []
-                bids = [(float(p), float(q)) for p, q in bids_raw][:5]
-                asks = [(float(p), float(q)) for p, q in asks_raw][:5]
-                row: dict = {"ts": pd.Timestamp.now(tz="UTC").tz_localize(None)}
-                for i, (px, q) in enumerate(bids):
-                    row[f"bid{i + 1}"] = px
-                    row[f"bid{i + 1}_qty"] = q
-                for i, (px, q) in enumerate(asks):
-                    row[f"ask{i + 1}"] = px
-                    row[f"ask{i + 1}_qty"] = q
-                rows.append(row)
-                if len(rows) >= flush_every:
-                    _flush(rows, out_path)
-                    written += len(rows)
-                    rows = []
-                    logger.info("depth5 %s: %d записів", symbol, written)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Помилка depth-рекордингу: %s", exc)
-
-    if rows:
-        _flush(rows, out_path)
-        written += len(rows)
+        # reconnect-цикл (як у _record_symbol): обрив стріму не завершує запис
+        while time.monotonic() - start < duration_sec:
+            try:
+                async with websockets.connect(url, ping_interval=20) as ws:
+                    while time.monotonic() - start < duration_sec:
+                        try:
+                            msg = await asyncio.wait_for(ws.recv(), timeout=10.0)
+                        except TimeoutError:
+                            continue
+                        except websockets.ConnectionClosed:
+                            logger.warning("Стрім depth закрито — перепідключення")
+                            break
+                        data = json.loads(msg)
+                        # futures depth5 надсилає depthUpdate-формат (b/a), spot — bids/asks
+                        bids_raw = data.get("bids") or data.get("b") or []
+                        asks_raw = data.get("asks") or data.get("a") or []
+                        bids = [(float(p), float(q)) for p, q in bids_raw][:5]
+                        asks = [(float(p), float(q)) for p, q in asks_raw][:5]
+                        row: dict = {"ts": _event_ts(data)}
+                        for i, (px, q) in enumerate(bids):
+                            row[f"bid{i + 1}"] = px
+                            row[f"bid{i + 1}_qty"] = q
+                        for i, (px, q) in enumerate(asks):
+                            row[f"ask{i + 1}"] = px
+                            row[f"ask{i + 1}_qty"] = q
+                        rows.append(row)
+                        if len(rows) >= flush_every:
+                            _flush(rows, out_path)
+                            written += len(rows)
+                            rows = []
+                            logger.info("depth5 %s: %d записів", symbol, written)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Помилка depth-рекордингу: %s — перепідключення", exc)
+            if time.monotonic() - start < duration_sec:
+                await asyncio.sleep(2.0)  # пауза перед реконектом
+    finally:
+        # Ctrl+C: скидаємо буфер, щоб не втратити зібрані рядки
+        if rows:
+            _flush(rows, out_path)
+            written += len(rows)
     logger.info("Depth-рекординг завершено: %d записів → %s", written, out_path)
     return written
 
