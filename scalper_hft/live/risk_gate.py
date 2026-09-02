@@ -60,7 +60,8 @@ def decide_entry(
 
 
 def pair_legs(pid: str) -> frozenset[str]:
-    return frozenset(part for part in pid.split("/") if part)
+    clean_pid = pid.rsplit(":", 1)[0] if ":" in pid else pid
+    return frozenset(part for part in clean_pid.split("/") if part)
 
 
 def pairs_share_leg(a: str, b: str) -> bool:

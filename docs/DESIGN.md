@@ -63,10 +63,11 @@ Research & Validation:
 1. `pairs_arb` — парний статистичний арбітраж на 1h барах (z-score log-ratio, maker post-only). **Єдиний валідований кандидат**.
 2. `sparse_basket` — кошиковий мульти-активний арбітраж на основі Lasso/PCA.
 3. `ml_strategy` — LightGBM з потрійним бар'єром (triple-barrier), meta-labeling та ймовірнісним bet-sizing.
-4. `ensemble` та `blend` — ансамблі з динамічними вагами (Hedge no-regret, voting, regime-gating).
-5. `bandit` — Exp3 Multi-Armed Bandit для адаптивного вибору моделей/інструментів.
-6. `hmm_reversion` — Mean Reversion, гейтований HMM-станом ринку.
-7. `mean_reversion`, `cvd_momentum`, `funding_carry`, `funding_arb`, `basis_reversion`, `ob_imbalance`, `market_maker` — досліджені та відхилені або законсервовані (див. [docs/STRATEGY_STATUS.md](STRATEGY_STATUS.md)).
+4. `ensemble` — ансамбль з динамічними вагами (Hedge no-regret, voting, regime-gating).
+5. `hmm_reversion` — Mean Reversion, гейтований HMM-станом ринку.
+6. `mean_reversion`, `cvd_momentum`, `funding_carry`, `funding_arb`, `basis_reversion`, `ob_imbalance`, `market_maker` — досліджені та відхилені або законсервовані (див. [docs/STRATEGY_STATUS.md](STRATEGY_STATUS.md)).
+
+*Примітка: `blend` та `bandit` — це алгоритми агрегації та утиліти, а не окремі підкласи `Strategy`.*
 
 ### 3.5. Live та ризик-контроль
 Paper/testnet за замовчуванням (`DRY_RUN=true`).

@@ -134,17 +134,15 @@ def estimate_impact_k_from_bars(df: pd.DataFrame, sigma_col: str | None = None) 
 def estimate_spread_from_bookticker(bt: pd.DataFrame) -> float:
     """Середній відносний спред з bookTicker (best bid/ask).
 
-    bt: DataFrame з колонками bid/ask (або bid_qty/ask_qty). Повертає
+    bt: DataFrame з колонками bid/ask. Повертає
     медіану (ask−bid)/mid — реалістичний slippage для maker-моделі.
     """
     if bt is None or bt.empty:
         return 0.0
-    bid_col = "bid" if "bid" in bt.columns else "bid_qty"
-    ask_col = "ask" if "ask" in bt.columns else "ask_qty"
-    if bid_col not in bt.columns or ask_col not in bt.columns:
+    if "bid" not in bt.columns or "ask" not in bt.columns:
         return 0.0
-    bid = bt[bid_col].astype(float)
-    ask = bt[ask_col].astype(float)
+    bid = bt["bid"].astype(float)
+    ask = bt["ask"].astype(float)
     mid = (bid + ask) / 2.0
     spread = ((ask - bid) / mid.replace(0, np.nan)).dropna()
     return float(spread.median()) if len(spread) else 0.0

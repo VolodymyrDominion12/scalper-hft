@@ -62,6 +62,9 @@ class WalkForwardResult:
 
 
 def _sharpe_from_equity(equity: pd.Series) -> float:
+    """Обчислення per-period Sharpe Ratio (без ануалізації).
+    Використовується для порівняння IS та OOS вікон однакового розміру.
+    """
     ret = equity.pct_change().dropna()
     if len(ret) < 2 or ret.std(ddof=0) == 0:
         return 0.0

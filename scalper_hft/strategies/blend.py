@@ -94,8 +94,10 @@ class HedgeBlend:
         loss = -np.log(np.clip(1.0 + r, 1e-3, 10.0))
         if self.eta is None:
             self._q += float(np.sum((loss - loss.mean()) ** 2))
-            self.eta = float(np.sqrt((8.0 / max(self._q, 1e-12)) * np.log(self.n)))
-        self._w = self._w * np.exp(-self.eta * loss)
+            current_eta = float(np.sqrt((8.0 / max(self._q, 1e-12)) * np.log(self.n)))
+        else:
+            current_eta = self.eta
+        self._w = self._w * np.exp(-current_eta * loss)
         if not np.all(np.isfinite(self._w)) or self._w.sum() <= 0:
             self._w = np.ones(self.n)  # аварійний скид до рівних ваг
         self._w = self._w / self._w.sum()

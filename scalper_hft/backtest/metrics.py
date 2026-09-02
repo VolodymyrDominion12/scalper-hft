@@ -80,12 +80,17 @@ def compute_metrics(
     years = max((equity.index[-1] - equity.index[0]).total_seconds() / (365 * 24 * 3600), 1e-9)
     cagr = (equity.iloc[-1] / equity.iloc[0]) ** (1 / years) - 1.0
 
-    ann_vol = ret.std(ddof=0) * math.sqrt(_TRADING_DAYS * 24 * 60) if len(ret) else 0.0
-    sharpe = (ret.mean() / ret.std(ddof=0) * math.sqrt(_TRADING_DAYS * 24 * 60)) if ret.std(ddof=0) > 0 else 0.0
+    # Auto-detect timeframe to scale properly
+    # Calculate median time delta between bars in seconds
+    delta_s = equity.index.to_series().diff().median().total_seconds()
+    bars_per_year = (365 * 24 * 3600) / max(delta_s, 1.0) if pd.notna(delta_s) else _TRADING_DAYS * 24 * 60
+    
+    ann_vol = ret.std(ddof=0) * math.sqrt(bars_per_year) if len(ret) else 0.0
+    sharpe = (ret.mean() / ret.std(ddof=0) * math.sqrt(bars_per_year)) if ret.std(ddof=0) > 0 else 0.0
 
     downside = ret[ret < 0]
     sortino = (
-        (ret.mean() / downside.std(ddof=0) * math.sqrt(_TRADING_DAYS * 24 * 60))
+        (ret.mean() / downside.std(ddof=0) * math.sqrt(bars_per_year))
         if len(downside) > 1 and downside.std(ddof=0) > 0
         else 0.0
     )
@@ -133,13 +138,13 @@ def compute_metrics(
     except Exception:  # noqa: BLE001 — нерегулярний індекс, не критично
         pass
 
-    # імовірність розорення (спрощена формула для сталої частки ризику f):
-    # P(ruin) ≈ ((1−b)/(1+b))^{D/f}, де b — перевага (edge), D — початковий капітал
+    # імовірність розорення за спрощеною формулою Келлі P(ruin) = exp(-2 * edge * N)
+    # де N = capital / stake. Для фіксованого f = 0.01, N = 100
     edge = avg_trade_return
     f = 0.01  # частка капіталу на угоду (конфігурується окремо)
     if edge > 0:
-        b = edge / f
-        risk_of_ruin = min(((1 - b) / (1 + b)) ** (1.0 / f), 1.0) if b < 1 else 0.0
+        # Експоненційне наближення (більш реалістичне для трейдингу)
+        risk_of_ruin = math.exp(-2.0 * edge * (1.0 / f))
     else:
         risk_of_ruin = 1.0
 
