@@ -200,6 +200,9 @@ class LiveTrader:
         # C2: live maker-ордери, що ще не заповнились (clientOrderId → PendingOrder)
         self.pending_orders: dict[str, PendingOrder] = {}
         self._last_market_fill_price: float | None = None
+        # M4: live-базис equity з біржі (замість фіктивного депозиту)
+        self._live_equity_seeded = False
+        self.last_live_equity: float | None = None
 
     # ── сигнал ───────────────────────────────────────────────────────────────
     def compute_signal(self, df: pd.DataFrame, now: pd.Timestamp | None = None) -> int:
@@ -446,10 +449,27 @@ class LiveTrader:
         Paper (dry_run) — миттєвий no-op філ. Live market — філ у відповіді.
         Live maker (limit post_only) — ордер реєструється у `pending_orders`;
         локальна позиція з'явиться лише після підтвердженого філа.
+
+        M5: перед відправкою live-ордера розмір/ціна округлюються до кроків
+        біржі (LOT_SIZE/tick) і валідуються (minQty/maxQty/MIN_NOTIONAL) —
+        fail-closed: невалідний ордер не летить на біржу.
         """
         if self.settings.dry_run:
             return True, "filled"
         require_live_credentials(self.settings)
+        # M5: нормалізація під фільтри біржі (BinanceClient має sanitize_order;
+        # тестові/мінімальні клієнти без нього — пропускають нормалізацію).
+        sanitize = getattr(self.client, "sanitize_order", None)
+        if sanitize is not None:
+            try:
+                qty, px, err = sanitize(self.symbol, side, size, price)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("sanitize_order %s: %s", self.symbol, exc)
+                return False, "failed"
+            if err is not None:
+                logger.error("Ордер відхилено фільтрами біржі: %s %s %s → %s", side, self.symbol, size, err)
+                return False, "failed"
+            size, price = qty, px if px is not None else price
         params: dict = {}
         if reduce_only:
             params["reduceOnly"] = True
@@ -581,6 +601,41 @@ class LiveTrader:
         else:
             if self.symbol in self.account.positions:
                 self.account.close_position(self.symbol, price, ts, is_maker=True)
+
+    # ── M4: live equity з біржі ──────────────────────────────────────────────
+
+    def sync_live_equity(self, now: pd.Timestamp | None = None) -> float | None:
+        """Live: оновити локальний cash з РЕАЛЬНОГО equity біржі.
+
+        Без цього sizing/ризик-гейти рахуються від фіктивного
+        PaperAccount(initial_capital = position_pct × 100_000) і перша ж
+        розбіжність з реальним балансом ламає розмір позиції. Тут cash
+        ребейзиться так, що equity ≈ реальний баланс біржі (wallet + UPNL),
+        а day_start_equity фіксується від реального equity при першому sync.
+
+        Paper (dry_run) або клієнт без fetch_usdt_equity — no-op (None).
+        """
+        if self.settings.dry_run:
+            return None
+        fetch = getattr(self.client, "fetch_usdt_equity", None)
+        if fetch is None:
+            return None
+        try:
+            equity = float(fetch())
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("sync_live_equity: не вдалося отримати баланс: %s", exc)
+            return None
+        if not np.isfinite(equity) or equity <= 0:
+            return None
+        # локальний кеш: equity = cash + unrealized(локальні позиції)
+        # → cash = реальний equity − локальний unrealized
+        self.account.cash = float(equity) - self.account.unrealized_pnl()
+        if not self._live_equity_seeded:
+            self.account.day_start_equity = float(equity)
+            self._live_equity_seeded = True
+        self.last_live_equity = float(equity)
+        logger.info("Live equity синхронізовано: %.2f (day_start %.2f)", equity, self.account.day_start_equity)
+        return float(equity)
 
     def _open_instant(self, side: str, size: float, price: float, ts: pd.Timestamp) -> bool:
         """Paper/market шлях: submit + миттєвий філ (як було до C2)."""

@@ -75,6 +75,52 @@ class BinanceClient:
         limits = m.get("limits", {}).get("cost", {})
         return float(limits.get("min", 5.0) or 5.0)
 
+    # ── M5: точність/ліміти біржі перед live-ордером ─────────────────────────
+
+    def sanitize_order(
+        self,
+        symbol: str,
+        side: str,
+        amount: float,
+        price: float | None = None,
+    ) -> tuple[float, float | None, str | None]:
+        """Округлити об'єм/ціну до кроків біржі та валідувати ліміти.
+
+        Повертає (qty, price, error): qty — кратне LOT_SIZE, price — кратне
+        tick (None для market), error — причина відхилення, якщо ордер не
+        пройде фільтри (minQty/maxQty/MIN_NOTIONAL). Fail-closed: trader не
+        відправляє ордер, доки error is not None.
+        """
+        m = self.market(symbol)
+        try:
+            qty = float(self.exchange.amount_to_precision(symbol, amount))
+        except Exception:  # noqa: BLE001
+            qty = float(amount)
+        px: float | None = None
+        if price is not None:
+            try:
+                px = float(self.exchange.price_to_precision(symbol, price))
+            except Exception:  # noqa: BLE001
+                px = float(price)
+
+        limits = m.get("limits", {}) or {}
+        amt = limits.get("amount", {}) or {}
+        min_qty = float(amt.get("min") or 0.0)
+        max_qty = float(amt.get("max") or 0.0)
+        min_notional = float((limits.get("cost", {}) or {}).get("min") or 0.0)
+
+        err: str | None = None
+        if min_qty > 0 and qty < min_qty:
+            err = f"qty {qty:.8f} < minQty {min_qty}"
+        elif max_qty > 0 and qty > max_qty:
+            err = f"qty {qty:.8f} > maxQty {max_qty}"
+        else:
+            ref_px = px if px is not None else price
+            notional = qty * (ref_px or 0.0)
+            if min_notional > 0 and notional > 0 and notional < min_notional:
+                err = f"notional {notional:.2f} < minNotional {min_notional}"
+        return qty, px, err
+
     # ── дані ─────────────────────────────────────────────────────────────────
     def fetch_klines(self, symbol: str, timeframe: str, since_ms: int, limit: int = 1000) -> list[list[Any]]:
         """Один батч історичних свічок. Повертає сирі списки (у форматі ccxt)."""
@@ -124,6 +170,44 @@ class BinanceClient:
 
     def fetch_balance(self) -> dict[str, Any]:
         return self.exchange.fetch_balance()
+
+    def fetch_usdt_equity(self) -> float:
+        """Реальний equity USDT-M (wallet balance + unrealized PnL).
+
+        Використовується live-шаром для sizing/ризик-гейтів ЗАМІСТЬ
+        фіктивного PaperAccount (M4). ccxt fetch_balance повертає
+        {'total': {'USDT': wallet}, 'USDT': {...}, 'info': {...}}; для
+        Binance futures unrealized PnL лежить в info.totalUnrealizedProfit.
+        """
+        bal = self.exchange.fetch_balance()
+        info = bal.get("info") or {}
+        wallet: float | None = None
+        raw_wallet = info.get("totalWalletBalance")
+        if raw_wallet is not None:
+            try:
+                wallet = float(raw_wallet)
+            except (TypeError, ValueError):
+                wallet = None
+        if wallet is None:
+            # fallback: ccxt total
+            total_map = bal.get("total") or {}
+            usdt_total = total_map.get("USDT")
+            if usdt_total is None:
+                usdt_ent = bal.get("USDT") or {}
+                usdt_total = usdt_ent.get("total")
+            if usdt_total is not None:
+                try:
+                    wallet = float(usdt_total)
+                except (TypeError, ValueError):
+                    wallet = 0.0
+            else:
+                wallet = 0.0
+        unrealized = info.get("totalUnrealizedProfit")
+        try:
+            upnl = float(unrealized) if unrealized is not None else 0.0
+        except (TypeError, ValueError):
+            upnl = 0.0
+        return wallet + upnl
 
     def fetch_positions(self, symbols: list[str] | None = None) -> list[dict[str, Any]]:
         """Відкриті позиції USDT-M (для звірки з локальним рахунком)."""
