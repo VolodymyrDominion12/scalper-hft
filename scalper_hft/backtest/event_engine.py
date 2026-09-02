@@ -86,6 +86,10 @@ def run_event_backtest(
     def _pnl(entry_px: float, exit_px: float, units: float) -> float:
         return (exit_px - entry_px) / entry_px * notional_per_unit * units if entry_px else 0.0
 
+    def _short_pnl(entry_px: float, exit_px: float, units: float) -> float:
+        """PnL закриття шорта: (entry − exit)/entry (виграш, коли викупили дешевше)."""
+        return (entry_px - exit_px) / entry_px * notional_per_unit * units if entry_px else 0.0
+
     def _open_trade(side: int, ts: pd.Timestamp, price: float) -> None:
         trades.append({"entry_ts": ts, "exit_ts": ts, "side": side, "ret": 0.0, "entry_price": price})
 
