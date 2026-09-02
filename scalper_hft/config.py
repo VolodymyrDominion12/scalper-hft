@@ -8,6 +8,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from scalper_hft.symbols import CANONICAL_SYMBOLS
+
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(_PROJECT_ROOT / ".env")
 
@@ -66,16 +68,11 @@ class Settings:
 
     # Дані
     data_dir: Path = field(default_factory=lambda: Path(os.getenv("DATA_DIR", "./data")))
-    # Канонічний універсум за замовчуванням (співпадає з DEFAULT_SYMBOLS у .env).
+    # Канонічний універсум за замовчуванням (scalper_hft/symbols.py); у .env —
+    # DEFAULT_SYMBOLS може перевизначити його.
     default_symbols: tuple[str, ...] = field(
         default_factory=lambda: tuple(
-            s.strip()
-            for s in os.getenv(
-                "DEFAULT_SYMBOLS",
-                "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,LINKUSDT,"
-                "ADAUSDT,DOGEUSDT,AVAXUSDT,NEARUSDT,DOTUSDT,ATOMUSDT,UNIUSDT,LTCUSDT,AAVEUSDT",
-            ).split(",")
-            if s.strip()
+            s.strip() for s in os.getenv("DEFAULT_SYMBOLS", ",".join(CANONICAL_SYMBOLS)).split(",") if s.strip()
         )
     )
     default_interval: str = field(default_factory=lambda: os.getenv("DEFAULT_INTERVAL", "1m"))
