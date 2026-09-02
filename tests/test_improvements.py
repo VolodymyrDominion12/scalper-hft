@@ -96,6 +96,45 @@ class TestCrossMomentum:
         s = get_strategy("cross_momentum")
         assert "lookback" in s.param_space
 
+    def test_engine_lag_is_exactly_one_bar(self):
+        """Сигнал на t → позиція рушія на t+1 (без подвійного shift у стратегії)."""
+        from scalper_hft.backtest.engine import run_backtest
+        from scalper_hft.backtest.execution import CostModel
+        from scalper_hft.strategies import get_strategy
+
+        n = 80
+        idx = pd.date_range("2025-01-01", periods=n, freq="1h")
+        a = pd.Series(100.0 + np.arange(n, dtype=float), index=idx)
+        b = pd.Series(np.full(n, 100.0), index=idx)
+        c = pd.Series(100.0 - np.arange(n, dtype=float) * 0.1, index=idx)
+        df = pd.DataFrame(
+            {
+                "AAA_close": a,
+                "BBB_close": b,
+                "CCC_close": c,
+                "open": a,
+                "high": a * 1.001,
+                "low": a * 0.999,
+                "close": a,
+                "volume": 1.0,
+            },
+            index=idx,
+        )
+        s = get_strategy("cross_momentum", lookback=5, top_pct=0.2, signal_smooth=1)
+        sig = s.generate_signals(df)
+        nz = sig[sig != 0]
+        assert len(nz) > 0
+        first_sig_i = int(df.index.get_loc(nz.index[0]))
+        res = run_backtest(
+            df,
+            s,
+            cost=CostModel(maker_fee=0.0, taker_fee=0.0, slippage_frac=0.0),
+            is_maker=False,
+            position_pct=1.0,
+        )
+        pos_i = int(np.argmax(res.positions.abs().to_numpy() > 0))
+        assert pos_i == first_sig_i + 1
+
 
 # ── PairsArb breakeven gate ────────────────────────────────────────────────────
 

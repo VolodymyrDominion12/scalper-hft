@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 from scalper_hft.backtest.execution import CostModel
-from scalper_hft.config import get_settings
+from scalper_hft.config import get_settings, require_live_credentials
 from scalper_hft.data.binance_client import BinanceClient
 from scalper_hft.live.account import PaperAccount
 from scalper_hft.live.risk_gate import CooldownState, decide_entry
@@ -135,6 +135,7 @@ class LiveTrader:
         hmm_threshold: float = 0.5,
     ) -> None:
         self.settings = get_settings()
+        require_live_credentials(self.settings)
         self.strategy = strategy
         self.symbol = symbol
         self.interval = interval or "1m"
@@ -246,8 +247,9 @@ class LiveTrader:
             calm = int(np.argmin(model.covars_[:, 2]))  # стан з найменшою vol
             post = model.filtered_proba(obs.values)
             return bool(post[-1, calm] < self.hmm_threshold)
-        except Exception:  # noqa: BLE001
-            return False
+        except Exception:
+            logger.exception("HMM-гейт: помилка моделі — блокуємо нові входи")
+            return True
 
     def maybe_roll_day(self, now: pd.Timestamp | None = None) -> bool:
         """Скинути денний ліміт збитків при зміні UTC-доби.
@@ -339,6 +341,7 @@ class LiveTrader:
         """
         if self.settings.dry_run:
             return True
+        require_live_credentials(self.settings)
         params: dict = {}
         if reduce_only:
             params["reduceOnly"] = True
@@ -443,6 +446,9 @@ def execute_signal(
 
 
 def run_trader_once(trader: LiveTrader, df: pd.DataFrame, now: pd.Timestamp | None = None) -> str:
-    """Один крок циклу: сигнал на останньому закритому барі → виконання за close."""
+    """Один крок циклу: звірка (live) → сигнал на закритому барі → виконання за close."""
+    from scalper_hft.live.reconcile import reconcile_exchange_state
+
+    reconcile_exchange_state(trader.account, trader.client, dry_run=trader.settings.dry_run)
     signal = trader.compute_signal(df, now=now)
     return execute_signal(trader, signal, df, now=now)

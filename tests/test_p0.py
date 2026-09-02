@@ -9,7 +9,7 @@ import pandas as pd
 from scalper_hft.backtest.engine import run_backtest
 from scalper_hft.backtest.execution import CostModel
 from scalper_hft.live.account import PaperAccount
-from scalper_hft.live.trader import LiveTrader, execute_signal
+from scalper_hft.live.trader import LiveTrader, execute_signal, run_trader_once
 from scalper_hft.ml.labeling import add_vertical_barrier, label_from_ohlcv
 
 
@@ -17,6 +17,7 @@ class _AlwaysLong:
     name = "always_long"
     param_space: dict = {}
     needs_trades = False
+    needs_funding = False
 
     def __init__(self, **kwargs) -> None:
         pass
@@ -139,6 +140,8 @@ def test_live_reject_does_not_open_local_position() -> None:
         max_open_positions=1,
         daily_loss_limit=0.03,
         max_consecutive_losses=3,
+        binance_api_key="test-key",
+        binance_api_secret="test-secret",
     )
     result = execute_signal(trader, 1, df, now=idx[-1] + pd.Timedelta(seconds=30))
     assert "submit_failed" in result
@@ -158,3 +161,142 @@ def test_maybe_roll_day_resets_daily_loss() -> None:
     assert trader.maybe_roll_day(day2) is True
     assert acc.day_start_equity == acc.equity
     assert acc.consecutive_losses == 0
+
+
+def test_require_live_credentials_paper_ok() -> None:
+    from scalper_hft.config import require_live_credentials
+
+    require_live_credentials(SimpleNamespace(dry_run=True, binance_api_key="", binance_api_secret=""))
+
+
+def test_require_live_credentials_live_empty_keys() -> None:
+    from scalper_hft.config import require_live_credentials
+
+    try:
+        require_live_credentials(SimpleNamespace(dry_run=False, binance_api_key="", binance_api_secret=""))
+    except RuntimeError as exc:
+        assert "BINANCE_API_KEY" in str(exc)
+        assert "your_" not in str(exc).lower()
+        return
+    raise AssertionError("очікували RuntimeError")
+
+
+def test_live_trader_init_without_keys_raises(monkeypatch) -> None:
+    from scalper_hft.live import trader as tr
+
+    monkeypatch.setattr(
+        tr,
+        "get_settings",
+        lambda: SimpleNamespace(
+            dry_run=False,
+            binance_api_key="",
+            binance_api_secret="",
+            position_pct=0.01,
+            taker_fee=0.0,
+            maker_fee=0.0,
+            exchange="binance-testnet",
+            slippage_frac=0.0,
+        ),
+    )
+    try:
+        LiveTrader(_AlwaysLong(), "BTCUSDT", "1m", account=PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0))
+    except RuntimeError as exc:
+        assert "DRY_RUN" in str(exc)
+        return
+    raise AssertionError("очікували RuntimeError")
+
+
+def test_hmm_blocked_fail_closed_on_exception(monkeypatch) -> None:
+    trader = LiveTrader(_AlwaysLong(), "BTCUSDT", "1m", account=PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0))
+    trader.hmm_block = True
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("hmm fit failed")
+
+    monkeypatch.setattr("scalper_hft.features.hmm_regime.GaussianHMM", _boom)
+    df = _ohlc(80)
+    assert trader.hmm_blocked(df) is True
+
+
+class _FetchClient:
+    def __init__(self, rows: list) -> None:
+        self.rows = rows
+        self.n = 0
+
+    def fetch_positions(self, symbols: list | None = None) -> list:
+        self.n += 1
+        return self.rows
+
+    def create_order(self, *args: object, **kwargs: object) -> dict:
+        return {}
+
+
+def test_run_trader_once_paper_skips_fetch() -> None:
+    idx = pd.date_range("2026-08-28 10:00", periods=80, freq="1min")
+    df = _ohlc(80)
+    df.index = idx
+    client = _FetchClient([])
+    acc = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
+    trader = LiveTrader(_AlwaysLong(), "BTCUSDT", "1m", account=acc, client=client)
+    trader.settings = SimpleNamespace(
+        dry_run=True,
+        maker_execution=True,
+        position_pct=0.01,
+        max_open_positions=1,
+        daily_loss_limit=0.03,
+        max_consecutive_losses=3,
+        binance_api_key="",
+        binance_api_secret="",
+    )
+    run_trader_once(trader, df, now=idx[-1] + pd.Timedelta(seconds=30))
+    assert client.n == 0
+
+
+def test_run_trader_once_live_drift_raises() -> None:
+    from scalper_hft.live.reconcile import KillSwitch
+
+    idx = pd.date_range("2026-08-28 10:00", periods=80, freq="1min")
+    df = _ohlc(80)
+    df.index = idx
+    acc = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
+    acc.open_position("BTCUSDT", "long", 1.0, 100.0, idx[0])
+    client = _FetchClient([])
+    trader = LiveTrader(_AlwaysLong(), "BTCUSDT", "1m", account=acc, client=client)
+    trader.settings = SimpleNamespace(
+        dry_run=False,
+        maker_execution=True,
+        position_pct=0.01,
+        max_open_positions=1,
+        daily_loss_limit=0.03,
+        max_consecutive_losses=3,
+        binance_api_key="test-key",
+        binance_api_secret="test-secret",
+    )
+    try:
+        run_trader_once(trader, df, now=idx[-1] + pd.Timedelta(seconds=30))
+    except KillSwitch:
+        assert client.n == 1
+        return
+    raise AssertionError("очікували KillSwitch")
+
+
+def test_run_trader_once_live_match_continues() -> None:
+    idx = pd.date_range("2026-08-28 10:00", periods=80, freq="1min")
+    df = _ohlc(80)
+    df.index = idx
+    acc = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
+    client = _FetchClient([])
+    trader = LiveTrader(_AlwaysLong(), "BTCUSDT", "1m", account=acc, client=client)
+    trader.settings = SimpleNamespace(
+        dry_run=False,
+        maker_execution=True,
+        position_pct=0.01,
+        max_open_positions=1,
+        daily_loss_limit=0.03,
+        max_consecutive_losses=3,
+        binance_api_key="test-key",
+        binance_api_secret="test-secret",
+    )
+    result = run_trader_once(trader, df, now=idx[-1] + pd.Timedelta(seconds=30))
+    assert client.n == 1
+    assert isinstance(result, str)

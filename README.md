@@ -12,12 +12,15 @@ scalper_hft/
 ├── data/        Binance klines / aggTrades / funding → кеш: parquet або PostgreSQL (ccxt)
 │                store.py (бекенди) · resample.py (1m → 5m/15m/1h/...) · access.py (ensure_klines)
 ├── features/    RSI, EMA, BB, ATR, VWAP, волатильність + CVD, OB-imbalance, spread
-├── strategies/  mean_reversion · cvd_momentum · ob_imbalance · market_maker (експерим.)
+├── strategies/  pairs_arb (валідований) · mean_reversion · cvd_momentum · ob_imbalance
+│                · market_maker · funding_* · ml_strategy · ensemble · hmm_reversion
+│                · sparse_basket · cross_momentum · basis_reversion
+├── portfolio/   ERC, risk budget (модулі; risk budget ще не в live-циклі)
 ├── backtest/    векторизований рушій + подієвий (maker) + метрики + CostModel
 ├── validation/  walk-forward · purged CV · Deflated Sharpe + PBO · sensitivity · Optuna · sweep
 ├── ml/          LightGBM walk-forward класифікатор напрямку (FreqAI-стиль)
-├── live/        paper/testnet/live трейдер з ризик-контролем
-└── cli.py       CLI: download / backtest / walkforward / optimize / overfit / ml / paper / report / sweep
+├── live/        paper/testnet/live трейдер, reconciliation, pairs runner
+└── cli.py       35 команд: download / backtest / pairs / paper-run-pairs / overfit / …
 ```
 
 ## Кеш даних: parquet або PostgreSQL у Docker
@@ -28,10 +31,10 @@ scalper_hft/
 - `DATA_BACKEND=postgres` — **PostgreSQL у Docker** (зручно, коли інструментів багато):
 
 ```bash
-docker compose up -d postgres          # піднімає scalper_postgres:16 на порту 5433
+docker compose up -d postgres          # піднімає scalper_postgres:16 на порту 5436
 # у .env:
 #   DATA_BACKEND=postgres
-#   POSTGRES_PORT=5433                  # (на цій машині 5432/5433 зайняті → 5440)
+#   POSTGRES_PORT=5436                  # 5432/5433/5434 на цій машині зайняті
 cp .env.example .env
 ```
 
@@ -94,7 +97,6 @@ uv venv .venv && uv pip install -e ".[optim,ml,dev]"
 # 4. бектест
 .venv/bin/python -m scalper_hft.cli backtest --strategy mean_reversion --symbol BTCUSDT --interval 1m --days 30
 
-```bash
 # 5. повний аудит на перенавчання (WF + sensitivity + Deflated Sharpe)
 .venv/bin/python -m scalper_hft.cli overfit --strategy mean_reversion --symbol BTCUSDT --interval 5m --days 30
 
@@ -129,11 +131,22 @@ uv venv .venv && uv pip install -e ".[optim,ml,dev]"
 | `capacity` | **capacity-тест**: Sharpe при масштабуванні позицій (share of wallet) |
 | `survival` | **Kaplan–Meier**: медіанний час утримання позиції (+ за бінами фічі) |
 | `mcp` | **MCP-сервер для трейдінгу** (stdio, JSON-RPC) — бектест/аналіз як інструменти для AI-асистента |
+| `ml-opt` | оптимізація гіперпараметрів ML (AFML) |
+| `pairs` | статистичний арбітраж двох ніг перпів (бектест / walk-forward) |
+| `pairs-portfolio` | портфель валідованих пар; `--method erc` (Equal Risk Contribution), `--turnover-rate` |
 | `paper` | один крок paper-торгівлі на останньому барі |
 | `paper-run` | **циклічний paper-прогін** (N кроків, збереження equity/угод у `results/`) |
 | `paper-replay` | відтворення історії через risk-трейдера (валiдація risk-шару) |
+| `paper-run-pairs` | paper pairs (maker, 2 ноги) або `--portfolio` |
+| `paper-replay-pairs` | історичний paper pairs з моделлю unfilled |
+| `paper-audit` | tracking error paper SQLite vs бектест + MAE/MFE forensics |
+| `experiments` | каталог val→OOS експериментів (`sparse_basket` / `ml_strategy`) |
+| `cfi` | Clustered Feature Importance (AFML Ch.8.5) |
+| `time-decay` | Sharpe при лагу входу 0..N барів |
+| `quintile` | квінтилі z-score спреду (пари) |
+| `coint-scan` | скан коінтеграції символів |
+| `hedge-ratio` | OOS порівняння 1:1 vs OLS/Johansen hedge |
 | `arb` | **delta-neutral funding arb** (перп+спот): бектест + walk-forward, `--maker` |
-| `pairs-portfolio` | портфель валідованих пар; `--method erc` (Equal Risk Contribution), `--turnover-rate` |
 | `report` | повний markdown-звіт у `docs/reports/` |
 | `record-bookticker` | запис best bid/ask (WS) у parquet — для OB-стратегій (`--depth` — 5 рівнів) |
 
@@ -147,7 +160,8 @@ uv pip install -e ".[dashboard]"
 - **Моніторинг** — кеш даних по символах, paper pairs (SQLite), paper-run CSV;
 - **Бектест** — запуск бектесту, інтерактивний графік угод (свічки +
   індикатори + точки входу/виходу + SL/TP, **клік по маркеру → деталі
-  угоди**), таблиця угод, Deflated Sharpe, діагностика (cohort/stress/capacity).
+  угоди**), таблиця угод, Deflated Sharpe, діагностика (cohort/stress/capacity);
+- **Дослідження** — sweep, filter attribution, порівняння equity, MAE/MFE, heatmap.
 
 ## Візуалізація бектестів (`scalper_hft/visualization/`)
 
@@ -213,7 +227,7 @@ Round-trip taker ≈ **0.10%** ноціоналу — це ~10 повних уг
 ## Тести
 
 ```bash
-uv run pytest tests/ -q   # 238 тестів у 15 тестових сюїтах
+uv run pytest tests/ -q   # 349 passed, 3 skipped (Postgres без TEST_POSTGRES_DSN); 23 файли
 ```
 
 ## Аудит стратегій (90 днів 1m-даних, комісії + slippage)

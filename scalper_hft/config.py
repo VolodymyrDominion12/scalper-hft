@@ -68,7 +68,7 @@ class Settings:
     data_dir: Path = field(default_factory=lambda: Path(os.getenv("DATA_DIR", "./data")))
     default_symbols: tuple[str, ...] = field(
         default_factory=lambda: tuple(
-            s.strip() for s in os.getenv("DEFAULT_SYMBOLS", "BTCUSDT,ETHUSDT,SOLUSDT").split(",") if s.strip()
+            s.strip() for s in os.getenv("DEFAULT_SYMBOLS", "BTCUSDT,ETHUSDT,XRPUSDT,LINKUSDT").split(",") if s.strip()
         )
     )
     default_interval: str = field(default_factory=lambda: os.getenv("DEFAULT_INTERVAL", "1m"))
@@ -77,7 +77,7 @@ class Settings:
     # "postgres" (PostgreSQL у Docker — зручно для багатьох символів/таймфреймів).
     data_backend: str = field(default_factory=lambda: os.getenv("DATA_BACKEND", "parquet").strip().lower())
     postgres_host: str = field(default_factory=lambda: os.getenv("POSTGRES_HOST", "localhost"))
-    postgres_port: int = field(default_factory=lambda: _env_int("POSTGRES_PORT", 5433))
+    postgres_port: int = field(default_factory=lambda: _env_int("POSTGRES_PORT", 5436))
     postgres_db: str = field(default_factory=lambda: os.getenv("POSTGRES_DB", "scalper"))
     postgres_user: str = field(default_factory=lambda: os.getenv("POSTGRES_USER", "scalper"))
     postgres_password: str = field(default_factory=lambda: os.getenv("POSTGRES_PASSWORD", "scalper"))
@@ -111,6 +111,19 @@ class Settings:
 
 
 _settings: Settings | None = None
+
+
+def require_live_credentials(settings: Settings) -> None:
+    """Fail-closed: live без ключів не стартує. Paper (dry_run) — без перевірки.
+
+    У повідомленні немає значень ключів.
+    """
+    if settings.dry_run:
+        return
+    key = (settings.binance_api_key or "").strip()
+    secret = (settings.binance_api_secret or "").strip()
+    if not key or not secret:
+        raise RuntimeError("Live режим (DRY_RUN=false) потребує BINANCE_API_KEY і BINANCE_API_SECRET")
 
 
 def get_settings() -> Settings:

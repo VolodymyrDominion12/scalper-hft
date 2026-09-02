@@ -7,10 +7,12 @@
     - Низька кореляція: pairs_arb = mean-reversion, cross-momentum = trend
     - Диверсифікація альфи без додаткового ринкового ризику (long/short)
 
-Обмеження (single-symbol CLI):
+Обмеження (single-symbol CLI / векторизований рушій):
     df повинен містити колонку 'close' або кілька колонок '{symbol}_close'.
-    При одному символі стратегія повертає сигнал за time-series momentum
-    (порівняно з rolling median cross-section).
+    При одному символі — time-series momentum (rolling percentile).
+    При кількох '{sym}_close' — ранг по крос-секції, але повертається 1D-сигнал
+    лише для першої колонки (портфельний long/short рушій окремий).
+    Лаг виконання (бар t+1) робить рушій бектесту — стратегія не shift-ить сигнал.
 
 Використання:
     uv run python -m scalper_hft.cli backtest --strategy cross_momentum --symbol BTCUSDT --interval 1h --days 90
@@ -28,7 +30,8 @@ class CrossMomentum(Strategy):
     """Cross-sectional momentum: long top performers, short bottom.
 
     У single-symbol режимі порівнює symbol з rolling percentile (time-series proxy).
-    У multi-symbol режимі (df містить '{sym}_close' колонки) ранжує всі symbols.
+    У multi-symbol режимі (df містить '{sym}_close' колонки) ранжує всі symbols
+    і повертає сигнал першого символу — не повний портфель.
     """
 
     name = "cross_momentum"
@@ -56,8 +59,8 @@ class CrossMomentum(Strategy):
     ) -> pd.Series:
         """Генерує сигнал cross-sectional momentum.
 
-        Якщо df має >= 3 колонок '{sym}_close' — справжній cross-sectional режим.
-        Інакше — time-series momentum (одна ціна).
+        Якщо df має >= 3 колонок '{sym}_close' — ранжування крос-секції
+        (1D-сигнал першого символу). Інакше — time-series momentum.
         """
         lookback = int(self.get("lookback", 20))
         top_pct = float(self.get("top_pct", 0.2))
@@ -72,14 +75,17 @@ class CrossMomentum(Strategy):
 
     @staticmethod
     def _cross_sectional(prices: pd.DataFrame, lookback: int, top_pct: float, smooth: int) -> pd.Series:
-        """Справжній cross-sectional: ранжуємо symbols за returns."""
+        """Ранжуємо symbols за returns; 1D-сигнал = перша колонка (не портфель).
+
+        Рушій бектесту сам робить lag-1 — тут сигнал на закритті бару t.
+        """
         ret = prices.pct_change(lookback)
         ranks = ret.rank(axis=1, pct=True)
         sig_matrix = np.where(ranks.values >= 1.0 - top_pct, 1.0, np.where(ranks.values <= top_pct, -1.0, 0.0))
         first = pd.Series(sig_matrix[:, 0], index=prices.index, dtype=float)
         if smooth > 1:
             first = first.ewm(span=smooth, adjust=False).mean().round()
-        return first.fillna(0.0).shift(1).fillna(0.0).clip(-1, 1).astype(int)
+        return first.fillna(0.0).clip(-1, 1).astype(int)
 
     @staticmethod
     def _time_series_momentum(close: pd.Series, lookback: int, top_pct: float, smooth: int) -> pd.Series:
@@ -93,7 +99,7 @@ class CrossMomentum(Strategy):
         if smooth > 1:
             sig = sig.ewm(span=smooth, adjust=False).mean()
             sig = sig.apply(lambda x: 1 if x > 0.3 else (-1 if x < -0.3 else 0))
-        return sig.fillna(0.0).shift(1).fillna(0.0).clip(-1, 1).astype(int)
+        return sig.fillna(0.0).clip(-1, 1).astype(int)
 
 
 __all__ = ["CrossMomentum"]

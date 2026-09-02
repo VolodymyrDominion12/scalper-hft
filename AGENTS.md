@@ -21,16 +21,19 @@
 - `scalper_hft/strategies/` — альфа-моделі (інтерфейс `Strategy`, реєстр у `__init__.py`).
 - `scalper_hft/validation/` — walk-forward, purged CV, Deflated Sharpe, sensitivity, Optuna.
 - `scalper_hft/data/` — завантаження/кеш (parquet), клієнт Binance (ccxt).
+- `scalper_hft/live/` — paper/live трейдер, pairs runner, reconciliation.
+- `scalper_hft/ml/` — triple-barrier, LightGBM, bet sizing, feature importance.
+- `scalper_hft/portfolio/` — ERC; risk budget (модуль, не в live-циклі).
 - `docs/` — RESEARCH.md (web-дослідження), book_notes.md (книга), reports/ (звіти).
 - `skills/` — процедури для агентів.
 - `.mcp/mcp-config.md` — MCP-сервери.
 
 ## Типові команди
 ```bash
-uv run python -m scalper_hft.cli download --symbol BTCUSDT --interval 1m --days 30
-uv run python -m scalper_hft.cli backtest --strategy mean_reversion --symbol BTCUSDT --interval 1m --days 30
-uv run python -m scalper_hft.cli overfit --strategy mean_reversion --symbol BTCUSDT --interval 5m --days 30
-uv run python -m scalper_hft.cli cscv --strategy funding_carry --symbol BTCUSDT --interval 1m --days 90
-uv run python -m scalper_hft.cli report --strategy mean_reversion --symbol BTCUSDT --interval 5m --days 60
+uv run python -m scalper_hft.cli download --symbol BTCUSDT --interval 1h --days 90
+uv run python -m scalper_hft.cli pairs --strategy pairs_arb --leg1 XRPUSDT --leg2 BTCUSDT --interval 1h --days 90 --maker
+uv run python -m scalper_hft.cli overfit --strategy pairs_arb --symbol BTCUSDT --interval 1h --days 90
+uv run python -m scalper_hft.cli cscv --strategy pairs_arb --symbol BTCUSDT --interval 1h --days 90
+uv run python -m scalper_hft.cli report --strategy pairs_arb --symbol BTCUSDT --interval 1h --days 90
 uv run python -m scalper_hft.cli record-bookticker --symbol BTCUSDT --minutes 60
 ```

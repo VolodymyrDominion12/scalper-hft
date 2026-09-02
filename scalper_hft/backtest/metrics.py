@@ -84,7 +84,7 @@ def compute_metrics(
     # Calculate median time delta between bars in seconds
     delta_s = equity.index.to_series().diff().median().total_seconds()
     bars_per_year = (365 * 24 * 3600) / max(delta_s, 1.0) if pd.notna(delta_s) else _TRADING_DAYS * 24 * 60
-    
+
     ann_vol = ret.std(ddof=0) * math.sqrt(bars_per_year) if len(ret) else 0.0
     sharpe = (ret.mean() / ret.std(ddof=0) * math.sqrt(bars_per_year)) if ret.std(ddof=0) > 0 else 0.0
 

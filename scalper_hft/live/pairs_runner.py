@@ -16,10 +16,11 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from scalper_hft.config import get_settings
+from scalper_hft.config import get_settings, require_live_credentials
 from scalper_hft.data.binance_client import BinanceClient
 from scalper_hft.live.account import PaperAccount
 from scalper_hft.live.fills import both_or_neither, decide_fill
+from scalper_hft.live.reconcile import reconcile_exchange_state
 from scalper_hft.live.risk_gate import CooldownState, correlated_size_mult, decide_entry, open_pair_size_pcts
 from scalper_hft.live.store import PaperStore
 from scalper_hft.live.trader import closed_klines
@@ -477,8 +478,11 @@ class PairsPaperRunner:
         store: PaperStore | None = None,
         n_pairs: int = 1,
         is_maker: bool = True,
+        client: object | None = None,
     ) -> None:
         settings = get_settings()
+        require_live_credentials(settings)
+        self._dry_run = settings.dry_run
         self.leg1 = leg1
         self.leg2 = leg2
         self.interval = interval or "1h"
@@ -487,12 +491,19 @@ class PairsPaperRunner:
             initial_capital=10_000.0, taker_fee=settings.taker_fee, maker_fee=settings.maker_fee
         )
         self.store = store
+        self.client = client
+        if self.client is None and not self._dry_run:
+            self.client = BinanceClient(
+                settings.binance_api_key, settings.binance_api_secret, settings.exchange, auth=True
+            )
         self.engine = PairsEngine(
             leg1, leg2, self.strategy, self.account, store=store, n_pairs=n_pairs, is_maker=is_maker
         )
         self._last_ts: pd.Timestamp | None = None
 
-    def step(self, now: pd.Timestamp | None = None) -> str:
+    def step(self, now: pd.Timestamp | None = None, *, reconcile: bool = True) -> str:
+        if reconcile:
+            reconcile_exchange_state(self.account, self.client, dry_run=self._dry_run)
         df1 = closed_klines(_fetch_ohlcv(self.leg1, self.interval), self.interval, now=now)
         df2 = closed_klines(_fetch_ohlcv(self.leg2, self.interval), self.interval, now=now)
         common = align_ohlc(df1, df2)
@@ -552,14 +563,22 @@ class PairsPortfolioRunner:
         account: PaperAccount | None = None,
         store: PaperStore | None = None,
         is_maker: bool = True,
+        client: object | None = None,
     ) -> None:
         settings = get_settings()
+        require_live_credentials(settings)
+        self._dry_run = settings.dry_run
         self.configs = configs or [dict(p) for p in VALIDATED_PAIRS]
         self.interval = interval
         self.account = account or PaperAccount(
             initial_capital=10_000.0, taker_fee=settings.taker_fee, maker_fee=settings.maker_fee
         )
         self.store = store
+        self.client = client
+        if self.client is None and not self._dry_run:
+            self.client = BinanceClient(
+                settings.binance_api_key, settings.binance_api_secret, settings.exchange, auth=True
+            )
         n = len(self.configs)
         self.runners: list[PairsPaperRunner] = []
         for cfg in self.configs:
@@ -578,11 +597,13 @@ class PairsPortfolioRunner:
                     store=store,
                     n_pairs=n,
                     is_maker=is_maker,
+                    client=self.client,
                 )
             )
 
     def step(self, now: pd.Timestamp | None = None) -> str:
-        return " || ".join(r.step(now=now) for r in self.runners)
+        reconcile_exchange_state(self.account, self.client, dry_run=self._dry_run)
+        return " || ".join(r.step(now=now, reconcile=False) for r in self.runners)
 
     def run(self, iterations: int = 10, sleep_sec: int = 300) -> PairsPaperResult:
         actions: list[str] = []

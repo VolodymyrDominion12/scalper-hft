@@ -13,7 +13,13 @@ from scalper_hft.live.account import PaperAccount
 from scalper_hft.live.fills import decide_fill, fill_probability
 from scalper_hft.live.is_log import IsJournal, shortfall_bps
 from scalper_hft.live.orders import next_client_order_id
-from scalper_hft.live.reconcile import ExchangePosition, KillSwitch, halt_if_drift, reconcile_positions
+from scalper_hft.live.reconcile import (
+    ExchangePosition,
+    KillSwitch,
+    halt_if_drift,
+    reconcile_exchange_state,
+    reconcile_positions,
+)
 from scalper_hft.ml.labeling import add_vertical_barrier, get_t_events
 from scalper_hft.ml.trainer import _purge_train_slice, _simulate_sharpe
 from scalper_hft.validation.coint_scan import scan_pairs
@@ -71,6 +77,32 @@ def test_halt_if_drift_live_raises() -> None:
     except KillSwitch:
         return
     raise AssertionError("очікували KillSwitch")
+
+
+def test_reconcile_exchange_state_paper_skips_fetch() -> None:
+    class _C:
+        n = 0
+
+        def fetch_positions(self, symbols: list | None = None) -> list:
+            self.n += 1
+            return []
+
+    client = _C()
+    reconcile_exchange_state(PaperAccount(10_000.0), client, dry_run=True)
+    assert client.n == 0
+
+
+def test_reconcile_exchange_state_live_calls_fetch() -> None:
+    class _C:
+        n = 0
+
+        def fetch_positions(self, symbols: list | None = None) -> list:
+            self.n += 1
+            return []
+
+    client = _C()
+    reconcile_exchange_state(PaperAccount(10_000.0), client, dry_run=False)
+    assert client.n == 1
 
 
 def test_is_shortfall_sign() -> None:

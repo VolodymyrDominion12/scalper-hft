@@ -28,8 +28,8 @@
 - [x] **Виконання та Execution**:
   - Емпіричний `CostModel`: vol-aware slippage + Square-Root impact (`backtest/execution.py`);
   - Micro-price розрахунок та котирування fair value (`backtest/micro_price.py`);
-  - Price ladder exit каскадні рівні (`live/exit_ladders.py`);
-  - Live reconciliation та kill-switch при розходженні позицій (`live/reconcile.py`);
+  - Price ladder exit (`live/exit_ladders.py`) та portfolio risk budget — модулі з тестами, ще не в live-циклі;
+  - Live reconciliation в циклі (`run_trader_once`, `PairsPortfolioRunner.step`) та kill-switch;
   - SQLite persistence для paper/live (`live/store.py`).
 - [x] **Мульти-активні та онлайн-стратегії**:
   - `SparseBasketArb` (кошиковий арбітраж на Lasso/PCA);
@@ -40,7 +40,7 @@
   - MCP-сервер для AI-асистентів (`scalper_hft/mcp_trading.py`, CLI `mcp`);
   - Streamlit дашборд (`scalper_hft/dashboard.py`);
   - Telegram сповіщення.
-- [x] **Тести**: 238 тестів у `tests/` — усі проходять (`pytest` зелений).
+- [x] **Тести**: 23 файли в `tests/` — `uv run pytest tests/ -q` має бути зеленим (Postgres-сюїта skip без `TEST_POSTGRES_DSN`).
 
 ---
 

@@ -9,7 +9,7 @@
 Проєкт — зріла **квант-платформа** (Alpha → Risk → T-Cost → Portfolio → Execution, бектест, walk-forward, DSR, CSCV, ML meta-labeling, стрес-тести, MCP) з валідованим кандидатом: **портфель пар (pairs_arb на 1h, maker)**.
 Це **не** субмілісекундний тіковий HFT-скальпер. Taker-скальпінг на 1m відхилено через fee-drag;
 funding/basis сплять у низькому режимі 2025–26. Phase 0 закрито повністю.
-Усі ключові інженерні блоки Phase 2 та Phase 3 (reconciliation, hedge-ratio OLS/Johansen, coint-scan, triple-barrier ML, risk budget, ERC, exit ladders, micro-price) **імплементовані та покриті 238 тестами**.
+Усі ключові інженерні блоки Phase 2 та Phase 3 (reconciliation в торговому циклі, hedge-ratio OLS/Johansen, coint-scan, triple-barrier ML, ERC, micro-price) **імплементовані**; exit ladders і risk budget — модулі з тестами, ще не в live-циклі. Юніт-тести: `uv run pytest tests/ -q` (23 файли).
 
 **Головне правило розгортання:** жоден live з реальними коштами, доки paper pairs не пройде **≥8 тижнів безперервного моніторингу** без розходження з бектестом.
 
@@ -51,13 +51,13 @@ paper-replay реверсує і рахує daily-loss на mark-to-market. Те
 
 ## Phase 2 — Production hardening & ризик-інфраструктура ✅
 
-1. ✅ **Reconciliation**: звірка позицій з біржею кожен цикл (`fetch_positions`); kill-switch при розходженні (`scalper_hft/live/reconcile.py`).
+1. ✅ **Reconciliation**: `reconcile_exchange_state` у `run_trader_once` та `PairsPortfolioRunner.step` (`fetch_positions` + kill-switch; paper — no-op).
 2. ✅ **Execution правила**: Reduce-only на закритті; GTX/post-only на вході; ніколи market на pairs.
 3. ✅ **Telegram інтеграція**: fill, reject, daily PnL, risk-block, kill-switch (`scalper_hft/live/telegram.py`).
-4. ✅ **Risk budget**: денний/тижневий ліміт збитків на портфель, vol-targeting (`scalper_hft/portfolio/risk_budget.py`).
+4. ✅ **Risk budget** (модуль, не в live-циклі): денний/тижневий ліміт збитків, vol-targeting (`scalper_hft/portfolio/risk_budget.py`).
 5. ✅ **Hedge-ratio**: rolling OLS та Johansen вектори коінтеграції (`scalper_hft/validation/hedge_ratio.py`).
 6. ✅ **Емпіричний CostModel & пропущені філи**: vol-aware slippage, Square-Root impact, micro-price та ймовірність виконання (`scalper_hft/backtest/execution.py`, `micro_price.py`).
-7. ✅ **Exit ladders**: драбини рівнів виходу за схемою каскадного часткового філу (`scalper_hft/live/exit_ladders.py`).
+7. ✅ **Exit ladders** (модуль, не в live-циклі): драбини рівнів виходу (`scalper_hft/live/exit_ladders.py`).
 
 ---
 
@@ -97,6 +97,6 @@ paper-replay реверсує і рахує daily-loss на mark-to-market. Те
 |---|---|---|
 | 0 | Усі P0 закриті тестами; `cli pairs` і weekly-audit зелені | ✅ Закрито |
 | 1 | Paper vs backtest tracking error; % unfilled post-only; 8 тижнів без розриву | ⏳ В процесі моніторингу |
-| 2 | Hardening: reconciliation, kill-switch, risk budget, exit ladders, OLS/Johansen | ✅ Реалізовано в коді |
+| 2 | Hardening: reconcile в циклі; kill-switch; OLS/Johansen. Ladders/risk budget — модулі | ✅ Код + тести |
 | 3 | ML meta-labeling, CFI, micro-price, sparse basket, stress/cohort валідація | ✅ Реалізовано в коді |
 | 4 | L2 Tardis дані, черга лімітних ордерів, live під реальний капітал | 🔜 Наступний етап |

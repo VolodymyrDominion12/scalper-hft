@@ -81,3 +81,13 @@ def halt_if_drift(
     ok, reason = reconcile_positions(account, parse_exchange_positions(raw_positions))
     if not ok:
         raise KillSwitch(reason)
+
+
+def reconcile_exchange_state(account: PaperAccount, client: object | None, *, dry_run: bool) -> None:
+    """Paper: no-op. Live: fetch_positions + halt_if_drift. KillSwitch не ковтати."""
+    if dry_run:
+        return
+    if client is None or not hasattr(client, "fetch_positions"):
+        raise RuntimeError("Live звірка потребує клієнт біржі з fetch_positions")
+    raw = client.fetch_positions()
+    halt_if_drift(account, raw, dry_run=False)

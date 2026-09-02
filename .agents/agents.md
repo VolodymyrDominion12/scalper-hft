@@ -21,5 +21,6 @@
 
 ## Критерії блокування
 - OOS Sharpe < 0.3 або частка позитивних вікон < 50%;
-- DSR < 0.9; smoothness < 0.3; n_trades < 100;
-- середній трейд менший за `CostModel.round_trip_taker`.
+- DSR < 0.9; smoothness < 0.3;
+- `n_trades < 100` — для **1m-скальпу**; для 1h pairs поріг інший (валідовані XRP/BTC тощо мають 28–51 угоду);
+- середній трейд менший за `CostModel.round_trip_taker` (для taker-стратегій).

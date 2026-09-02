@@ -28,7 +28,7 @@ Research & Validation:
 |---|---|---|
 | `data` | REST/ccxt, Binance Vision dumps, parquet/PostgreSQL кеш, tick/volume/dollar/imbalance бари, валідація | `access.py`, `bars.py`, `binance_client.py`, `binance_vision.py`, `downloader.py`, `storage.py`, `store.py`, `validate.py` |
 | `features` | ТА індикатори, мікроструктура (VPIN, Kyle λ, Roll, Amihud), HMM-режими, GARCH(1,1), FFD, DSP | `indicators.py`, `microstructure.py`, `hmm_regime.py`, `volatility.py`, `fractional_diff.py`, `signal_processing.py`, `regimes.py` |
-| `strategies` | Альфа-моделі (єдиний інтерфейс `Strategy`, реєстр у `__init__.py`) | `mean_reversion.py`, `cvd_momentum.py`, `ob_imbalance.py`, `market_maker.py`, `funding_carry.py`, `funding_arb.py`, `basis_reversion.py`, `pairs_arb.py`, `ml_strategy.py`, `ensemble.py`, `hmm_reversion.py`, `sparse_basket.py`, `bandit.py`, `blend.py` |
+| `strategies` | Альфа-моделі (єдиний інтерфейс `Strategy`, реєстр у `__init__.py`) | `mean_reversion.py`, `cvd_momentum.py`, `ob_imbalance.py`, `market_maker.py`, `funding_carry.py`, `funding_arb.py`, `basis_reversion.py`, `pairs_arb.py`, `ml_strategy.py`, `ensemble.py`, `hmm_reversion.py`, `sparse_basket.py`, `cross_momentum.py`, `bandit.py`, `blend.py` |
 | `portfolio` | Конструювання портфеля: Equal Risk Contribution (ERC), risk-parity, vol-targeting, VaR, loss-budget | `erc.py`, `risk_budget.py` |
 | `backtest` | Векторизований/подієвий рушії, парний/портфельний бектест, емпіричний CostModel, micro-price, router | `engine.py`, `event_engine.py`, `pairs.py`, `pairs_portfolio.py`, `execution.py`, `micro_price.py`, `metrics.py`, `router.py` |
 | `validation` | Анти-перенавчання, статистична та сценарна валідація | `walk_forward.py`, `cv.py`, `deflated_sharpe.py`, `cscv.py`, `sensitivity.py`, `stress.py`, `cohort.py`, `lift.py`, `capacity.py`, `survival.py`, `time_decay.py`, `quintile.py`, `coint_scan.py`, `hedge_ratio.py`, `optimize.py`, `oos_registry.py` |
@@ -64,8 +64,8 @@ Research & Validation:
 2. `sparse_basket` — кошиковий мульти-активний арбітраж на основі Lasso/PCA.
 3. `ml_strategy` — LightGBM з потрійним бар'єром (triple-barrier), meta-labeling та ймовірнісним bet-sizing.
 4. `ensemble` — ансамбль з динамічними вагами (Hedge no-regret, voting, regime-gating).
-5. `hmm_reversion` — Mean Reversion, гейтований HMM-станом ринку.
-6. `mean_reversion`, `cvd_momentum`, `funding_carry`, `funding_arb`, `basis_reversion`, `ob_imbalance`, `market_maker` — досліджені та відхилені або законсервовані (див. [docs/STRATEGY_STATUS.md](STRATEGY_STATUS.md)).
+5. `cross_momentum` — time-series momentum (CLI) / крос-секційний ранг (мультиколонки; 1D-сигнал першого символу). Лаг t+1 робить рушій.
+6. `hmm_reversion`, `mean_reversion`, `cvd_momentum`, `funding_carry`, `funding_arb`, `basis_reversion`, `ob_imbalance`, `market_maker` — досліджені та відхилені або законсервовані (див. [docs/STRATEGY_STATUS.md](STRATEGY_STATUS.md)).
 
 *Примітка: `blend` та `bandit` — це алгоритми агрегації та утиліти, а не окремі підкласи `Strategy`.*
 
@@ -73,9 +73,9 @@ Research & Validation:
 Paper/testnet за замовчуванням (`DRY_RUN=true`).
 Багаторівневий ризик-контроль:
 - Hard limits: ліміт позиції, денний ліміт збитків на ногу та портфель, зупинка після серії збитків;
-- Динамічне масштабування: vol-scaled sizing (GARCH/EWMA) та блокування нових входів за HMM-режимом;
-- Каскадні виходи: price ladder exits;
-- Звірка (reconciliation): автоматична перевірка розходжень з біржею та аварійний kill-switch.
+- Динамічне масштабування: vol-scaled sizing (GARCH/EWMA) та блокування нових входів за HMM-режимом (помилка моделі → блок входу);
+- Звірка (reconciliation): `fetch_positions` + kill-switch у `run_trader_once` та `PairsPortfolioRunner.step` (paper/`DRY_RUN=true` — no-op);
+- Exit ladders (`live/exit_ladders.py`) та portfolio risk budget (`portfolio/risk_budget.py`) — бібліотечні модулі з тестами, **ще не** в paper/live циклі.
 
 ---
 

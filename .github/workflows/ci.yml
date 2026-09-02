@@ -1,0 +1,29 @@
+# Швидкі перевірки на PR і push (без мережі Binance / Telegram).
+# Щотижневий аудит пар: .github/workflows/weekly-audit.yml
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Встановити залежності
+        run: uv sync --extra dev --extra optim --extra ml
+
+      - name: Ruff
+        run: uv run ruff check scalper_hft tests
+
+      - name: Pytest
+        run: uv run pytest tests/ -q

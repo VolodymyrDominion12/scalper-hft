@@ -2,7 +2,7 @@
 
 Щоб прогнати Postgres-тести локально:
     docker compose up -d postgres
-    TEST_POSTGRES_DSN="host=localhost port=5433 dbname=scalper user=scalper password=scalper" \
+    TEST_POSTGRES_DSN="host=localhost port=5436 dbname=scalper user=scalper password=scalper" \
         .venv/bin/python -m pytest tests/test_store.py -q
 """
 

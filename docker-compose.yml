@@ -7,7 +7,7 @@
 # Потім укажи в .env:
 #   DATA_BACKEND=postgres
 #   POSTGRES_HOST=localhost
-#   POSTGRES_PORT=5433
+#   POSTGRES_PORT=5436
 #
 # Схема створюється автоматично при першому підключенні (store.ensure_schema).
 # Об'єм зберігається у docker volume `postgres_data` — дані переживають
@@ -23,9 +23,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scalper}
       POSTGRES_DB: ${POSTGRES_DB:-scalper}
     ports:
-      # зовнішній порт за замовчуванням 5433, щоб не конфліктувати
-      # з можливим локальним PostgreSQL на 5432
-      - "${POSTGRES_PORT:-5433}:5432"
+      # зовнішній порт за замовчуванням 5436 (5432/5433/5434 часто зайняті)
+      - "${POSTGRES_PORT:-5436}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
