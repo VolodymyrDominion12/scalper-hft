@@ -6,27 +6,34 @@
     - решта таймфреймів (5m/15m/30m/1h/4h/1d...) будується ресемплінгом
       локально — нуль API-дзвінків;
     - кожна клітинка (стратегія, символ, таймфрейм) — незалежний бектест
-      або walk-forward з повними комісіями; результати збираються у CSV.
+      або walk-forward з повними комісіями; результати зберігаються у SQLite.
 
-Результат — таблиця `SweepRow`: strategy, symbol, interval, n_bars, n_trades,
-total_return, sharpe, max_dd, win_rate, profit_factor, avg_trade, exposure
+Результат — таблиця `SweepRow` (з sweep_store): strategy, symbol, interval,
+n_bars, n_trades, total_return, sharpe, sortino, calmar, max_dd, win_rate,
+profit_factor, avg_trade, exposure, trades_per_day
 (+ OOS-метрики у режимі walkforward). Помилки однієї клітинки не зупиняють
 прогон — вони фіксуються у status/error.
+
+Resuming:
+    store = SweepStore("results/sweep.db")
+    df = run_sweep(..., store=store, resume=True)  # пропускає вже виконані
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
 
 from scalper_hft.backtest.execution import CostModel
+from scalper_hft.research.sweep_store import SweepRow, SweepStore
 
 logger = logging.getLogger(__name__)
+
 
 # Двоногі стратегії (потребують пару/кошик символів) — у пер-символьному
 # sweep не мають сенсу; ML/ensemble — повільні, включаються лише за запитом.
@@ -34,30 +41,6 @@ MULTI_SYMBOL_STRATEGIES = frozenset({"pairs_arb", "sparse_basket", "funding_arb"
 SLOW_STRATEGIES = frozenset({"ml_strategy", "ensemble"})
 
 DEFAULT_INTERVALS = ["1m", "5m", "15m", "30m", "1h", "4h"]
-
-
-@dataclass
-class SweepRow:
-    strategy: str
-    symbol: str
-    interval: str
-    n_bars: int = 0
-    n_trades: int = 0
-    total_return: float = float("nan")
-    sharpe: float = float("nan")
-    max_dd: float = float("nan")
-    win_rate: float = float("nan")
-    profit_factor: float = float("nan")
-    avg_trade: float = float("nan")
-    exposure: float = float("nan")
-    avg_is_sharpe: float = float("nan")
-    avg_oos_sharpe: float = float("nan")
-    oos_positive_frac: float = float("nan")
-    status: str = "ok"
-    error: str = ""
-
-    def as_dict(self) -> dict[str, Any]:
-        return self.__dict__.copy()
 
 
 def default_strategies(*, include_slow: bool = False) -> list[str]:
@@ -80,13 +63,31 @@ def _run_backtest_cell(
     *,
     cost: CostModel,
     position_pct: float,
+    enable_trace: bool = False,
 ) -> SweepRow:
     from scalper_hft.backtest.router import run_strategy_backtest
 
     res = run_strategy_backtest(
-        klines, strategy, cost=cost, trades=trades, funding=funding, position_pct=position_pct
+        klines, strategy, cost=cost, trades=trades, funding=funding,
+        position_pct=position_pct, trace=enable_trace,
     )
     m = res.metrics
+
+    # Filter attribution з трейсу
+    n_raw = 0
+    n_filtered = 0
+    filter_attr_json = ""
+    if enable_trace and res.trace is not None:
+        from scalper_hft.research.filter_trace import filter_attribution
+
+        n_raw = len(res.trace)
+        n_filtered = res.trace.n_blocked()
+        attr_df = filter_attribution(res.trace)
+        if not attr_df.empty:
+            filter_attr_json = json.dumps(
+                dict(zip(attr_df["filter_name"], attr_df["n_blocked"].tolist()))
+            )
+
     row = SweepRow(
         strategy=strategy.name,
         symbol=symbol,
@@ -95,11 +96,17 @@ def _run_backtest_cell(
         n_trades=int(m.n_trades),
         total_return=float(m.total_return),
         sharpe=float(m.sharpe),
+        sortino=float(m.sortino),
+        calmar=float(m.calmar),
         max_dd=float(m.max_drawdown),
         win_rate=float(m.win_rate),
         profit_factor=float(m.profit_factor),
         avg_trade=float(m.avg_trade_return),
         exposure=float(m.exposure),
+        trades_per_day=float(m.trades_per_day),
+        n_raw_signals=n_raw,
+        n_filtered=n_filtered,
+        filter_attribution=filter_attr_json,
     )
     return row
 
@@ -158,6 +165,7 @@ def _build_cell_runner(
     cost: CostModel,
     position_pct: float,
     data_provider: Callable[..., Any] | None,
+    enable_trace: bool = False,
 ):
     """Повертає функцію клітинки (strategy_name, symbol, interval) -> SweepRow."""
     from scalper_hft.strategies import get_strategy
@@ -181,7 +189,8 @@ def _build_cell_runner(
                 train_bars=train_bars, test_bars=test_bars, cost=cost, position_pct=position_pct,
             )
         return _run_backtest_cell(
-            strategy, symbol, interval, klines, trades, funding, cost=cost, position_pct=position_pct
+            strategy, symbol, interval, klines, trades, funding,
+            cost=cost, position_pct=position_pct, enable_trace=enable_trace,
         )
 
     return cell
@@ -200,8 +209,15 @@ def run_sweep(
     workers: int = 1,
     include_slow: bool = False,
     data_provider: Callable[..., Any] | None = None,
+    store: "SweepStore | None" = None,
+    resume: bool = False,
+    enable_trace: bool = False,
 ) -> pd.DataFrame:
     """Прогнати матрицю стратегій × символів × таймфреймів.
+
+    store: SweepStore для persistence (upsert кожної клітинки).
+    resume: якщо True і store задано — пропускати вже виконані комбінації.
+    enable_trace: якщо True — збирати filter attribution для кожної клітинки.
 
     Returns:
         DataFrame з рядками SweepRow (одна клітинка = один рядок).
@@ -243,39 +259,82 @@ def run_sweep(
         cost=cost,
         position_pct=settings.position_pct,
         data_provider=data_provider,
+        enable_trace=enable_trace,
     )
 
-    cells = [(name, sym, iv) for sym in symbols for iv in intervals for name in strategies]
+    all_cells = [(name, sym, iv) for sym in symbols for iv in intervals for name in strategies]
+
+    # -- Resume: фільтрувати вже виконані клітинки ----------------------------
+    if resume and store is not None:
+        cells = [
+            c for c in all_cells
+            if not store.already_done(c[0], c[1], c[2], days, mode)
+        ]
+        skipped = len(all_cells) - len(cells)
+        if skipped:
+            logger.info("Resume: пропущено %d вже виконаних клітинок", skipped)
+    else:
+        cells = all_cells
+
     total = len(cells)
-    logger.info("Sweep: %d стратегій × %d символів × %d таймфреймів = %d клітинок", len(strategies), len(symbols), len(intervals), total)
+    logger.info(
+        "Sweep: %d стратегій × %d символів × %d TF = %d клітинок (всього %d)",
+        len(strategies), len(symbols), len(intervals), total, len(all_cells),
+    )
+
+    # -- tqdm progress bar (якщо встановлений) --------------------------------
+    try:
+        from tqdm import tqdm
+        progress_iter = tqdm(total=total, desc="Sweep", unit="cell")
+    except ImportError:
+        progress_iter = None
+
+    def _run_and_store(c: tuple) -> SweepRow:
+        """Виконати клітинку, зберегти у store, оновити прогрес."""
+        try:
+            row = cell(*c)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Клітинка %s %s %s: %s", *c, exc)
+            row = SweepRow(
+                strategy=c[0], symbol=c[1], interval=c[2],
+                days=days, mode=mode, status="error", error=str(exc)
+            )
+        else:
+            row.days = days
+            row.mode = mode
+        if store is not None:
+            store.upsert(row)
+        if progress_iter is not None:
+            progress_iter.update(1)
+        return row
 
     rows: list[SweepRow] = []
-    done = 0
     if workers and workers > 1:
         with ThreadPoolExecutor(max_workers=workers) as ex:
-            futs = {ex.submit(cell, *c): c for c in cells}
+            futs = {ex.submit(_run_and_store, c): c for c in cells}
             for fut in as_completed(futs):
-                done += 1
-                c = futs[fut]
                 try:
                     rows.append(fut.result())
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("Клітинка %s %s %s: %s", *c, exc)
-                    rows.append(SweepRow(strategy=c[0], symbol=c[1], interval=c[2], status="error", error=str(exc)))
-                if done % max(1, total // 10) == 0 or done == total:
-                    logger.info("Sweep: %d/%d клітинок", done, total)
+                    c = futs[fut]
+                    logger.warning("Future %s %s %s: %s", *c, exc)
     else:
         for c in cells:
-            done += 1
-            try:
-                rows.append(cell(*c))
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Клітинка %s %s %s: %s", *c, exc)
-                rows.append(SweepRow(strategy=c[0], symbol=c[1], interval=c[2], status="error", error=str(exc)))
-            if done % max(1, total // 10) == 0 or done == total:
-                logger.info("Sweep: %d/%d клітинок", done, total)
+            rows.append(_run_and_store(c))
 
-    return pd.DataFrame([r.as_dict() for r in rows])
+    if progress_iter is not None:
+        progress_iter.close()
+
+    result_df = pd.DataFrame([r.as_dict() for r in rows])
+
+    # -- Якщо є store — повертаємо всі результати (включно зі скіпнутими) ----
+    if store is not None and resume:
+        try:
+            result_df = store.load()
+        except Exception:  # noqa: BLE001
+            pass
+
+    return result_df
 
 
 def save_sweep_report(df: pd.DataFrame, out_csv: str | None = None, out_md: str | None = None) -> None:
@@ -315,4 +374,4 @@ def save_sweep_report(df: pd.DataFrame, out_csv: str | None = None, out_md: str 
         logger.info("Sweep звіт: %s", out_md)
 
 
-__all__ = ["SweepRow", "run_sweep", "save_sweep_report", "default_strategies", "DEFAULT_INTERVALS"]
+__all__ = ["SweepRow", "SweepStore", "run_sweep", "save_sweep_report", "default_strategies", "DEFAULT_INTERVALS"]

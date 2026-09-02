@@ -92,6 +92,88 @@ class MeanReversionScalper(Strategy):
 
         return sig.ffill().fillna(0.0).astype(int)
 
+    def generate_signals_traced(
+        self,
+        df: pd.DataFrame,
+        trades: pd.DataFrame | None = None,
+        funding: pd.DataFrame | None = None,
+    ):
+        """Детальний трейсинг: записує кожен потенційний сигнал і причину блокування.
+
+        Для кожного бару, де raw-логіка генерує long_entry або short_entry,
+        перевіряємо всі фільтри окремо і записуємо які саме заблокували угоду.
+        """
+        from scalper_hft.features.indicators import rsi
+        from scalper_hft.features.regimes import trend_strength, volatility_regime
+        from scalper_hft.research.filter_trace import FilterTrace, SignalEvent
+
+        f = add_standard_features(df)
+        rsi_val = rsi(f["close"], int(self.get("rsi_period", 14)))
+        close = f["close"]
+        mid = f["bb_mid"]
+        atr_pct = f["atr_14"] / close.replace(0, float("nan"))
+
+        long_entry = (rsi_val < self.get("oversold", 30.0)) & (close < f["bb_low"])
+        short_entry = (rsi_val > self.get("overbought", 70.0)) & (close > f["bb_up"])
+
+        # Обчислюємо кожен фільтр окремо для трейсингу
+        vol_filter = atr_pct >= self.get("min_atr_pct", 0.001)
+        trend = trend_strength(close, 9, 50)
+        trend_filter = trend < float(self.get("max_trend", 0.6))
+
+        if self.get("skip_high_vol", True):
+            regime = volatility_regime(close, lookback=60, percentile_window=500)
+            vol_regime_filter = regime != "high"
+        else:
+            vol_regime_filter = pd.Series(True, index=df.index)
+
+        vol_ok = vol_filter & vol_regime_filter
+
+        # Генеруємо фінальні сигнали (стандартний шлях)
+        sig = pd.Series(float("nan"), index=df.index, dtype=float)
+        sig[long_entry & vol_ok & trend_filter] = 1.0
+        sig[short_entry & vol_ok & trend_filter] = -1.0
+
+        prev_pos = sig.ffill().shift(1).fillna(0.0)
+        stop = f["atr_14"] * self.get("stop_atr_mult", 2.0)
+        exit_long = (prev_pos == 1.0) & ((close >= mid) | (close < mid - stop))
+        exit_short = (prev_pos == -1.0) & ((close <= mid) | (close > mid + stop))
+        sig[exit_long | exit_short] = 0.0
+        final_signals = sig.ffill().fillna(0.0).astype(int)
+
+        # ── Збираємо FilterTrace ─────────────────────────────────────────────
+        trace = FilterTrace()
+        raw_signal_mask = long_entry | short_entry
+        for ts in df.index[raw_signal_mask]:
+            raw = 1 if long_entry.get(ts, False) else -1
+            blocked: list[str] = []
+            if not vol_filter.get(ts, True):
+                blocked.append("vol_ok (atr_pct)")
+            if not vol_regime_filter.get(ts, True):
+                blocked.append("vol_ok (high_regime)")
+            if not trend_filter.get(ts, True):
+                blocked.append("trend_ok")
+
+            final = final_signals.get(ts, 0)
+            rsi_v = rsi_val.get(ts, float("nan"))
+            atr_v = atr_pct.get(ts, float("nan"))
+            trend_v = trend.get(ts, float("nan"))
+            trace.add(
+                SignalEvent(
+                    ts=ts,
+                    raw_signal=raw,
+                    final_signal=int(final) if not blocked else 0,
+                    blocked_by=blocked,
+                    context={
+                        "rsi": round(float(rsi_v), 2) if rsi_v == rsi_v else None,
+                        "atr_pct": round(float(atr_v), 6) if atr_v == atr_v else None,
+                        "trend": round(float(trend_v), 4) if trend_v == trend_v else None,
+                    },
+                )
+            )
+
+        return final_signals, trace
+
     def exit_levels(self, df: pd.DataFrame) -> pd.DataFrame:
         """Рівні виходу для візуалізації: ціль = середина BB, стоп = середина ∓ ATR×mult.
 

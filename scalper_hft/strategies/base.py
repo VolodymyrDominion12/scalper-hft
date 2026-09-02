@@ -7,14 +7,22 @@
     - сигнал обчислюється на закритті бару t;
     - виконання відбувається на відкритті бару t+1 (без lookahead);
     - 0 = поза ринком; +/-1 = лонг/шорт (або частка для часткових позицій).
+
+Filter Tracing:
+    generate_signals_traced() — розширена версія, яка повертає (signals, FilterTrace).
+    За замовчуванням — заглушка (порожній трейс). Стратегії можуть перевизначити
+    для детального аналізу, які фільтри скільки сигналів відкидають.
 """
 
 from __future__ import annotations
 
 import abc
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
+
+if TYPE_CHECKING:
+    from scalper_hft.research.filter_trace import FilterTrace
 
 
 class Strategy(abc.ABC):
@@ -44,6 +52,24 @@ class Strategy(abc.ABC):
         self, df: pd.DataFrame, trades: pd.DataFrame | None = None, funding: pd.DataFrame | None = None
     ) -> pd.Series:
         """Повертає Series позицій, індексовану як df.index."""
+
+    def generate_signals_traced(
+        self,
+        df: pd.DataFrame,
+        trades: pd.DataFrame | None = None,
+        funding: pd.DataFrame | None = None,
+    ) -> tuple[pd.Series, "FilterTrace"]:
+        """Розширена версія: повертає (signals, FilterTrace).
+
+        За замовчуванням викликає generate_signals() і повертає порожній FilterTrace.
+        Стратегії можуть перевизначити цей метод для запису деталей кожного
+        заблокованого сигналу (причина, контекст). Не порушує lookahead-правило:
+        трейс записується на закритому барі t, лише post-factum.
+        """
+        from scalper_hft.research.filter_trace import FilterTrace
+
+        signals = self.generate_signals(df, trades=trades, funding=funding)
+        return signals, FilterTrace()
 
     def exit_levels(self, df: pd.DataFrame) -> pd.DataFrame | None:
         """Опційні рівні SL/TP для візуалізації угод (ціни).

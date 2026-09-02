@@ -29,6 +29,7 @@ class BacktestResult:
     trades: pd.DataFrame
     metrics: BacktestMetrics
     params: dict = field(default_factory=dict)
+    trace: object = None  # FilterTrace | None — заповнюється при trace=True
 
     def summary(self) -> str:
         return self.metrics.summary()
@@ -120,6 +121,7 @@ def run_backtest(
     trades: pd.DataFrame | None = None,
     funding: pd.DataFrame | None = None,
     is_maker: bool = False,
+    trace: bool = False,
 ) -> BacktestResult:
     """Запуск бектесту стратегії на свічкових даних.
 
@@ -129,11 +131,15 @@ def run_backtest(
     funding: DataFrame з 'fundingRate' (індекс — час ставки). Додає funding
         грошовий потік: лонг платить позитивний фандінг, шорт отримує.
     is_maker: якщо True — використання maker-комісії (лімітні ордери).
+    trace: якщо True — записує FilterTrace (трейс фільтрів) в result.trace.
     """
     if len(df) < 30:
         raise ValueError("Замало даних для бектесту")
     cost = cost or CostModel()
-    if getattr(strategy, "needs_trades", False):
+    filter_trace = None
+    if trace:
+        signals, filter_trace = strategy.generate_signals_traced(df, trades=trades, funding=funding)
+    elif getattr(strategy, "needs_trades", False):
         signals = strategy.generate_signals(df, trades=trades)
     elif getattr(strategy, "needs_funding", False):
         signals = strategy.generate_signals(df, funding=funding)
@@ -243,4 +249,5 @@ def run_backtest(
         trades=trades_df,
         metrics=metrics,
         params={"strategy": strategy.name, "position_pct": position_pct, "is_maker": is_maker},
+        trace=filter_trace,
     )

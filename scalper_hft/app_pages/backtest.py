@@ -218,6 +218,178 @@ if run_bt:
 if st.session_state.get("bt_view") is not None:
     _render_bt_chart(st.session_state["bt_view"])
 
+    # ── Розширена аналітика після основного графіка ─────────────────────────
+    bt_res = st.session_state["bt_view"].get("res")
+    bt_df = st.session_state["bt_view"].get("df")
+    if bt_res is not None and bt_df is not None:
+        st.header("Розширена аналітика")
+        anal_tabs = st.tabs(["📊 Метрики", "🔍 Фільтри", "🎯 MAE/MFE", "📅 Сесійний аналіз"])
+
+        with anal_tabs[0]:
+            m = bt_res.metrics
+            c1, c2, c3, c4, c5, c6 = st.columns(6)
+            c1.metric("Sharpe (річн.)", f"{m.sharpe:.3f}")
+            c2.metric("Sortino", f"{m.sortino:.3f}")
+            c3.metric("Calmar", f"{m.calmar:.3f}")
+            c4.metric("Max DD", f"{m.max_drawdown:.1%}")
+            c5.metric("Угод/день", f"{m.trades_per_day:.2f}")
+            c6.metric("P(розорення)", f"{m.risk_of_ruin:.4f}")
+
+            # Rolling Sharpe
+            if bt_res.equity is not None and len(bt_res.equity) > 30:
+                daily_ret = bt_res.equity.resample("1D").last().pct_change().dropna()
+                if len(daily_ret) >= 14:
+                    import numpy as np
+                    rs = (daily_ret.rolling(14).mean() / daily_ret.rolling(14).std()) * np.sqrt(365)
+                    fig_rs = go.Figure()
+                    fig_rs.add_trace(go.Scatter(x=rs.index, y=rs.values, mode="lines", name="Sharpe 14d rolling"))
+                    fig_rs.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+                    fig_rs.update_layout(title="Rolling Sharpe (14-денне вікно)", height=280, yaxis_title="Sharpe")
+                    st.plotly_chart(fig_rs, use_container_width=True)
+
+        with anal_tabs[1]:
+            trace = getattr(bt_res, "trace", None)
+            if trace is not None and len(trace) > 0:
+                from scalper_hft.research.filter_trace import filter_attribution, filter_pnl_impact
+
+                n_raw = len(trace)
+                n_blocked = trace.n_blocked()
+                fa1, fa2, fa3 = st.columns(3)
+                fa1.metric("Raw сигналів", n_raw)
+                fa2.metric("Пройшли фільтри", trace.n_passed())
+                fa3.metric("Заблоковано", n_blocked,
+                           delta=f"-{n_blocked/n_raw:.0%}" if n_raw else "", delta_color="inverse")
+
+                attr_df = filter_attribution(trace)
+                if not attr_df.empty:
+                    fig_a = go.Figure(go.Bar(
+                        x=attr_df["filter_name"], y=attr_df["n_blocked"],
+                        text=attr_df["n_blocked"], textposition="outside",
+                        marker_color="#f97316",
+                    ))
+                    fig_a.update_layout(title="Скільки сигналів заблокував кожен фільтр", height=320)
+                    st.plotly_chart(fig_a, use_container_width=True)
+
+                pnl_df = filter_pnl_impact(trace, bt_df["close"], horizon_bars=5)
+                if not pnl_df.empty:
+                    st.subheader("Shadow PnL (без фільтру)")
+                    st.dataframe(pnl_df.style.background_gradient(
+                        subset=["shadow_mean_ret", "shadow_win_rate"],
+                        cmap="RdYlGn"
+                    ), use_container_width=True)
+            else:
+                st.info(
+                    "Трейсинг фільтрів не активовано. Запустіть бектест з параметром `trace=True` "
+                    "або перейдіть на сторінку **🔬 Дослідження → Filter Attribution**."
+                )
+                if st.button("🔬 Запустити з трейсингом", key="bt_run_trace"):
+                    from scalper_hft.backtest.engine import run_backtest
+                    from scalper_hft.backtest.execution import CostModel
+                    strat_name = st.session_state["bt_view"].get("title", "").split(" ")[0]
+                    try:
+                        from scalper_hft.strategies import get_strategy
+                        strat2 = get_strategy(strat_name)
+                        cost2 = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee,
+                                          slippage_frac=settings.slippage_frac)
+                        with st.spinner("Бектест з трейсингом..."):
+                            res2 = run_backtest(bt_df, strat2, cost=cost2,
+                                                position_pct=settings.position_pct, trace=True)
+                        view2 = dict(st.session_state["bt_view"])
+                        view2["res"] = res2
+                        st.session_state["bt_view"] = view2
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Помилка: {e}")
+
+        with anal_tabs[2]:
+            if bt_res.trades is not None and not bt_res.trades.empty:
+                from scalper_hft.research.session_analysis import mae_mfe_analysis
+
+                mae_df = mae_mfe_analysis(bt_res.trades, bt_df)
+                if not mae_df.empty:
+                    import plotly.express as px
+                    fig_mf = px.scatter(
+                        mae_df, x="mfe", y="mae", color="ret",
+                        color_continuous_scale="RdYlGn",
+                        hover_data=["entry_ts", "side", "ret", "efficiency"],
+                        title="MAE vs MFE (кожна угода — точка)",
+                        labels={"mfe": "MFE (макс. на користь)", "mae": "MAE (макс. проти)"},
+                    )
+                    fig_mf.add_vline(x=0, line_dash="dash", line_color="gray", opacity=0.4)
+                    fig_mf.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.4)
+                    fig_mf.update_layout(height=420)
+                    st.plotly_chart(fig_mf, use_container_width=True)
+
+                    avg_eff = mae_df["efficiency"].dropna().mean()
+                    m1e, m2e, m3e = st.columns(3)
+                    m1e.metric("Avg MAE", f"{mae_df['mae'].mean():+.4%}")
+                    m2e.metric("Avg MFE", f"{mae_df['mfe'].mean():+.4%}")
+                    m3e.metric("Avg Efficiency", f"{avg_eff:.1%}" if avg_eff == avg_eff else "N/A")
+                    st.caption("Efficiency = ret / MFE. Якщо < 50% — виходимо занадто рано.")
+                else:
+                    st.info("Не вдалось розрахувати MAE/MFE")
+            else:
+                st.info("Немає угод для MAE/MFE аналізу")
+
+        with anal_tabs[3]:
+            if bt_res.trades is not None and not bt_res.trades.empty:
+                from scalper_hft.research.session_analysis import (
+                    hourly_heatmap_data,
+                    session_breakdown,
+                    weekday_breakdown,
+                )
+
+                sub_s1, sub_s2 = st.columns(2)
+                with sub_s1:
+                    sess = session_breakdown(bt_res.trades)
+                    if not sess.empty:
+                        fig_sess = go.Figure(go.Bar(
+                            x=sess.index, y=sess["n_trades"],
+                            marker_color=[
+                                f"hsl({int(wr*120)},70%,45%)" for wr in sess["win_rate"].fillna(0.5)
+                            ],
+                            text=[f"{wr:.0%}" for wr in sess["win_rate"].fillna(0)],
+                            textposition="outside",
+                        ))
+                        fig_sess.update_layout(
+                            title="Угоди по годинах UTC (колір = win rate)",
+                            xaxis_title="Година UTC", yaxis_title="Кількість угод",
+                            height=320,
+                        )
+                        st.plotly_chart(fig_sess, use_container_width=True)
+
+                with sub_s2:
+                    wd = weekday_breakdown(bt_res.trades)
+                    if not wd.empty:
+                        fig_wd = go.Figure(go.Bar(
+                            x=wd["day"], y=wd["n_trades"],
+                            marker_color=[
+                                f"hsl({int(wr*120)},70%,45%)" for wr in wd["win_rate"].fillna(0.5)
+                            ],
+                            text=[f"{wr:.0%}" for wr in wd["win_rate"].fillna(0)],
+                            textposition="outside",
+                        ))
+                        fig_wd.update_layout(
+                            title="Угоди по днях тижня (колір = win rate)",
+                            xaxis_title="", yaxis_title="Кількість угод",
+                            height=320,
+                        )
+                        st.plotly_chart(fig_wd, use_container_width=True)
+
+                hm = hourly_heatmap_data(bt_res.trades)
+                if not hm.empty:
+                    import plotly.express as px
+                    fig_hm = px.imshow(
+                        hm.values, x=list(hm.columns), y=list(hm.index),
+                        color_continuous_scale="RdYlGn", zmin=0, zmax=1,
+                        title="Win rate: день тижня × година UTC",
+                    )
+                    fig_hm.update_layout(height=300)
+                    st.plotly_chart(fig_hm, use_container_width=True)
+            else:
+                st.info("Немає угод для сесійного аналізу")
+
+
 st.header("Діагностика (cohort / stress / capacity)")
 if run_diag:
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)

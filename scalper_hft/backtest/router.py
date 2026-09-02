@@ -20,6 +20,7 @@ def run_strategy_backtest(
     position_pct: float = 0.01,
     is_maker: bool = False,
     initial_capital: float = 10_000.0,
+    trace: bool = False,
 ) -> BacktestResult | EventBacktestResult:
     name = getattr(strategy, "name", "")
     if name in EVENT_STRATEGIES:
@@ -39,4 +40,5 @@ def run_strategy_backtest(
         trades=trades,
         funding=funding,
         is_maker=is_maker,
+        trace=trace,
     )
