@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from scalper_hft.config import get_settings, require_live_credentials
+from scalper_hft.config import get_settings
 from scalper_hft.data.binance_client import BinanceClient
 from scalper_hft.live.account import PaperAccount
 from scalper_hft.live.fills import both_or_neither, decide_fill
@@ -478,7 +478,14 @@ def _fetch_ohlcv(symbol: str, interval: str, limit: int = _RECENT_BARS) -> pd.Da
 
 
 class PairsPaperRunner:
-    """Цикл paper на одній парі (REST → закритий бар → engine)."""
+    """Цикл paper на одній парі (REST → закритий бар → engine).
+
+    ⚠ Paper-only: рушій СИМУЛЮЄ maker-філи на локальному PaperAccount і НЕ
+    ставить реальні ордери. Тому DRY_RUN=false тут заборонено — звірка з
+    реальною біржею була б безглуздою (локальні ноги ніколи не співпадуть з
+    реальними позиціями) і закінчувалась KillSwitch. Live-pairs потребує
+    окремого адаптера з реальними ордерами ніг (див. M3 у code review).
+    """
 
     def __init__(
         self,
@@ -493,7 +500,12 @@ class PairsPaperRunner:
         client: object | None = None,
     ) -> None:
         settings = get_settings()
-        require_live_credentials(settings)
+        if not settings.dry_run:
+            raise RuntimeError(
+                "PairsPaperRunner — paper-only: реальні ордери ніг не реалізовані. "
+                "Використовуйте DRY_RUN=true (paper); live-pairs потребує адаптера "
+                "з реальними ордерами."
+            )
         self._dry_run = settings.dry_run
         self.leg1 = leg1
         self.leg2 = leg2
@@ -503,11 +515,7 @@ class PairsPaperRunner:
             initial_capital=10_000.0, taker_fee=settings.taker_fee, maker_fee=settings.maker_fee
         )
         self.store = store
-        self.client = client
-        if self.client is None and not self._dry_run:
-            self.client = BinanceClient(
-                settings.binance_api_key, settings.binance_api_secret, settings.exchange, auth=True
-            )
+        self.client = client  # лише для звірки у paper (no-op); live заборонено вище
         self.engine = PairsEngine(
             leg1, leg2, self.strategy, self.account, store=store, n_pairs=n_pairs, is_maker=is_maker
         )
@@ -566,7 +574,11 @@ class PairsPaperRunner:
 
 
 class PairsPortfolioRunner:
-    """Кілька валідованих пар на спільному рахунку."""
+    """Кілька валідованих пар на спільному рахунку.
+
+    ⚠ Paper-only: як і PairsPaperRunner, не ставить реальні ордери →
+    DRY_RUN=false заборонено (див. M3 у code review).
+    """
 
     def __init__(
         self,
@@ -578,7 +590,12 @@ class PairsPortfolioRunner:
         client: object | None = None,
     ) -> None:
         settings = get_settings()
-        require_live_credentials(settings)
+        if not settings.dry_run:
+            raise RuntimeError(
+                "PairsPortfolioRunner — paper-only: реальні ордери ніг не реалізовані. "
+                "Використовуйте DRY_RUN=true (paper); live-pairs потребує адаптера "
+                "з реальними ордерами."
+            )
         self._dry_run = settings.dry_run
         self.configs = configs or [dict(p) for p in VALIDATED_PAIRS]
         self.interval = interval
@@ -586,11 +603,7 @@ class PairsPortfolioRunner:
             initial_capital=10_000.0, taker_fee=settings.taker_fee, maker_fee=settings.maker_fee
         )
         self.store = store
-        self.client = client
-        if self.client is None and not self._dry_run:
-            self.client = BinanceClient(
-                settings.binance_api_key, settings.binance_api_secret, settings.exchange, auth=True
-            )
+        self.client = client  # лише для звірки у paper (no-op); live заборонено вище
         n = len(self.configs)
         self.runners: list[PairsPaperRunner] = []
         for cfg in self.configs:

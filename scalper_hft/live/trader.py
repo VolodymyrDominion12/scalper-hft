@@ -715,10 +715,14 @@ def run_trader_once(trader: LiveTrader, df: pd.DataFrame, now: pd.Timestamp | No
 
     Poll ПЕРЕД звіркою: щойно заповнені ордери одразу відображаються в
     локальному рахунку, тож звірка з біржею не дає хибний KillSwitch.
+    Live: перед сигналом синхронізуємо РЕАЛЬНИЙ equity біржі (M4), щоб
+    sizing і денний ліміт збитків рахувались від реального балансу.
     """
     from scalper_hft.live.reconcile import reconcile_exchange_state
 
     trader.poll_pending_orders(now=now)
     reconcile_exchange_state(trader.account, trader.client, dry_run=trader.settings.dry_run)
+    if not trader.settings.dry_run:
+        trader.sync_live_equity(now=now)
     signal = trader.compute_signal(df, now=now)
     return execute_signal(trader, signal, df, now=now)

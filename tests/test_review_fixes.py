@@ -503,3 +503,176 @@ class TestRouterParamFlow:
         # BacktestResult (векторний рушій), а не EventBacktestResult
         assert type(res).__name__ == "BacktestResult"
         assert res.metrics.n_trades > 0
+
+
+# ── M3: pairs paper-ранери блокують live ──────────────────────────────────────
+
+
+class TestPairsRunnersLiveBlock:
+    def _live_settings(self, monkeypatch) -> None:
+        from types import SimpleNamespace
+
+        import scalper_hft.live.pairs_runner as pr
+
+        monkeypatch.setattr(
+            pr,
+            "get_settings",
+            lambda: SimpleNamespace(
+                dry_run=False,
+                maker_execution=True,
+                position_pct=0.01,
+                max_open_positions=1,
+                daily_loss_limit=0.03,
+                max_consecutive_losses=3,
+                maker_fill_wait_bars=1,
+                taker_fee=0.0005,
+                maker_fee=0.0002,
+                pair_notional_pct=0.3,
+                portfolio_notional_pct=0.6,
+                corr_notional_cap=0.4,
+                max_losing_months=2,
+                cooldown_losses=2,
+                cooldown_hours=12.0,
+                cooldown_size_mult=0.5,
+                binance_api_key="test-key",
+                binance_api_secret="test-secret",
+            ),
+        )
+
+    def test_single_runner_blocks_live(self, monkeypatch):
+        from scalper_hft.live.pairs_runner import PairsPaperRunner
+
+        self._live_settings(monkeypatch)
+        with pytest.raises(RuntimeError, match="paper-only"):
+            PairsPaperRunner("XRPUSDT", "BTCUSDT", interval="1h")
+
+    def test_portfolio_runner_blocks_live(self, monkeypatch):
+        from scalper_hft.live.pairs_runner import PairsPortfolioRunner
+
+        self._live_settings(monkeypatch)
+        with pytest.raises(RuntimeError, match="paper-only"):
+            PairsPortfolioRunner(interval="1h")
+
+
+# ── M4: live equity з біржі ───────────────────────────────────────────────────
+
+
+class _EquityClient(_FakeLiveClient):
+    """Fake-клієнт + fetch_usdt_equity (M4)."""
+
+    def __init__(self, equity: float = 25_000.0) -> None:
+        super().__init__()
+        self.equity = equity
+
+    def fetch_usdt_equity(self) -> float:
+        return self.equity
+
+
+class TestLiveEquitySync:
+    def test_live_equity_rebases_cash_and_day_start(self):
+        """M4: у live cash/day_start беруться з реального балансу, не з $1000."""
+        from types import SimpleNamespace
+
+        from scalper_hft.live.trader import LiveTrader
+
+        class _AlwaysLongStrat:
+            name = "always_long"
+            param_space: dict = {}
+            needs_trades = False
+
+            def generate_signals(self, df):
+                return pd.Series(1, index=df.index)
+
+        acc = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
+        trader = LiveTrader(
+            _AlwaysLongStrat(), "BTCUSDT", "1m", account=acc, client=_EquityClient(equity=25_000.0)
+        )
+        trader.settings = SimpleNamespace(
+            dry_run=False,
+            maker_execution=True,
+            position_pct=0.01,
+            max_open_positions=1,
+            daily_loss_limit=0.03,
+            max_consecutive_losses=3,
+            maker_fill_wait_bars=1,
+            binance_api_key="test-key",
+            binance_api_secret="test-secret",
+        )
+        equity = trader.sync_live_equity()
+        assert equity == 25_000.0
+        assert acc.day_start_equity == 25_000.0
+        # позиція без руху: cash = equity (upnl = 0)
+        assert acc.equity == pytest.approx(25_000.0)
+        assert trader.last_live_equity == 25_000.0
+
+    def test_live_equity_skipped_in_paper(self):
+        from scalper_hft.live.trader import LiveTrader
+
+        trader = LiveTrader(_live_trader(_FakeLiveClient()).strategy, "BTCUSDT", "1m")
+        assert trader.settings.dry_run is True or trader.settings.dry_run
+        assert trader.sync_live_equity() is None  # paper — no-op
+
+
+# ── M5: нормалізація під фільтри біржі ───────────────────────────────────────
+
+
+class _FilterClient(_FakeLiveClient):
+    """Клієнт із sanitize_order (LOT_SIZE=0.001, tick=0.1, minNotional=5)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sanitized: list[tuple] = []
+
+    def sanitize_order(self, symbol, side, amount, price=None):
+        # спрощений фільтр: крок 0.001, ціна крок 0.1, мін. ноціонал 5
+        import math
+
+        qty = math.floor(amount / 0.001) * 0.001
+        px = None
+        if price is not None:
+            px = math.floor(price / 0.1) * 0.1
+        self.sanitized.append((symbol, side, qty, px))
+        if qty <= 0 or (px is not None and qty * px < 5.0):
+            return qty, px, "below min notional / zero qty"
+        return qty, px, None
+
+
+class TestOrderSanitize:
+    def test_trader_rejects_below_min_notional(self):
+        """M5: ордер, що не проходить фільтри, не летить на біржу."""
+        from types import SimpleNamespace
+
+        from scalper_hft.live.trader import LiveTrader, execute_signal
+
+        class _AlwaysLongStrat:
+            name = "always_long"
+            param_space: dict = {}
+            needs_trades = False
+
+            def generate_signals(self, df):
+                return pd.Series(1, index=df.index)
+
+        fake = _FilterClient()
+        acc = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
+        trader = LiveTrader(
+            _AlwaysLongStrat(), "BTCUSDT", "1m", account=acc, client=fake
+        )
+        trader.settings = SimpleNamespace(
+            dry_run=False,
+            maker_execution=True,
+            position_pct=0.0001,  # мізерний розмір → нижче min notional
+            max_open_positions=1,
+            daily_loss_limit=0.03,
+            max_consecutive_losses=3,
+            maker_fill_wait_bars=1,
+            binance_api_key="test-key",
+            binance_api_secret="test-secret",
+        )
+        idx = pd.date_range("2026-09-01", periods=60, freq="1min")
+        df = pd.DataFrame(
+            {"open": 100.0, "high": 100.001, "low": 99.999, "close": 100.0, "volume": 1.0}, index=idx
+        )
+        res = execute_signal(trader, 1, df, now=idx[-1] + pd.Timedelta(seconds=30))
+        assert "submit_failed" in res
+        assert len(fake.created) == 0, "ордер не мав дійти до create_order"
+        assert "BTCUSDT" not in acc.positions
