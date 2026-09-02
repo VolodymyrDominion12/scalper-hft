@@ -151,7 +151,7 @@ with tabs[0]:
                     labels={"color": metric},
                 )
                 fig.update_layout(height=max(300, 50 * len(pivot)), font=dict(size=11))
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
                 # Таблиця з деталями
                 with st.expander("📋 Всі результати", expanded=False):
@@ -178,7 +178,7 @@ with tabs[0]:
                     ]
                     st.dataframe(
                         view[display_cols].sort_values("sharpe", ascending=False),
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True,
                     )
 
@@ -260,7 +260,7 @@ with tabs[1]:
                             color_continuous_scale="Oranges",
                         )
                         fig_attr.update_layout(xaxis_title="", yaxis_title="Кількість сигналів", height=350)
-                        st.plotly_chart(fig_attr, use_container_width=True)
+                        st.plotly_chart(fig_attr, width="stretch")
 
                     # Shadow PnL impact
                     pnl_df = filter_pnl_impact(trace, df_k["close"], horizon_bars=fa_horizon)
@@ -311,7 +311,7 @@ with tabs[1]:
                             barmode="stack",
                             title="Filter attribution (агрегований sweep)",
                         )
-                        st.plotly_chart(fig2, use_container_width=True)
+                        st.plotly_chart(fig2, width="stretch")
                     else:
                         st.info("Запустіть sweep з опцією «Filter tracing» або натисніть «Запустити з трейсингом»")
                 except Exception:
@@ -382,7 +382,7 @@ with tabs[2]:
                 height=400,
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             )
-            st.plotly_chart(fig_eq, use_container_width=True)
+            st.plotly_chart(fig_eq, width="stretch")
 
             # Correlation matrix
             if len(curves) > 1:
@@ -401,7 +401,7 @@ with tabs[2]:
                         text_auto=".2f",
                     )
                     fig_corr.update_layout(height=350)
-                    st.plotly_chart(fig_corr, use_container_width=True)
+                    st.plotly_chart(fig_corr, width="stretch")
 
             # Rolling Sharpe
             st.subheader("Rolling Sharpe (30-денне вікно)")
@@ -424,7 +424,7 @@ with tabs[2]:
                 yaxis_title="Sharpe (30d rolling)",
                 xaxis_title="",
             )
-            st.plotly_chart(fig_rs, use_container_width=True)
+            st.plotly_chart(fig_rs, width="stretch")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -499,7 +499,7 @@ with tabs[3]:
                             fig_mf.add_vline(x=0, line_dash="dash", line_color="gray", opacity=0.4)
                             fig_mf.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.4)
                             fig_mf.update_layout(height=420)
-                            st.plotly_chart(fig_mf, use_container_width=True)
+                            st.plotly_chart(fig_mf, width="stretch")
 
                             avg_eff = mae_df["efficiency"].dropna().mean()
                             st.caption(
@@ -524,7 +524,7 @@ with tabs[3]:
                                 labels={"color": "Win rate"},
                             )
                             fig_hm.update_layout(height=300)
-                            st.plotly_chart(fig_hm, use_container_width=True)
+                            st.plotly_chart(fig_hm, width="stretch")
                             st.caption("Комірки з <3 угодами — порожні (статистично незначущі)")
 
                             sess = session_breakdown(trades)
@@ -539,7 +539,7 @@ with tabs[3]:
                                     title="Кількість угод та win rate по годинах",
                                     labels={"n_trades": "Угод", "win_rate": "Win rate"},
                                 )
-                                st.plotly_chart(fig_sess, use_container_width=True)
+                                st.plotly_chart(fig_sess, width="stretch")
                         else:
                             st.info("Недостатньо угод для heatmap (потрібно ≥3 на клітинку)")
 
@@ -562,7 +562,7 @@ with tabs[3]:
                                 annotation_text=f"mean={rets.mean():.4%}",
                             )
                             fig_hist.update_layout(height=380)
-                            st.plotly_chart(fig_hist, use_container_width=True)
+                            st.plotly_chart(fig_hist, width="stretch")
 
                             # Cumulative PnL
                             cum_pnl = (1 + rets).cumprod()
@@ -571,7 +571,7 @@ with tabs[3]:
                                 title="Кумулятивний PnL угод (по угодах, не по часу)",
                                 labels={"index": "# Угоди", "value": "Кумулятивний PnL"},
                             )
-                            st.plotly_chart(fig_cum, use_container_width=True)
+                            st.plotly_chart(fig_cum, width="stretch")
         else:
             st.info("Натисніть «Запустити аналіз» для відображення деталей угод")
 
@@ -648,7 +648,7 @@ with tabs[4]:
                 ]
                 st.dataframe(
                     top[disp_cols].reset_index(drop=True),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                     column_config={
                         "total_return": st.column_config.NumberColumn("Return", format="%.2%"),
@@ -678,7 +678,7 @@ with tabs[4]:
                 )
                 st.dataframe(
                     summary.reset_index(),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                     column_config={
                         "mean_sharpe": st.column_config.NumberColumn("Avg Sharpe", format="%.3f"),

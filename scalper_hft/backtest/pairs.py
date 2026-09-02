@@ -30,6 +30,7 @@ class PairsResult:
     funding_pnl: float
     metrics: BacktestMetrics
     params: dict = field(default_factory=dict)
+    trades: pd.DataFrame = field(default_factory=pd.DataFrame)
 
     def summary(self) -> str:
         m = self.metrics
@@ -188,6 +189,7 @@ def run_pairs_backtest(
         funding_pnl=float(funding_impact.sum() * 100),
         metrics=metrics,
         params={"strategy": strategy.name, "position_pct": position_pct},
+        trades=trades,
     )
 
 

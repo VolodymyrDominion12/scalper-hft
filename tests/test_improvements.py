@@ -227,3 +227,62 @@ class TestCmdReportExtended:
         res = time_decay_test(df, s, max_lag=2)
         assert len(res.lags) == 3  # 0, 1, 2
         assert len(res.sharpes) == 3
+
+
+# ── Unified Backtest Results: EventBacktestResult & PairsResult ──────────────
+
+
+class TestUnifiedBacktestResults:
+    def test_event_backtest_has_positions_and_chart_works(self):
+        """EventBacktestResult містить positions та успішно будує графік без AttributeError."""
+        from scalper_hft.backtest.router import run_strategy_backtest
+        from scalper_hft.strategies.market_maker import PassiveMarketMaker
+        from scalper_hft.visualization.charts import make_backtest_figure
+
+        idx = pd.date_range("2025-01-01", periods=150, freq="1h")
+        rng = np.random.default_rng(42)
+        close = 100.0 + np.cumsum(rng.normal(0, 0.2, 150))
+        df = pd.DataFrame(
+            {
+                "open": close,
+                "high": close * 1.002,
+                "low": close * 0.998,
+                "close": close,
+                "volume": 100.0,
+            },
+            index=idx,
+        )
+        res = run_strategy_backtest(df, PassiveMarketMaker())
+        assert hasattr(res, "positions")
+        assert isinstance(res.positions, pd.Series)
+        assert len(res.positions) == len(res.equity)
+
+        # Перевіряємо, що графік будується без падіння
+        fig = make_backtest_figure(df, res)
+        assert fig is not None
+
+    def test_pairs_result_has_trades(self):
+        """PairsResult містить trades DataFrame з укладеними угодами."""
+        from scalper_hft.backtest.pairs import run_pairs_backtest
+        from scalper_hft.strategies.pairs_arb import PairsArb
+
+        idx = pd.date_range("2025-01-01", periods=300, freq="1h")
+        rng = np.random.default_rng(42)
+        # Симулюємо коінтегровані ряди зі сплеском спреду
+        noise = rng.normal(0, 0.01, 300)
+        leg1_close = 100.0 * np.exp(np.cumsum(rng.normal(0, 0.005, 300)))
+        spread_shock = np.sin(np.linspace(0, 4 * np.pi, 300)) * 0.05
+        leg2_close = leg1_close * np.exp(-spread_shock + noise)
+
+        l1 = pd.DataFrame({"close": leg1_close}, index=idx)
+        l2 = pd.DataFrame({"close": leg2_close}, index=idx)
+        strategy = PairsArb(entry_z=1.0, exit_z=0.2, lookback=50)
+        res = run_pairs_backtest(l1, l2, strategy)
+
+        assert hasattr(res, "trades")
+        assert isinstance(res.trades, pd.DataFrame)
+        assert "entry_ts" in res.trades.columns
+        assert "exit_ts" in res.trades.columns
+        assert "side" in res.trades.columns
+        assert "ret" in res.trades.columns
+        assert len(res.trades) > 0

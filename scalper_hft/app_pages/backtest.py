@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -98,11 +100,17 @@ def _render_bt_chart(view: dict) -> None:
             indicators=auto_indicator_columns(fdf) if with_inds else [],
         )
         sel = st.plotly_chart(fig, width="stretch", key="bt_fig", on_select="rerun", selection_mode="points")
-        if sel is not None and getattr(sel, "selection", None):
+        sel_state: Any = getattr(sel, "selection", None)
+        if sel_state:
             # шукаємо угоду серед усіх вибраних точок (клік може зачепити
             # лінію індикатора на тому ж барі — ts все одно співпаде)
-            for p in (sel.selection or {}).get("points") or []:
-                if p.get("x") is not None and find_trade_by_ts(res.trades, p["x"]) is not None:
+            points = (
+                sel_state.get("points")
+                if isinstance(sel_state, dict)
+                else getattr(sel_state, "points", None)
+            )
+            for p in points or []:
+                if isinstance(p, dict) and p.get("x") is not None and find_trade_by_ts(res.trades, p["x"]) is not None:
                     st.session_state["bt_sel_ts"] = p["x"]
                     break
 
@@ -161,7 +169,7 @@ if run_bt:
             else:
                 f1 = load_funding(data_dir / f"{leg1}_funding.parquet")
                 f2 = load_funding(data_dir / f"{leg2}_funding.parquet")
-                res = run_pairs_backtest(
+                pairs_res = run_pairs_backtest(
                     d1,
                     d2,
                     strategy,
@@ -171,13 +179,13 @@ if run_bt:
                     cost=cost,
                     maker_execution=True,
                 )
-                m = res.metrics
+                m = pairs_res.metrics
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("Дохідність", f"{m.total_return:.2%}")
                 c2.metric("Sharpe (год.)", f"{m.sharpe_hourly:.2f}")
                 c3.metric("Угоди", f"{m.n_trades}")
                 c4.metric("Max DD", f"{m.max_drawdown:.2%}")
-                fig = go.Figure(go.Scatter(x=res.equity.index, y=res.equity.values, mode="lines", name="Equity"))
+                fig = go.Figure(go.Scatter(x=pairs_res.equity.index, y=pairs_res.equity.values, mode="lines", name="Equity"))
                 fig.update_layout(title=f"pairs_arb · {leg1}/{leg2} {interval} maker", height=350)
                 st.plotly_chart(fig, width="stretch")
                 with st.expander("Повні метрики"):
@@ -246,7 +254,7 @@ if st.session_state.get("bt_view") is not None:
                     fig_rs.add_trace(go.Scatter(x=rs.index, y=rs.values, mode="lines", name="Sharpe 14d rolling"))
                     fig_rs.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
                     fig_rs.update_layout(title="Rolling Sharpe (14-денне вікно)", height=280, yaxis_title="Sharpe")
-                    st.plotly_chart(fig_rs, use_container_width=True)
+                    st.plotly_chart(fig_rs, width="stretch")
 
         with anal_tabs[1]:
             trace = getattr(bt_res, "trace", None)
@@ -274,14 +282,14 @@ if st.session_state.get("bt_view") is not None:
                         )
                     )
                     fig_a.update_layout(title="Скільки сигналів заблокував кожен фільтр", height=320)
-                    st.plotly_chart(fig_a, use_container_width=True)
+                    st.plotly_chart(fig_a, width="stretch")
 
                 pnl_df = filter_pnl_impact(trace, bt_df["close"], horizon_bars=5)
                 if not pnl_df.empty:
                     st.subheader("Shadow PnL (без фільтру)")
                     st.dataframe(
                         pnl_df.style.background_gradient(subset=["shadow_mean_ret", "shadow_win_rate"], cmap="RdYlGn"),
-                        use_container_width=True,
+                        width="stretch",
                     )
             else:
                 st.info(
@@ -334,7 +342,7 @@ if st.session_state.get("bt_view") is not None:
                     fig_mf.add_vline(x=0, line_dash="dash", line_color="gray", opacity=0.4)
                     fig_mf.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.4)
                     fig_mf.update_layout(height=420)
-                    st.plotly_chart(fig_mf, use_container_width=True)
+                    st.plotly_chart(fig_mf, width="stretch")
 
                     avg_eff = mae_df["efficiency"].dropna().mean()
                     m1e, m2e, m3e = st.columns(3)
@@ -374,7 +382,7 @@ if st.session_state.get("bt_view") is not None:
                             yaxis_title="Кількість угод",
                             height=320,
                         )
-                        st.plotly_chart(fig_sess, use_container_width=True)
+                        st.plotly_chart(fig_sess, width="stretch")
 
                 with sub_s2:
                     wd = weekday_breakdown(bt_res.trades)
@@ -394,7 +402,7 @@ if st.session_state.get("bt_view") is not None:
                             yaxis_title="Кількість угод",
                             height=320,
                         )
-                        st.plotly_chart(fig_wd, use_container_width=True)
+                        st.plotly_chart(fig_wd, width="stretch")
 
                 hm = hourly_heatmap_data(bt_res.trades)
                 if not hm.empty:
@@ -410,7 +418,7 @@ if st.session_state.get("bt_view") is not None:
                         title="Win rate: день тижня × година UTC",
                     )
                     fig_hm.update_layout(height=300)
-                    st.plotly_chart(fig_hm, use_container_width=True)
+                    st.plotly_chart(fig_hm, width="stretch")
             else:
                 st.info("Немає угод для сесійного аналізу")
 
@@ -437,15 +445,15 @@ if run_diag:
                     if getattr(strategy, "needs_funding", False)
                     else None
                 )
-                res = run_backtest(
+                diag_res = run_backtest(
                     df, strategy, cost=cost, trades=trades, funding=funding, position_pct=settings.position_pct
                 )
-                ret = res.equity.pct_change().dropna()
+                ret = diag_res.equity.pct_change().dropna()
 
                 with st.expander("Cohort decay (Predictive Marketing)", expanded=False):
                     from scalper_hft.validation.cohort import cohort_report
 
-                    st.text(cohort_report(res.trades))
+                    st.text(cohort_report(diag_res.trades))
                 with st.expander("Стрес-тест (Narang гл. 10)", expanded=False):
                     from scalper_hft.validation.stress import stress_report
 

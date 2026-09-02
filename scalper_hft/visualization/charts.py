@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -23,6 +24,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from scalper_hft.backtest.engine import BacktestResult
+from scalper_hft.backtest.event_engine import EventBacktestResult
+from scalper_hft.backtest.pairs import PairsResult
 
 LONG_COLOR = "#00b894"
 SHORT_COLOR = "#ef5350"
@@ -227,7 +230,7 @@ def add_sl_tp_levels(fig: go.Figure, trades: pd.DataFrame, row: int = 1, max_tra
 # ── Вікно / даунсемплінг ─────────────────────────────────────────────────────
 def _window(
     df: pd.DataFrame,
-    result: BacktestResult,
+    result: BacktestResult | EventBacktestResult | PairsResult,
     start: str | pd.Timestamp | None,
     end: str | pd.Timestamp | None,
     max_bars: int,
@@ -271,7 +274,7 @@ def _window(
 # ── Основні фігури ───────────────────────────────────────────────────────────
 def make_backtest_figure(
     df: pd.DataFrame,
-    result: BacktestResult,
+    result: BacktestResult | EventBacktestResult | PairsResult,
     *,
     indicators: Sequence[str] | None = None,
     symbol: str | None = None,
@@ -326,7 +329,7 @@ def make_backtest_figure(
         row_heights.append(0.13)
     if show_equity:
         row_heights.append(0.25)
-    row_specs = [
+    row_specs: list[list[dict[str, Any]]] = [
         [{"secondary_y": True}] if (show_equity and r == rows["equity"]) else [{}] for r in range(1, n_rows + 1)
     ]
 

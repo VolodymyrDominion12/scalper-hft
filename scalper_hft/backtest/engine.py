@@ -19,6 +19,7 @@ import pandas as pd
 
 from scalper_hft.backtest.execution import CostModel, apply_breakeven_gate
 from scalper_hft.backtest.metrics import BacktestMetrics, compute_metrics
+from scalper_hft.research.filter_trace import FilterTrace
 from scalper_hft.strategies.base import Strategy
 
 
@@ -29,7 +30,7 @@ class BacktestResult:
     trades: pd.DataFrame
     metrics: BacktestMetrics
     params: dict = field(default_factory=dict)
-    trace: object = None  # FilterTrace | None — заповнюється при trace=True
+    trace: FilterTrace | None = None  # FilterTrace | None — заповнюється при trace=True
 
     def summary(self) -> str:
         return self.metrics.summary()

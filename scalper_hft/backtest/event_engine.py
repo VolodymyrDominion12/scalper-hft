@@ -33,15 +33,18 @@ import pandas as pd
 
 from scalper_hft.backtest.execution import CostModel
 from scalper_hft.backtest.metrics import BacktestMetrics, compute_metrics
+from scalper_hft.research.filter_trace import FilterTrace
 from scalper_hft.strategies.base import Strategy
 
 
 @dataclass
 class EventBacktestResult:
     equity: pd.Series
+    positions: pd.Series
     trades: pd.DataFrame
     metrics: BacktestMetrics
     params: dict = field(default_factory=dict)
+    trace: FilterTrace | None = None
 
     def summary(self) -> str:
         return self.metrics.summary()
@@ -87,6 +90,7 @@ def run_event_backtest(
     fees_paid = 0.0
     trades: list[dict] = []
     equity_points: list[tuple[pd.Timestamp, float]] = []
+    positions_points: list[tuple[pd.Timestamp, float]] = []
     n_fills_total = 0
 
     def _pnl(entry_px: float, exit_px: float, units: float) -> float:
@@ -166,6 +170,7 @@ def run_event_backtest(
         unrealized = _pnl(avg_cost, close.iloc[i], inventory) if inventory != 0 else 0.0
         equity = initial_capital + realized_pnl - fees_paid + unrealized
         equity_points.append((ts, equity))
+        positions_points.append((ts, float(inventory * quote_size_pct)))
 
     # Залишковий інвентар на кінець серії: синтетичне закриття за останній close,
     # щоб n_trades/статистика угод не занижували активність MM. Equity не змінюється:
@@ -184,14 +189,19 @@ def run_event_backtest(
     if equity_series.empty or len(equity_series) < 2:
         raise ValueError("Подієвий бектест не дав жодної точки equity")
 
+    positions_series = pd.Series(dict(positions_points), dtype=float).reindex(equity_series.index).fillna(0.0)
+
     trades_df = (
         pd.DataFrame(trades, columns=["entry_ts", "exit_ts", "side", "ret", "entry_price", "exit_price"])
         if trades
         else pd.DataFrame(columns=["entry_ts", "exit_ts", "side", "ret", "entry_price", "exit_price"])
     )
-    metrics = compute_metrics(equity_series, trades=trades_df, exposure=0.0, turnover=0.0)
+    exposure = float((positions_series != 0).mean())
+    turnover = float(positions_series.diff().abs().sum())
+    metrics = compute_metrics(equity_series, trades=trades_df, exposure=exposure, turnover=turnover)
     return EventBacktestResult(
         equity=equity_series,
+        positions=positions_series,
         trades=trades_df,
         metrics=metrics,
         params={
