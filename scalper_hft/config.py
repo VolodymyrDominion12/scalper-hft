@@ -66,9 +66,16 @@ class Settings:
 
     # Дані
     data_dir: Path = field(default_factory=lambda: Path(os.getenv("DATA_DIR", "./data")))
+    # Канонічний універсум за замовчуванням (співпадає з DEFAULT_SYMBOLS у .env).
     default_symbols: tuple[str, ...] = field(
         default_factory=lambda: tuple(
-            s.strip() for s in os.getenv("DEFAULT_SYMBOLS", "BTCUSDT,ETHUSDT,XRPUSDT,LINKUSDT").split(",") if s.strip()
+            s.strip()
+            for s in os.getenv(
+                "DEFAULT_SYMBOLS",
+                "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,LINKUSDT,"
+                "ADAUSDT,DOGEUSDT,AVAXUSDT,NEARUSDT,DOTUSDT,ATOMUSDT,UNIUSDT,LTCUSDT,AAVEUSDT",
+            ).split(",")
+            if s.strip()
         )
     )
     default_interval: str = field(default_factory=lambda: os.getenv("DEFAULT_INTERVAL", "1m"))

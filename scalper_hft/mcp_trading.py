@@ -59,7 +59,7 @@ def _market_status(args: dict | None = None) -> dict:
     from scalper_hft.config import get_settings
 
     data_dir = get_settings().data_dir_abs
-    symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "LINKUSDT"]
+    symbols = list(get_settings().default_symbols)
     rows = []
     for sym in symbols:
         k = data_dir / f"{sym}_1m_klines.parquet"
