@@ -225,7 +225,15 @@ class TestEquityHelpers:
         res = run_backtest(df, get_strategy("mean_reversion"), cost=CostModel())
         tb = trades_table(res, initial_capital=10_000.0)
         assert list(tb.columns) == [
-            "Вхід", "Вихід", "Сторона", "Ціна входу", "Ціна виходу", "SL", "TP", "PnL, %", "PnL, $",
+            "Вхід",
+            "Вихід",
+            "Сторона",
+            "Ціна входу",
+            "Ціна виходу",
+            "SL",
+            "TP",
+            "PnL, %",
+            "PnL, $",
         ]
         assert set(tb["Сторона"].dropna().unique()) <= {"Лонг", "Шорт"}
         assert np.allclose(tb["PnL, $"], tb["PnL, %"] / 100.0 * 10_000.0)

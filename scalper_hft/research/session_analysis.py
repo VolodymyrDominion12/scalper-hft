@@ -36,14 +36,16 @@ def session_breakdown(trades_df: pd.DataFrame) -> pd.DataFrame:
         if sub.empty:
             continue
         rets = sub["ret"] if "ret" in sub.columns else pd.Series(dtype=float)
-        rows.append({
-            "hour_utc": hour,
-            "n_trades": len(sub),
-            "win_rate": float((rets > 0).mean()) if len(rets) else 0.0,
-            "avg_pnl": float(rets.mean()) if len(rets) else 0.0,
-            "total_pnl": float(rets.sum()) if len(rets) else 0.0,
-            "median_pnl": float(rets.median()) if len(rets) else 0.0,
-        })
+        rows.append(
+            {
+                "hour_utc": hour,
+                "n_trades": len(sub),
+                "win_rate": float((rets > 0).mean()) if len(rets) else 0.0,
+                "avg_pnl": float(rets.mean()) if len(rets) else 0.0,
+                "total_pnl": float(rets.sum()) if len(rets) else 0.0,
+                "median_pnl": float(rets.median()) if len(rets) else 0.0,
+            }
+        )
     return pd.DataFrame(rows).set_index("hour_utc")
 
 
@@ -65,20 +67,20 @@ def weekday_breakdown(trades_df: pd.DataFrame) -> pd.DataFrame:
     for wd in range(7):
         sub = df[df["weekday"] == wd]
         rets = sub["ret"] if "ret" in sub.columns and not sub.empty else pd.Series(dtype=float)
-        rows.append({
-            "weekday": wd,
-            "day": day_names[wd],
-            "n_trades": len(sub),
-            "win_rate": float((rets > 0).mean()) if len(rets) else 0.0,
-            "avg_pnl": float(rets.mean()) if len(rets) else 0.0,
-            "total_pnl": float(rets.sum()) if len(rets) else 0.0,
-        })
+        rows.append(
+            {
+                "weekday": wd,
+                "day": day_names[wd],
+                "n_trades": len(sub),
+                "win_rate": float((rets > 0).mean()) if len(rets) else 0.0,
+                "avg_pnl": float(rets.mean()) if len(rets) else 0.0,
+                "total_pnl": float(rets.sum()) if len(rets) else 0.0,
+            }
+        )
     return pd.DataFrame(rows).set_index("weekday")
 
 
-def regime_breakdown(
-    trades_df: pd.DataFrame, regime_series: pd.Series | None = None
-) -> pd.DataFrame:
+def regime_breakdown(trades_df: pd.DataFrame, regime_series: pd.Series | None = None) -> pd.DataFrame:
     """Метрики угод по режимах волатильності (low/normal/high).
 
     regime_series: Series з індексом datetime і значеннями "low"/"normal"/"high"
@@ -96,24 +98,24 @@ def regime_breakdown(
     for regime in ["low", "normal", "high"]:
         sub = df[df["regime"] == regime]
         rets = sub["ret"] if "ret" in sub.columns and not sub.empty else pd.Series(dtype=float)
-        rows.append({
-            "regime": regime,
-            "n_trades": len(sub),
-            "win_rate": float((rets > 0).mean()) if len(rets) else 0.0,
-            "avg_pnl": float(rets.mean()) if len(rets) else 0.0,
-            "total_pnl": float(rets.sum()) if len(rets) else 0.0,
-            "profit_factor": (
-                float(rets[rets > 0].sum() / (-rets[rets < 0].sum()))
-                if len(rets[rets < 0]) > 0 and -rets[rets < 0].sum() > 0
-                else float("nan")
-            ),
-        })
+        rows.append(
+            {
+                "regime": regime,
+                "n_trades": len(sub),
+                "win_rate": float((rets > 0).mean()) if len(rets) else 0.0,
+                "avg_pnl": float(rets.mean()) if len(rets) else 0.0,
+                "total_pnl": float(rets.sum()) if len(rets) else 0.0,
+                "profit_factor": (
+                    float(rets[rets > 0].sum() / (-rets[rets < 0].sum()))
+                    if len(rets[rets < 0]) > 0 and -rets[rets < 0].sum() > 0
+                    else float("nan")
+                ),
+            }
+        )
     return pd.DataFrame(rows).set_index("regime")
 
 
-def mae_mfe_analysis(
-    trades_df: pd.DataFrame, df_bars: pd.DataFrame
-) -> pd.DataFrame:
+def mae_mfe_analysis(trades_df: pd.DataFrame, df_bars: pd.DataFrame) -> pd.DataFrame:
     """Maximum Adverse / Favorable Excursion аналіз угод.
 
     MAE: наскільки максимально ціна йшла ПРОТИ позиції до виходу.
@@ -147,21 +149,23 @@ def mae_mfe_analysis(
             continue
 
         if side == 1:  # лонг
-            mae = float((window["low"].min() - entry_px) / entry_px)   # від'ємне
+            mae = float((window["low"].min() - entry_px) / entry_px)  # від'ємне
             mfe = float((window["high"].max() - entry_px) / entry_px)  # додатнє
         else:  # шорт
             mae = float((entry_px - window["high"].max()) / entry_px)  # від'ємне
-            mfe = float((entry_px - window["low"].min()) / entry_px)   # додатнє
+            mfe = float((entry_px - window["low"].min()) / entry_px)  # додатнє
 
         efficiency = ret / mfe if mfe > 0 else float("nan")
-        rows.append({
-            "entry_ts": entry_ts,
-            "side": side,
-            "ret": ret,
-            "mae": mae,
-            "mfe": mfe,
-            "efficiency": efficiency,
-        })
+        rows.append(
+            {
+                "entry_ts": entry_ts,
+                "side": side,
+                "ret": ret,
+                "mae": mae,
+                "mfe": mfe,
+                "efficiency": efficiency,
+            }
+        )
     return pd.DataFrame(rows)
 
 

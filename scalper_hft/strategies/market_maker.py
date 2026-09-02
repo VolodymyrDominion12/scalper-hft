@@ -55,4 +55,3 @@ class PassiveMarketMaker(Strategy):
         """Повертає бажану позицію 0 завжди — market maker керується
         інвентарем, а не напрямком. Сигнали для нього генерує event_engine."""
         return pd.Series(0, index=df.index, dtype=int)
-

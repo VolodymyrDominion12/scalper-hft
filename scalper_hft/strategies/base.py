@@ -58,7 +58,7 @@ class Strategy(abc.ABC):
         df: pd.DataFrame,
         trades: pd.DataFrame | None = None,
         funding: pd.DataFrame | None = None,
-    ) -> tuple[pd.Series, "FilterTrace"]:
+    ) -> tuple[pd.Series, FilterTrace]:
         """Розширена версія: повертає (signals, FilterTrace).
 
         За замовчуванням викликає generate_signals() і повертає порожній FilterTrace.

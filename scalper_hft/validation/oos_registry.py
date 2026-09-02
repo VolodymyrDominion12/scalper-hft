@@ -22,10 +22,10 @@ def parse_registry(text: str) -> list[OosWindow]:
     rows: list[OosWindow] = []
     for line in text.splitlines():
         line = line.strip()
-        if not line.startswith("|") or line.startswith("|---") or "strategy" in line.lower():
+        if not line.startswith("|") or line.startswith("|---"):
             continue
         parts = [p.strip() for p in line.strip("|").split("|")]
-        if len(parts) < 5:
+        if len(parts) < 5 or parts[0].lower() == "strategy":
             continue
         try:
             rows.append(

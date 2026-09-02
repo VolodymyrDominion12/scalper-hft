@@ -114,7 +114,7 @@ def garch_forecast(
             continue
         if t % refit_every == 0:
             # рефіт параметрів на останньому вікні
-            hist = r.iloc[max(0, t - window): t]
+            hist = r.iloc[max(0, t - window) : t]
             omega, alpha, beta = garch11_fit(hist.values)
             # ініціалізуємо v з довгострокової дисперсії при першому рефіті
             if t == warmup or v <= 0:
@@ -127,7 +127,6 @@ def garch_forecast(
         v = var_t
         t += 1
     return pd.Series(out, index=r.index)
-
 
 
 def ewma_vol(returns: pd.Series, span: int = 20) -> pd.Series:

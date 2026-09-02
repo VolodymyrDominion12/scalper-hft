@@ -141,6 +141,24 @@ class PaperStore:
             params=(limit,),
         )
 
+    def all_equity(self) -> pd.DataFrame:
+        return pd.read_sql_query(
+            "SELECT ts, pair, equity, cash, realized_pnl FROM equity ORDER BY id",
+            self._conn,
+        )
+
+    def all_orders(self) -> pd.DataFrame:
+        return pd.read_sql_query(
+            "SELECT ts, pair, symbol, side, size, price, status, reason FROM orders ORDER BY id",
+            self._conn,
+        )
+
+    def all_trades(self) -> pd.DataFrame:
+        return pd.read_sql_query(
+            "SELECT ts, pair, symbol, side, size, entry_price, exit_price, pnl, kind FROM trades ORDER BY id",
+            self._conn,
+        )
+
     def fill_stats(self, pair: str | None = None) -> dict[str, int]:
         if pair:
             rows = self._conn.execute(

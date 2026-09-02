@@ -37,7 +37,6 @@ class _Lagged(Strategy):
         self.needs_trades = getattr(base, "needs_trades", False)
         self.needs_funding = getattr(base, "needs_funding", False)
 
-
     def generate_signals(self, df, trades=None, funding=None):
         if self.needs_funding:
             sig = self.base.generate_signals(df, funding=funding)

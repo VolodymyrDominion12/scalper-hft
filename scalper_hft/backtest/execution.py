@@ -276,4 +276,3 @@ class ImplementationShortfallTracker:
             vol_ref=self._ewma_vol if self._ewma_vol > 0 else base.vol_ref,
             vol_exp=base.vol_exp,
         )
-

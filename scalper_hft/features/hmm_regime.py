@@ -156,7 +156,6 @@ class GaussianHMM:
                 covars[i] = (gamma[:, i][:, None] * diff**2).sum(axis=0) / max(denom[i], 1e-300)
             covars = np.maximum(covars, var_all * 0.01)
 
-
         # фінальний прогін (масштабований forward–backward)
         B = np.column_stack([np.exp(_log_gaussian(X, means[i], covars[i])) for i in range(k)])
         B = np.maximum(B, 1e-300)

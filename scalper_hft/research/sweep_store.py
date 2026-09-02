@@ -16,14 +16,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
-
 # ── Розширений SweepRow ───────────────────────────────────────────────────────
+
 
 @dataclass
 class SweepRow:
@@ -33,7 +33,7 @@ class SweepRow:
     symbol: str
     interval: str
     days: int = 0
-    mode: str = "backtest"   # backtest | walkforward
+    mode: str = "backtest"  # backtest | walkforward
     n_bars: int = 0
     n_trades: int = 0
     total_return: float = float("nan")
@@ -51,13 +51,13 @@ class SweepRow:
     avg_oos_sharpe: float = float("nan")
     oos_positive_frac: float = float("nan")
     # Filter tracing
-    n_raw_signals: int = 0        # всього raw сигналів до фільтрів
-    n_filtered: int = 0           # заблоковано фільтрами
+    n_raw_signals: int = 0  # всього raw сигналів до фільтрів
+    n_filtered: int = 0  # заблоковано фільтрами
     filter_attribution: str = ""  # JSON: {filter_name: n_blocked}
     # Статус
     status: str = "ok"
     error: str = ""
-    run_ts: str = ""              # ISO timestamp прогону
+    run_ts: str = ""  # ISO timestamp прогону
 
     def as_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()
@@ -138,6 +138,7 @@ DO UPDATE SET
 
 # ── Store ─────────────────────────────────────────────────────────────────────
 
+
 class SweepStore:
     """SQLite-сховище для результатів sweep-прогону.
 
@@ -159,7 +160,7 @@ class SweepStore:
 
         d = row.as_dict()
         if not d.get("run_ts"):
-            d["run_ts"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            d["run_ts"] = datetime.datetime.now(datetime.UTC).isoformat()
         self._conn.execute(_UPSERT_SQL, d)
         self._conn.commit()
 
@@ -173,8 +174,7 @@ class SweepStore:
     ) -> bool:
         """Чи вже є результат для цієї комбінації зі статусом 'ok'?"""
         cur = self._conn.execute(
-            "SELECT status FROM sweep_results "
-            "WHERE strategy=? AND symbol=? AND interval=? AND days=? AND mode=?",
+            "SELECT status FROM sweep_results WHERE strategy=? AND symbol=? AND interval=? AND days=? AND mode=?",
             (strategy, symbol, interval, days, mode),
         )
         row = cur.fetchone()
@@ -208,13 +208,15 @@ class SweepStore:
             except (json.JSONDecodeError, TypeError):
                 continue
             for fname, cnt in d.items():
-                rows.append({
-                    "strategy": r["strategy"],
-                    "symbol": r["symbol"],
-                    "interval": r["interval"],
-                    "filter_name": fname,
-                    "n_blocked": cnt,
-                })
+                rows.append(
+                    {
+                        "strategy": r["strategy"],
+                        "symbol": r["symbol"],
+                        "interval": r["interval"],
+                        "filter_name": fname,
+                        "n_blocked": cnt,
+                    }
+                )
         return pd.DataFrame(rows) if rows else pd.DataFrame()
 
     def summary(self) -> pd.DataFrame:
@@ -237,7 +239,7 @@ class SweepStore:
     def close(self) -> None:
         self._conn.close()
 
-    def __enter__(self) -> "SweepStore":
+    def __enter__(self) -> SweepStore:
         return self
 
     def __exit__(self, *_: Any) -> None:

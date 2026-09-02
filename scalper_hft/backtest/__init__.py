@@ -20,4 +20,3 @@ __all__ = [
     "estimate_order_book_imbalance",
     "QueuePositionModel",
 ]
-

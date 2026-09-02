@@ -809,6 +809,47 @@ def cmd_paper_replay_pairs(args: argparse.Namespace) -> None:
         send_telegram(result.summary())
 
 
+def cmd_paper_audit(args: argparse.Namespace) -> None:
+    """Phase 1: tracking error paper SQLite vs бектест + loss forensics."""
+    from pathlib import Path
+
+    from scalper_hft.live.store import PaperStore
+    from scalper_hft.validation.paper_audit import audit_paper_store, load_equity_csv
+
+    db = Path(args.db)
+    if not db.exists():
+        raise SystemExit(f"Немає paper DB: {db}")
+    store = PaperStore(db)
+    bt_equity = load_equity_csv(Path(args.bt_equity)) if args.bt_equity else None
+    audit = audit_paper_store(
+        store,
+        bt_equity=bt_equity,
+        bt_fill_rate=args.bt_fill_rate,
+        dd_mult=args.dd_mult,
+    )
+    print("\n" + audit.summary())
+    store.close()
+
+
+def cmd_experiments(args: argparse.Namespace) -> None:
+    """Показати каталог експериментів (val → OOS gate)."""
+    from pathlib import Path
+
+    from scalper_hft.validation.experiments import load_catalog
+
+    path = Path(args.catalog) if args.catalog else None
+    rows = load_catalog(path)
+    if not rows:
+        print("Каталог порожній.")
+        return
+    for exp in rows:
+        base = exp.baseline_id or "—"
+        print(
+            f"{exp.id}\t{exp.strategy}\tval={exp.val_start}..{exp.val_end}\t"
+            f"test={exp.test_start}..{exp.test_end}\tbaseline={base}\t{exp.hypothesis}"
+        )
+
+
 def cmd_cohort(args: argparse.Namespace) -> None:
     """Cohort analysis: деградація edge за когортами угод (Predictive Marketing)."""
     from scalper_hft.backtest.engine import run_backtest
@@ -1453,6 +1494,17 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--leg2", default="BTCUSDT")
     p.add_argument("--notify", action="store_true")
     p.set_defaults(func=cmd_paper_replay_pairs, strategy="pairs_arb", interval="1h")
+
+    p = sub.add_parser("paper-audit", help="Tracking error paper SQLite vs бектест + MAE/MFE forensics")
+    p.add_argument("--db", default="results/paper_pairs.sqlite", help="Шлях до paper SQLite")
+    p.add_argument("--bt-equity", default=None, help="CSV ts,equity бектесту за той самий період")
+    p.add_argument("--bt-fill-rate", type=float, default=None, dest="bt_fill_rate")
+    p.add_argument("--dd-mult", type=float, default=1.5, dest="dd_mult", help="Paper maxDD ≤ BT×mult")
+    p.set_defaults(func=cmd_paper_audit)
+
+    p = sub.add_parser("experiments", help="Каталог val→OOS експериментів (sparse_basket / ml_strategy)")
+    p.add_argument("--catalog", default=None, help="Markdown каталог (за замовч. docs/reports/experiments.md)")
+    p.set_defaults(func=cmd_experiments)
 
     p = sub.add_parser("ml", help="Walk-forward ML-класифікатор: Triple-Barrier + LightGBM + AFML")
     add_common(p)

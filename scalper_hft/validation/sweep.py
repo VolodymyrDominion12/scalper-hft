@@ -68,8 +68,13 @@ def _run_backtest_cell(
     from scalper_hft.backtest.router import run_strategy_backtest
 
     res = run_strategy_backtest(
-        klines, strategy, cost=cost, trades=trades, funding=funding,
-        position_pct=position_pct, trace=enable_trace,
+        klines,
+        strategy,
+        cost=cost,
+        trades=trades,
+        funding=funding,
+        position_pct=position_pct,
+        trace=enable_trace,
     )
     m = res.metrics
 
@@ -84,9 +89,7 @@ def _run_backtest_cell(
         n_filtered = res.trace.n_blocked()
         attr_df = filter_attribution(res.trace)
         if not attr_df.empty:
-            filter_attr_json = json.dumps(
-                dict(zip(attr_df["filter_name"], attr_df["n_blocked"].tolist()))
-            )
+            filter_attr_json = json.dumps(dict(zip(attr_df["filter_name"], attr_df["n_blocked"].tolist())))
 
     row = SweepRow(
         strategy=strategy.name,
@@ -182,15 +185,32 @@ def _build_cell_runner(
             trades = download_agg_trades(symbol, days) if strategy.needs_trades else None
             funding = download_funding(symbol, days) if strategy.needs_funding else None
         if klines is None or klines.empty:
-            return SweepRow(strategy=strategy.name, symbol=symbol, interval=interval, status="error", error="немає даних")
+            return SweepRow(
+                strategy=strategy.name, symbol=symbol, interval=interval, status="error", error="немає даних"
+            )
         if mode == "walkforward":
             return _run_wf_cell(
-                strategy, symbol, interval, klines, trades, funding,
-                train_bars=train_bars, test_bars=test_bars, cost=cost, position_pct=position_pct,
+                strategy,
+                symbol,
+                interval,
+                klines,
+                trades,
+                funding,
+                train_bars=train_bars,
+                test_bars=test_bars,
+                cost=cost,
+                position_pct=position_pct,
             )
         return _run_backtest_cell(
-            strategy, symbol, interval, klines, trades, funding,
-            cost=cost, position_pct=position_pct, enable_trace=enable_trace,
+            strategy,
+            symbol,
+            interval,
+            klines,
+            trades,
+            funding,
+            cost=cost,
+            position_pct=position_pct,
+            enable_trace=enable_trace,
         )
 
     return cell
@@ -209,7 +229,7 @@ def run_sweep(
     workers: int = 1,
     include_slow: bool = False,
     data_provider: Callable[..., Any] | None = None,
-    store: "SweepStore | None" = None,
+    store: SweepStore | None = None,
     resume: bool = False,
     enable_trace: bool = False,
 ) -> pd.DataFrame:
@@ -266,10 +286,7 @@ def run_sweep(
 
     # -- Resume: фільтрувати вже виконані клітинки ----------------------------
     if resume and store is not None:
-        cells = [
-            c for c in all_cells
-            if not store.already_done(c[0], c[1], c[2], days, mode)
-        ]
+        cells = [c for c in all_cells if not store.already_done(c[0], c[1], c[2], days, mode)]
         skipped = len(all_cells) - len(cells)
         if skipped:
             logger.info("Resume: пропущено %d вже виконаних клітинок", skipped)
@@ -279,12 +296,17 @@ def run_sweep(
     total = len(cells)
     logger.info(
         "Sweep: %d стратегій × %d символів × %d TF = %d клітинок (всього %d)",
-        len(strategies), len(symbols), len(intervals), total, len(all_cells),
+        len(strategies),
+        len(symbols),
+        len(intervals),
+        total,
+        len(all_cells),
     )
 
     # -- tqdm progress bar (якщо встановлений) --------------------------------
     try:
         from tqdm import tqdm
+
         progress_iter = tqdm(total=total, desc="Sweep", unit="cell")
     except ImportError:
         progress_iter = None
@@ -296,8 +318,7 @@ def run_sweep(
         except Exception as exc:  # noqa: BLE001
             logger.warning("Клітинка %s %s %s: %s", *c, exc)
             row = SweepRow(
-                strategy=c[0], symbol=c[1], interval=c[2],
-                days=days, mode=mode, status="error", error=str(exc)
+                strategy=c[0], symbol=c[1], interval=c[2], days=days, mode=mode, status="error", error=str(exc)
             )
         else:
             row.days = days
@@ -357,7 +378,17 @@ def save_sweep_report(df: pd.DataFrame, out_csv: str | None = None, out_md: str 
                 continue
             md.append(f"## {iv}")
             md.append("")
-            cols = ["strategy", "symbol", "n_trades", "total_return", "sharpe", "max_dd", "win_rate", "avg_oos_sharpe", "oos_positive_frac"]
+            cols = [
+                "strategy",
+                "symbol",
+                "n_trades",
+                "total_return",
+                "sharpe",
+                "max_dd",
+                "win_rate",
+                "avg_oos_sharpe",
+                "oos_positive_frac",
+            ]
             view = sub[[c for c in cols if c in sub.columns]].copy()
             for c in ["total_return", "max_dd", "win_rate"]:
                 if c in view.columns:

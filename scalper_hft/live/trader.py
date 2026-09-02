@@ -23,6 +23,7 @@ from scalper_hft.backtest.execution import CostModel
 from scalper_hft.config import get_settings
 from scalper_hft.data.binance_client import BinanceClient
 from scalper_hft.live.account import PaperAccount
+from scalper_hft.live.risk_gate import CooldownState, decide_entry
 from scalper_hft.strategies.base import Strategy
 
 logger = logging.getLogger(__name__)
@@ -157,6 +158,8 @@ class LiveTrader:
         self.hmm_threshold = hmm_threshold
         self.last_signal: int = 0
         self._last_roll_day: object | None = None
+        self.cooldown = CooldownState()
+        self._entry_size_mult = 1.0
 
     # ── сигнал ───────────────────────────────────────────────────────────────
     def compute_signal(self, df: pd.DataFrame, now: pd.Timestamp | None = None) -> int:
@@ -266,29 +269,53 @@ class LiveTrader:
         return False
 
     # ── ризик-контроль (книга, гл. 4) ────────────────────────────────────────
-    def risk_check(self, decision: TradeDecision, mark_price: float | None = None) -> tuple[bool, str]:
+    def risk_check(
+        self,
+        decision: TradeDecision,
+        mark_price: float | None = None,
+        now: pd.Timestamp | None = None,
+    ) -> tuple[bool, str]:
         """Перевірка ризик-лімітів. Повертає (дозволено?, причина відмови).
 
         Правило: закриття позицій НІКОЛИ не блокується (зменшення ризику
         завжди дозволено); блокуються лише відкриття нових позицій.
+        Після N збитків — cooldown (size×0.5); після max consecutive — halt.
         """
         if decision.action in ("close", "hold"):
+            self._entry_size_mult = 1.0
             return True, "ok"
         if mark_price is not None:
             self.account.mark({self.symbol: mark_price})
-        if self.account.consecutive_losses >= self.settings.max_consecutive_losses:
-            return False, "серія збитків — пауза"
+        from scalper_hft.data.downloader import _utc_now
+
+        ts = _as_naive_utc(now if now is not None else _utc_now())
+        gate = decide_entry(
+            consecutive_losses=self.account.consecutive_losses,
+            now=ts,
+            cooldown=self.cooldown,
+            cooldown_losses=int(getattr(self.settings, "cooldown_losses", 2)),
+            max_consecutive_losses=int(self.settings.max_consecutive_losses),
+            cooldown_hours=float(getattr(self.settings, "cooldown_hours", 12.0)),
+            cooldown_size_mult=float(getattr(self.settings, "cooldown_size_mult", 0.5)),
+            flattening=False,
+        )
+        self.cooldown = gate.cooldown
+        self._entry_size_mult = gate.size_mult
+        if gate.status == "reject":
+            return False, gate.reason
         if self.account.equity <= self.account.day_start_equity * (1 - self.settings.daily_loss_limit):
             return False, "денний ліміт збитків"
         if len(self.account.positions) >= self.settings.max_open_positions:
             return False, "максимум відкритих позицій"
+        if gate.status == "cooldown":
+            return True, "cooldown"
         return True, "ok"
 
     # ── виконання ────────────────────────────────────────────────────────────
     def execute(self, decision: TradeDecision, price: float, ts: pd.Timestamp) -> str:
         self.maybe_roll_day(ts)
         self.account.mark({self.symbol: price})
-        allowed, reason = self.risk_check(decision, mark_price=price)
+        allowed, reason = self.risk_check(decision, mark_price=price, now=ts)
         if not allowed:
             logger.warning("Ризик-блок: %s", reason)
             return f"blocked:{reason}"
@@ -298,10 +325,11 @@ class LiveTrader:
             ok = self._close(price, ts)
             return "closed" if ok else "submit_failed:close"
         side = "long" if decision.action == "open_long" else "short"
-        ok = self._open(side, decision.size, price, ts)
+        size = decision.size * float(getattr(self, "_entry_size_mult", 1.0))
+        ok = self._open(side, size, price, ts)
         if not ok:
             return "submit_failed:open"
-        return f"opened {side} {decision.size:.6f} @ {price}"
+        return f"opened {side} {size:.6f} @ {price}"
 
     def _submit_order(self, side: str, size: float, price: float, *, reduce_only: bool = False) -> bool:
         """Live-ордер: maker → limit+postOnly; інакше market.

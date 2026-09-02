@@ -48,4 +48,3 @@ __all__ = [
     "create_tick_run_bars",
     "create_dollar_run_bars",
 ]
-

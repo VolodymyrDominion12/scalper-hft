@@ -141,17 +141,17 @@ def kyle_lambda_series(close: pd.Series, signed_volume: pd.Series, window: int =
         return pd.Series(lam_vals, index=close.index), pd.Series(tstat_vals, index=close.index)
 
     # sliding_window_view: shape (T-window, window), без копіювання
-    xw = sliding_window_view(x, window)   # (T-w, w)
-    yw = sliding_window_view(y, window)   # (T-w, w)
+    xw = sliding_window_view(x, window)  # (T-w, w)
+    yw = sliding_window_view(y, window)  # (T-w, w)
 
-    xx = (xw * xw).sum(axis=1)            # Σ x²  — shape (T-w,)
-    xy = (xw * yw).sum(axis=1)            # Σ x·y
+    xx = (xw * xw).sum(axis=1)  # Σ x²  — shape (T-w,)
+    xy = (xw * yw).sum(axis=1)  # Σ x·y
 
     valid = xx > 0
     b = np.where(valid, xy / np.where(valid, xx, 1.0), np.nan)  # OLS slope
 
-    resid = yw - b[:, None] * xw          # (T-w, w)
-    rss = (resid * resid).sum(axis=1)     # Σ ε²
+    resid = yw - b[:, None] * xw  # (T-w, w)
+    rss = (resid * resid).sum(axis=1)  # Σ ε²
 
     w = window
     se = np.where(
@@ -162,8 +162,8 @@ def kyle_lambda_series(close: pd.Series, signed_volume: pd.Series, window: int =
     t = np.where((se > 0) & np.isfinite(se), b / se, 0.0)
 
     # результати відповідають барам [window-1 .. T-1] (перше вікно закінчується на барі window-1)
-    lam_vals[window - 1:] = b
-    tstat_vals[window - 1:] = t
+    lam_vals[window - 1 :] = b
+    tstat_vals[window - 1 :] = t
 
     return pd.Series(lam_vals, index=close.index), pd.Series(tstat_vals, index=close.index)
 

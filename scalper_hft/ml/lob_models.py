@@ -21,7 +21,6 @@ except ImportError:
     nn = _NNMock  # type: ignore[assignment]
 
 
-
 class DeepLOB(nn.Module):
     """Спрощена версія DeepLOB: CNN + LSTM для L2 даних.
 

@@ -171,9 +171,7 @@ def create_dollar_imbalance_bars(
     return _bars_from_indices(df, bar_indices)
 
 
-def create_tick_run_bars(
-    trades: pd.DataFrame, expected_run_window: int = 1000, ewma_window: int = 100
-) -> pd.DataFrame:
+def create_tick_run_bars(trades: pd.DataFrame, expected_run_window: int = 1000, ewma_window: int = 100) -> pd.DataFrame:
     """Формує Tick Run Bars (TRB, AFML Ch.2).
 
     TRB формуються, коли максимальна довжина односпрямованої серії (run) тіків
@@ -260,4 +258,3 @@ def create_dollar_run_bars(
             theta_sell_d = 0.0
 
     return _bars_from_indices(df, bar_indices)
-

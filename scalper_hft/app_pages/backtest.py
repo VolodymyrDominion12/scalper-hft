@@ -240,6 +240,7 @@ if st.session_state.get("bt_view") is not None:
                 daily_ret = bt_res.equity.resample("1D").last().pct_change().dropna()
                 if len(daily_ret) >= 14:
                     import numpy as np
+
                     rs = (daily_ret.rolling(14).mean() / daily_ret.rolling(14).std()) * np.sqrt(365)
                     fig_rs = go.Figure()
                     fig_rs.add_trace(go.Scatter(x=rs.index, y=rs.values, mode="lines", name="Sharpe 14d rolling"))
@@ -257,26 +258,31 @@ if st.session_state.get("bt_view") is not None:
                 fa1, fa2, fa3 = st.columns(3)
                 fa1.metric("Raw сигналів", n_raw)
                 fa2.metric("Пройшли фільтри", trace.n_passed())
-                fa3.metric("Заблоковано", n_blocked,
-                           delta=f"-{n_blocked/n_raw:.0%}" if n_raw else "", delta_color="inverse")
+                fa3.metric(
+                    "Заблоковано", n_blocked, delta=f"-{n_blocked / n_raw:.0%}" if n_raw else "", delta_color="inverse"
+                )
 
                 attr_df = filter_attribution(trace)
                 if not attr_df.empty:
-                    fig_a = go.Figure(go.Bar(
-                        x=attr_df["filter_name"], y=attr_df["n_blocked"],
-                        text=attr_df["n_blocked"], textposition="outside",
-                        marker_color="#f97316",
-                    ))
+                    fig_a = go.Figure(
+                        go.Bar(
+                            x=attr_df["filter_name"],
+                            y=attr_df["n_blocked"],
+                            text=attr_df["n_blocked"],
+                            textposition="outside",
+                            marker_color="#f97316",
+                        )
+                    )
                     fig_a.update_layout(title="Скільки сигналів заблокував кожен фільтр", height=320)
                     st.plotly_chart(fig_a, use_container_width=True)
 
                 pnl_df = filter_pnl_impact(trace, bt_df["close"], horizon_bars=5)
                 if not pnl_df.empty:
                     st.subheader("Shadow PnL (без фільтру)")
-                    st.dataframe(pnl_df.style.background_gradient(
-                        subset=["shadow_mean_ret", "shadow_win_rate"],
-                        cmap="RdYlGn"
-                    ), use_container_width=True)
+                    st.dataframe(
+                        pnl_df.style.background_gradient(subset=["shadow_mean_ret", "shadow_win_rate"], cmap="RdYlGn"),
+                        use_container_width=True,
+                    )
             else:
                 st.info(
                     "Трейсинг фільтрів не активовано. Запустіть бектест з параметром `trace=True` "
@@ -285,15 +291,21 @@ if st.session_state.get("bt_view") is not None:
                 if st.button("🔬 Запустити з трейсингом", key="bt_run_trace"):
                     from scalper_hft.backtest.engine import run_backtest
                     from scalper_hft.backtest.execution import CostModel
+
                     strat_name = st.session_state["bt_view"].get("title", "").split(" ")[0]
                     try:
                         from scalper_hft.strategies import get_strategy
+
                         strat2 = get_strategy(strat_name)
-                        cost2 = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee,
-                                          slippage_frac=settings.slippage_frac)
+                        cost2 = CostModel(
+                            maker_fee=settings.maker_fee,
+                            taker_fee=settings.taker_fee,
+                            slippage_frac=settings.slippage_frac,
+                        )
                         with st.spinner("Бектест з трейсингом..."):
-                            res2 = run_backtest(bt_df, strat2, cost=cost2,
-                                                position_pct=settings.position_pct, trace=True)
+                            res2 = run_backtest(
+                                bt_df, strat2, cost=cost2, position_pct=settings.position_pct, trace=True
+                            )
                         view2 = dict(st.session_state["bt_view"])
                         view2["res"] = res2
                         st.session_state["bt_view"] = view2
@@ -308,8 +320,12 @@ if st.session_state.get("bt_view") is not None:
                 mae_df = mae_mfe_analysis(bt_res.trades, bt_df)
                 if not mae_df.empty:
                     import plotly.express as px
+
                     fig_mf = px.scatter(
-                        mae_df, x="mfe", y="mae", color="ret",
+                        mae_df,
+                        x="mfe",
+                        y="mae",
+                        color="ret",
                         color_continuous_scale="RdYlGn",
                         hover_data=["entry_ts", "side", "ret", "efficiency"],
                         title="MAE vs MFE (кожна угода — точка)",
@@ -343,17 +359,19 @@ if st.session_state.get("bt_view") is not None:
                 with sub_s1:
                     sess = session_breakdown(bt_res.trades)
                     if not sess.empty:
-                        fig_sess = go.Figure(go.Bar(
-                            x=sess.index, y=sess["n_trades"],
-                            marker_color=[
-                                f"hsl({int(wr*120)},70%,45%)" for wr in sess["win_rate"].fillna(0.5)
-                            ],
-                            text=[f"{wr:.0%}" for wr in sess["win_rate"].fillna(0)],
-                            textposition="outside",
-                        ))
+                        fig_sess = go.Figure(
+                            go.Bar(
+                                x=sess.index,
+                                y=sess["n_trades"],
+                                marker_color=[f"hsl({int(wr * 120)},70%,45%)" for wr in sess["win_rate"].fillna(0.5)],
+                                text=[f"{wr:.0%}" for wr in sess["win_rate"].fillna(0)],
+                                textposition="outside",
+                            )
+                        )
                         fig_sess.update_layout(
                             title="Угоди по годинах UTC (колір = win rate)",
-                            xaxis_title="Година UTC", yaxis_title="Кількість угод",
+                            xaxis_title="Година UTC",
+                            yaxis_title="Кількість угод",
                             height=320,
                         )
                         st.plotly_chart(fig_sess, use_container_width=True)
@@ -361,17 +379,19 @@ if st.session_state.get("bt_view") is not None:
                 with sub_s2:
                     wd = weekday_breakdown(bt_res.trades)
                     if not wd.empty:
-                        fig_wd = go.Figure(go.Bar(
-                            x=wd["day"], y=wd["n_trades"],
-                            marker_color=[
-                                f"hsl({int(wr*120)},70%,45%)" for wr in wd["win_rate"].fillna(0.5)
-                            ],
-                            text=[f"{wr:.0%}" for wr in wd["win_rate"].fillna(0)],
-                            textposition="outside",
-                        ))
+                        fig_wd = go.Figure(
+                            go.Bar(
+                                x=wd["day"],
+                                y=wd["n_trades"],
+                                marker_color=[f"hsl({int(wr * 120)},70%,45%)" for wr in wd["win_rate"].fillna(0.5)],
+                                text=[f"{wr:.0%}" for wr in wd["win_rate"].fillna(0)],
+                                textposition="outside",
+                            )
+                        )
                         fig_wd.update_layout(
                             title="Угоди по днях тижня (колір = win rate)",
-                            xaxis_title="", yaxis_title="Кількість угод",
+                            xaxis_title="",
+                            yaxis_title="Кількість угод",
                             height=320,
                         )
                         st.plotly_chart(fig_wd, use_container_width=True)
@@ -379,9 +399,14 @@ if st.session_state.get("bt_view") is not None:
                 hm = hourly_heatmap_data(bt_res.trades)
                 if not hm.empty:
                     import plotly.express as px
+
                     fig_hm = px.imshow(
-                        hm.values, x=list(hm.columns), y=list(hm.index),
-                        color_continuous_scale="RdYlGn", zmin=0, zmax=1,
+                        hm.values,
+                        x=list(hm.columns),
+                        y=list(hm.index),
+                        color_continuous_scale="RdYlGn",
+                        zmin=0,
+                        zmax=1,
                         title="Win rate: день тижня × година UTC",
                     )
                     fig_hm.update_layout(height=300)

@@ -44,5 +44,12 @@ def get_strategy(name: str, **params: float | int | str) -> Strategy:
     return REGISTRY[name](**params)
 
 
-__all__ = ["Strategy", "REGISTRY", "get_strategy", "SparseBasketArb", "Exp3Bandit", "exp3_select_signals", "CrossMomentum"]
-
+__all__ = [
+    "Strategy",
+    "REGISTRY",
+    "get_strategy",
+    "SparseBasketArb",
+    "Exp3Bandit",
+    "exp3_select_signals",
+    "CrossMomentum",
+]

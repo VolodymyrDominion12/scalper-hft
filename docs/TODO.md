@@ -48,7 +48,7 @@
 
 ### 1. Paper-валідація та моніторинг (Phase 1 Gate)
 - [ ] Безперервний моніторинг paper pairs портфеля (`results/paper_pairs.sqlite`) протягом **≥8 тижнів** без розходження з бектестом.
-- [ ] Щотижневий звіт tracking error: порівняння фактичного fill-rate post-only ордерів з моделлю бектесту.
+- [x] Щотижневий звіт tracking error: CLI `paper-audit` (`validation/paper_audit.py`) — fill-rate, maxDD vs BT×1.5, MAE/MFE forensics.
 
 ### 2. Накопичення даних глибини стакана (L2 / Depth)
 - [ ] Накопичення архіву depth5 снапшотів для повноцінної перевірки `ob_imbalance` на мікроструктурних рівнях.

@@ -62,6 +62,7 @@ class MLStrategy(Strategy):
         prob_size       : sizing ∝ впевненості primary (AFML Ch.10.3), default False
         meta_filter     : повний мета-лейблінг + sizing (default False)
         meta_scale      : множник розміру мета-ставки (default 1.0)
+        ood_threshold   : DI veto (0 = вимкнено); >0 блокує OOD-бари
     """
 
     name = "ml_strategy"
@@ -113,6 +114,7 @@ class MLStrategy(Strategy):
         prob_size = bool(self.get("prob_size", False))
         meta_filter = bool(self.get("meta_filter", False))
         meta_scale = float(self.get("meta_scale", 1.0))
+        ood_threshold = float(self.get("ood_threshold", 0.0))
         add_hmm = bool(self.get("add_hmm", False))
         add_garch = bool(self.get("add_garch", False))
         hmm_states = int(self.get("hmm_states", 3))
@@ -177,6 +179,15 @@ class MLStrategy(Strategy):
                 signals = side.astype(float) * size
             else:
                 signals = side.astype(float)
+
+        if ood_threshold > 0:
+            from scalper_hft.ml.ood import apply_ood_veto, fit_ood_stats, ood_mask
+
+            train_end = min(train_bars, len(X))
+            mean, std = fit_ood_stats(X.iloc[:train_end])
+            in_dist = ood_mask(X, mean, std, ood_threshold)
+            ood_series = pd.Series(in_dist, index=X.index)
+            signals = apply_ood_veto(signals, ood_series.reindex(signals.index, fill_value=True))
 
         # Режимний фільтр
         if regime_filter == "vol":

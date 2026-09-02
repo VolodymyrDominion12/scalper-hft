@@ -132,4 +132,3 @@ def estimate_tail_dependence(
 
 
 __all__ = ["portfolio_var", "vol_target_scale", "loss_budget_split", "estimate_tail_dependence"]
-

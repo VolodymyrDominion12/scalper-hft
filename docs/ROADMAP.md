@@ -36,14 +36,14 @@ paper-replay реверсує і рахує daily-loss на mark-to-market. Те
 Зроблено в репозиторії:
 1. ✅ `PairsEngine` / `PairsPaperRunner` / `PairsPortfolioRunner` — дві ноги, z-score на закритому барі, maker all-or-none, рівні ноціонали.
 2. ✅ Модель філла: post-only на OHLC; unfilled + wait_bars; відсутність одноногих позицій.
-3. ✅ CLI: `paper-run-pairs`, `paper-replay-pairs`, `pairs-portfolio` з підтримкою `--method erc` (Equal Risk Contribution).
-4. ✅ Ризик: `PAIR_NOTIONAL_PCT` / `PORTFOLIO_NOTIONAL_PCT`, стоп після `MAX_LOSING_MONTHS`.
+3. ✅ CLI: `paper-run-pairs`, `paper-replay-pairs`, `pairs-portfolio` з підтримкою `--method erc` (Equal Risk Contribution); `paper-audit` — tracking error vs бектест + MAE/MFE forensics.
+4. ✅ Ризик: `PAIR_NOTIONAL_PCT` / `PORTFOLIO_NOTIONAL_PCT`, стоп після `MAX_LOSING_MONTHS`; cooldown size×0.5 перед halt; кап корельованого ноціоналу (`CORR_NOTIONAL_CAP`).
 5. ✅ SQLite `results/paper_pairs.sqlite` (equity, orders, trades, months).
 6. ✅ Дашборд: Streamlit секція pairs + SQLite аналітика.
 7. ✅ Weekly-audit: валідовані пари + портфель; Telegram сповіщення.
 8. ✅ Linger: активний `loginctl enable-linger $USER` для depth-рекордера.
 
-**Критерій виходу (Paper Gate):** ≥8 тижнів paper-прогону, tracking error vs бектест, fill-rate у звіті, maxDD у межах бектесту × 1.5.
+**Критерій виходу (Paper Gate):** ≥8 тижнів paper-прогону, CLI `paper-audit` (tracking error vs бектест, fill-rate, maxDD ≤ бектест × 1.5, MAE/MFE forensics).
 
 Стартовий портфель: **XRP/BTC + BTC/ETH + LINK/BTC (+ LINK/ETH)**, 1h, maker.
 

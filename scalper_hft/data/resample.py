@@ -134,7 +134,9 @@ def resample_klines(
     if out.empty:
         logger.warning(
             "Ресемплінг %s → %s дав порожній результат (даних замало: %d барів джерела)",
-            source or "?", target, len(df),
+            source or "?",
+            target,
+            len(df),
         )
     return out
 
@@ -147,4 +149,11 @@ def resample_series(s: pd.Series, target: str, *, source: str | None = None, agg
     return s.resample(_rule(tgt_min), label="left", closed="left").agg(agg).dropna()
 
 
-__all__ = ["INTERVAL_MINUTES", "interval_minutes", "infer_interval_minutes", "check_target_valid", "resample_klines", "resample_series"]
+__all__ = [
+    "INTERVAL_MINUTES",
+    "interval_minutes",
+    "infer_interval_minutes",
+    "check_target_valid",
+    "resample_klines",
+    "resample_series",
+]

@@ -36,6 +36,7 @@ from scalper_hft.ml.feature_importance import (
 from scalper_hft.ml.features import build_labeled_dataset
 from scalper_hft.ml.frac_diff import add_frac_diff, find_min_d, frac_diff_features, frac_diff_ffd
 from scalper_hft.ml.labeling import get_events, get_labels, label_from_ohlcv
+from scalper_hft.ml.ood import apply_ood_veto, dissimilarity_index, fit_ood_stats, ood_mask
 from scalper_hft.ml.sample_weights import compute_sample_weights, get_ind_matrix, seq_bootstrap
 from scalper_hft.ml.trainer import (
     MlResult,
@@ -55,7 +56,6 @@ __all__ = [
     "clustered_mda",
     "cluster_features",
     "CfiResult",
-
     # AFML
     "label_from_ohlcv",
     "get_events",
@@ -67,6 +67,10 @@ __all__ = [
     "find_min_d",
     "add_frac_diff",
     "frac_diff_features",
+    "fit_ood_stats",
+    "dissimilarity_index",
+    "ood_mask",
+    "apply_ood_veto",
     # Bet sizing (AFML Ch.10.3, 10.6)
     "prob_to_size",
     "discretize",

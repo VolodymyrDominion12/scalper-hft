@@ -117,7 +117,6 @@ class PairsArb(Strategy):
         holding = sig.shift(1).fillna(0.0) != 0.0
         return sig.where(gate.reindex(sig.index, fill_value=False) | holding, other=0)
 
-
     @staticmethod
     def _apply_hmm_vol_gate(sig: pd.Series, df: pd.DataFrame) -> pd.Series:
         """Блокує нові входи у HMM-стані з максимальною волатильністю.
@@ -144,4 +143,3 @@ class PairsArb(Strategy):
             return sig.where(~block | holding, other=0)
         except Exception:  # noqa: BLE001
             return sig
-

@@ -154,3 +154,30 @@ def probability_of_backtest_overfitting(
     pbo = float((best_oos < threshold).mean())
     # коригування на trials: з більшою кількістю спроб PBO зростає
     return min(1.0, pbo * math.log2(max(n_trials, 2)) / math.log2(32))
+
+
+def probabilistic_sharpe_ratio(
+    returns: Sequence[float] | pd.Series,
+    sr_benchmark: float = 0.0,
+) -> float:
+    """Probabilistic Sharpe Ratio (Bailey & López de Prado) vs SR*.
+
+    PSR = Φ((SR − SR*) × √(n−1) / √(1 − skew×SR + (kurt−1)/4×SR²))
+    Повертає ймовірність ∈ [0, 1], що справжній Sharpe > sr_benchmark.
+    """
+    ret = np.asarray(returns, dtype=float)
+    n = len(ret)
+    if n < 3:
+        return 0.0
+    std = float(ret.std(ddof=1))
+    if std <= 0.0:
+        return 0.0
+    sr = float(ret.mean() / std) - sr_benchmark
+    series = pd.Series(ret)
+    skew = float(series.skew())
+    kurt = float(series.kurt()) + 3.0  # pandas kurt = excess; формула хоче raw kurtosis
+    var_term = 1.0 - skew * sr + (kurt - 1.0) / 4.0 * sr**2
+    if var_term <= 0.0:
+        return 0.0
+    z_stat = sr * math.sqrt(n - 1) / math.sqrt(var_term)
+    return _norm_cdf(z_stat)

@@ -204,9 +204,7 @@ class PostgresStore:
 
         clean = []
         for row in rows:
-            clean.append(
-                tuple(None if isinstance(v, float) and math.isnan(v) else v for v in row)
-            )
+            clean.append(tuple(None if isinstance(v, float) and math.isnan(v) else v for v in row))
         with conn.cursor() as cur:
             with cur.copy(f"COPY {table} ({', '.join(cols)}) FROM STDIN") as copy:
                 for row in clean:

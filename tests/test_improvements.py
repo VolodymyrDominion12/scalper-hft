@@ -2,10 +2,9 @@
 
 import numpy as np
 import pandas as pd
-import pytest
-
 
 # ── Vectorized microstructure ──────────────────────────────────────────────────
+
 
 class TestVectorizedMicrostructure:
     def test_kyle_lambda_shape_and_no_loop(self):
@@ -63,9 +62,11 @@ class TestVectorizedMicrostructure:
 
 # ── CrossMomentum strategy ──────────────────────────────────────────────────────
 
+
 class TestCrossMomentum:
     def test_registered(self):
         from scalper_hft.strategies import REGISTRY
+
         assert "cross_momentum" in REGISTRY
 
     def test_signals_shape(self):
@@ -97,6 +98,7 @@ class TestCrossMomentum:
 
 
 # ── PairsArb breakeven gate ────────────────────────────────────────────────────
+
 
 class TestPairsArbGates:
     def _make_pairs_df(self, n=500, seed=42):
@@ -131,6 +133,7 @@ class TestPairsArbGates:
 
 # ── GARCH optimization ─────────────────────────────────────────────────────────
 
+
 class TestGARCHOptimized:
     def test_forecast_no_nested_recursion(self):
         """garch_forecast не має вкладеного loop — результат стабільний."""
@@ -146,6 +149,7 @@ class TestGARCHOptimized:
 
 
 # ── CLI cmd_report includes quintile & time-decay ─────────────────────────────
+
 
 class TestCmdReportExtended:
     def test_quintile_in_report(self):
@@ -171,8 +175,13 @@ class TestCmdReportExtended:
         n = 200
         idx = pd.date_range("2025-01-01", periods=n, freq="1h")
         df = pd.DataFrame(
-            {"open": np.ones(n) * 100, "high": np.ones(n) * 101, "low": np.ones(n) * 99,
-             "close": 100 + np.cumsum(np.random.randn(n) * 0.5), "volume": np.ones(n) * 1000},
+            {
+                "open": np.ones(n) * 100,
+                "high": np.ones(n) * 101,
+                "low": np.ones(n) * 99,
+                "close": 100 + np.cumsum(np.random.randn(n) * 0.5),
+                "volume": np.ones(n) * 1000,
+            },
             index=idx,
         )
         s = get_strategy("mean_reversion")

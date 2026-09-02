@@ -226,14 +226,9 @@ def test_pairs_walk_forward_preserves_range():
     rng = np.random.default_rng(42)
     p1 = 100.0 + np.cumsum(rng.normal(0, 0.5, len(idx)))
     p2 = 100.0 + np.cumsum(rng.normal(0, 0.5, len(idx)))
-    d1 = pd.DataFrame(
-        {"open": p1, "high": p1 * 1.01, "low": p1 * 0.99, "close": p1, "volume": 100.0}, index=idx
-    )
-    d2 = pd.DataFrame(
-        {"open": p2, "high": p2 * 1.01, "low": p2 * 0.99, "close": p2, "volume": 100.0}, index=idx
-    )
+    d1 = pd.DataFrame({"open": p1, "high": p1 * 1.01, "low": p1 * 0.99, "close": p1, "volume": 100.0}, index=idx)
+    d2 = pd.DataFrame({"open": p2, "high": p2 * 1.01, "low": p2 * 0.99, "close": p2, "volume": 100.0}, index=idx)
     strat = PairsArb(lookback=60, entry_z=1.5, exit_z=0.2)
     res = run_pairs_walk_forward(d1, d2, strat, train_bars=1500, test_bars=500, maker_execution=True)
     assert res["n_windows"] == 2
     assert "avg_oos_sharpe" in res
-

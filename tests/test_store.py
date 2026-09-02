@@ -17,9 +17,7 @@ from scalper_hft.data.store import ParquetStore, PostgresStore, get_store
 
 def _klines_df(n: int = 100) -> pd.DataFrame:
     idx = pd.date_range("2024-01-01", periods=n, freq="1min")
-    return pd.DataFrame(
-        {"open": 1.0, "high": 2.0, "low": 0.5, "close": 1.5, "volume": 10.0}, index=idx
-    )
+    return pd.DataFrame({"open": 1.0, "high": 2.0, "low": 0.5, "close": 1.5, "volume": 10.0}, index=idx)
 
 
 def _trades_df() -> pd.DataFrame:

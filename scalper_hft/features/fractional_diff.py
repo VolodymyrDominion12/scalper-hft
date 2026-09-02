@@ -40,4 +40,3 @@ __all__ = [
     "get_weights",
     "get_weights_ffd",
 ]
-

@@ -47,9 +47,7 @@ def _fill_price(prev_close: pd.Series, close: pd.Series, ts) -> float:
     return float(px) if np.isfinite(px) else float("nan")
 
 
-def _extract_trades(
-    positions: pd.Series, ret: pd.Series, fees: pd.Series, close: pd.Series
-) -> pd.DataFrame:
+def _extract_trades(positions: pd.Series, ret: pd.Series, fees: pd.Series, close: pd.Series) -> pd.DataFrame:
     """Виділення окремих угод з позиційної серії (вхід/вихід).
 
     Окрім часових міток додаються `entry_price`/`exit_price` — ціни виконання

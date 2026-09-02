@@ -158,9 +158,7 @@ def add_trade_markers(fig: go.Figure, trades: pd.DataFrame, df: pd.DataFrame | N
                     color=color,
                     line=dict(width=1, color="#333333"),
                 ),
-                hovertemplate=(
-                    f"{label}<br>%{{x|%Y-%m-%d %H:%M}}<br>вхід: %{{y:.4f}}<extra></extra>"
-                ),
+                hovertemplate=(f"{label}<br>%{{x|%Y-%m-%d %H:%M}}<br>вхід: %{{y:.4f}}<extra></extra>"),
             ),
             row=row,
             col=1,
@@ -180,8 +178,7 @@ def add_trade_markers(fig: go.Figure, trades: pd.DataFrame, df: pd.DataFrame | N
                 legendgroup="trades",
                 marker=dict(symbol="x", size=11, color=color, line=dict(width=1, color="#333333")),
                 hovertemplate=(
-                    f"{label}<br>%{{x|%Y-%m-%d %H:%M}}<br>вихід: %{{y:.4f}}<br>"
-                    f"PnL: %{{customdata:.3%}}<extra></extra>"
+                    f"{label}<br>%{{x|%Y-%m-%d %H:%M}}<br>вихід: %{{y:.4f}}<br>PnL: %{{customdata:.3%}}<extra></extra>"
                 ),
             ),
             row=row,
@@ -189,9 +186,7 @@ def add_trade_markers(fig: go.Figure, trades: pd.DataFrame, df: pd.DataFrame | N
         )
 
 
-def add_sl_tp_levels(
-    fig: go.Figure, trades: pd.DataFrame, row: int = 1, max_trades: int = 500
-) -> None:
+def add_sl_tp_levels(fig: go.Figure, trades: pd.DataFrame, row: int = 1, max_trades: int = 500) -> None:
     """Горизонтальні пунктирні сегменти SL/TP від входу до виходу угоди.
 
     Потребує колонок sl_price/tp_price у trades (додаються рушієм зі
@@ -505,8 +500,12 @@ def equity_figure(
     )
     fig.add_trace(
         go.Scatter(
-            x=eq.index, y=eq.values, mode="lines", name="Equity",
-            line=dict(color=EQUITY_COLOR, width=1.5), fill="tozeroy",
+            x=eq.index,
+            y=eq.values,
+            mode="lines",
+            name="Equity",
+            line=dict(color=EQUITY_COLOR, width=1.5),
+            fill="tozeroy",
             fillcolor="rgba(44,62,80,0.08)",
             hovertemplate="Equity: %{y:,.2f}<extra></extra>",
         ),
@@ -515,8 +514,12 @@ def equity_figure(
     )
     fig.add_trace(
         go.Scatter(
-            x=dd.index, y=dd.values, mode="lines", name="Просадка, %",
-            line=dict(color=SL_COLOR, width=1), fill="tozeroy",
+            x=dd.index,
+            y=dd.values,
+            mode="lines",
+            name="Просадка, %",
+            line=dict(color=SL_COLOR, width=1),
+            fill="tozeroy",
             fillcolor="rgba(231,76,60,0.15)",
             hovertemplate="Просадка: %{y:.2f}%<extra></extra>",
         ),

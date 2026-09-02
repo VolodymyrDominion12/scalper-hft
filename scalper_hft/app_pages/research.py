@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import numpy as np
@@ -18,7 +17,6 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-
 from scalper_hft.app_pages._common import SYMBOLS
 from scalper_hft.config import get_settings
 from scalper_hft.research.sweep_store import SweepStore
@@ -28,17 +26,18 @@ _SWEEP_DB = Path("results/sweep.db")
 
 st.title("🔬 Дослідження")
 st.caption(
-    "Масовий sweep всіх стратегій × символів × таймфреймів · "
-    "Filter attribution · Аналіз угод · Порівняння кривих"
+    "Масовий sweep всіх стратегій × символів × таймфреймів · Filter attribution · Аналіз угод · Порівняння кривих"
 )
 
-tabs = st.tabs([
-    "📊 Sweep Matrix",
-    "🔍 Filter Attribution",
-    "📈 Порівняння Equity",
-    "🎯 Якість Угод",
-    "🏆 Топ Комбінації",
-])
+tabs = st.tabs(
+    [
+        "📊 Sweep Matrix",
+        "🔍 Filter Attribution",
+        "📈 Порівняння Equity",
+        "🎯 Якість Угод",
+        "🏆 Топ Комбінації",
+    ]
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -53,13 +52,9 @@ with tabs[0]:
         from scalper_hft.validation.sweep import DEFAULT_INTERVALS, default_strategies
 
         all_strats = default_strategies(include_slow=False)
-        sel_strats = st.multiselect(
-            "Стратегії", all_strats, default=all_strats[:5], key="sw_strats"
-        )
+        sel_strats = st.multiselect("Стратегії", all_strats, default=all_strats[:5], key="sw_strats")
         sel_symbols = st.multiselect("Символи", SYMBOLS, default=SYMBOLS[:3], key="sw_syms")
-        sel_ivs = st.multiselect(
-            "Таймфрейми", DEFAULT_INTERVALS, default=["5m", "15m", "1h"], key="sw_ivs"
-        )
+        sel_ivs = st.multiselect("Таймфрейми", DEFAULT_INTERVALS, default=["5m", "15m", "1h"], key="sw_ivs")
         sel_days = st.slider("Днів даних", 14, 180, 60, key="sw_days")
         sel_mode = st.radio("Режим", ["backtest", "walkforward"], key="sw_mode", horizontal=True)
         sel_workers = st.slider("Потоки", 1, 8, 2, key="sw_workers")
@@ -117,12 +112,19 @@ with tabs[0]:
                 "--intervals 5m,15m,1h --days 60 --workers 2\n```"
             )
         else:
-            ok_df = df_all[df_all.get("status", pd.Series("ok", index=df_all.index)) == "ok"] \
-                if "status" in df_all.columns else df_all
+            ok_df = (
+                df_all[df_all.get("status", pd.Series("ok", index=df_all.index)) == "ok"]
+                if "status" in df_all.columns
+                else df_all
+            )
 
             # Фільтри heatmap
             fc1, fc2, fc3 = st.columns(3)
-            metric = fc1.selectbox("Метрика heatmap", ["sharpe", "sortino", "calmar", "win_rate", "total_return", "max_dd"], key="sw_metric")
+            metric = fc1.selectbox(
+                "Метрика heatmap",
+                ["sharpe", "sortino", "calmar", "win_rate", "total_return", "max_dd"],
+                key="sw_metric",
+            )
             min_trades = fc2.number_input("Min угод", 0, 10000, 10, key="sw_min_trades")
             filter_mode = fc3.selectbox("Режим фільтру", ["Всі", "backtest", "walkforward"], key="sw_fmode")
 
@@ -153,12 +155,27 @@ with tabs[0]:
 
                 # Таблиця з деталями
                 with st.expander("📋 Всі результати", expanded=False):
-                    display_cols = [c for c in [
-                        "strategy", "symbol", "interval", "mode", "n_trades",
-                        "total_return", "sharpe", "sortino", "calmar", "max_dd",
-                        "win_rate", "profit_factor", "trades_per_day",
-                        "avg_oos_sharpe", "oos_positive_frac",
-                    ] if c in view.columns]
+                    display_cols = [
+                        c
+                        for c in [
+                            "strategy",
+                            "symbol",
+                            "interval",
+                            "mode",
+                            "n_trades",
+                            "total_return",
+                            "sharpe",
+                            "sortino",
+                            "calmar",
+                            "max_dd",
+                            "win_rate",
+                            "profit_factor",
+                            "trades_per_day",
+                            "avg_oos_sharpe",
+                            "oos_positive_frac",
+                        ]
+                        if c in view.columns
+                    ]
                     st.dataframe(
                         view[display_cols].sort_values("sharpe", ascending=False),
                         use_container_width=True,
@@ -206,8 +223,7 @@ with tabs[1]:
                     slippage_frac=settings.slippage_frac,
                 )
                 with st.spinner("Бектест з трейсингом..."):
-                    res = run_backtest(df_k, strat, cost=cost, trace=True,
-                                      position_pct=settings.position_pct)
+                    res = run_backtest(df_k, strat, cost=cost, trace=True, position_pct=settings.position_pct)
 
                 trace = res.trace
                 if trace is None or len(trace) == 0:
@@ -223,17 +239,21 @@ with tabs[1]:
 
                     m1, m2, m3 = st.columns(3)
                     m1.metric("Raw сигналів", n_raw)
-                    m2.metric("Пройшли фільтри", n_passed,
-                              delta=f"{n_passed/n_raw:.0%}" if n_raw else "")
-                    m3.metric("Заблоковано", n_blocked,
-                              delta=f"-{n_blocked/n_raw:.0%}" if n_raw else "",
-                              delta_color="inverse")
+                    m2.metric("Пройшли фільтри", n_passed, delta=f"{n_passed / n_raw:.0%}" if n_raw else "")
+                    m3.metric(
+                        "Заблоковано",
+                        n_blocked,
+                        delta=f"-{n_blocked / n_raw:.0%}" if n_raw else "",
+                        delta_color="inverse",
+                    )
 
                     # Filter attribution bar chart
                     attr_df = filter_attribution(trace)
                     if not attr_df.empty:
                         fig_attr = px.bar(
-                            attr_df, x="filter_name", y="n_blocked",
+                            attr_df,
+                            x="filter_name",
+                            y="n_blocked",
                             title="Скільки сигналів заблокував кожен фільтр",
                             text="n_blocked",
                             color="pct_of_all_signals",
@@ -259,10 +279,7 @@ with tabs[1]:
                             )
                             with st.container(border=True):
                                 c1, c2, c3, c4 = st.columns(4)
-                                c1.metric(
-                                    f"{color} {row['filter_name']}",
-                                    f"{int(row['n_blocked'])} угод"
-                                )
+                                c1.metric(f"{color} {row['filter_name']}", f"{int(row['n_blocked'])} угод")
                                 c2.metric("Shadow win rate", f"{row['shadow_win_rate']:.0%}")
                                 c3.metric("Shadow avg PnL", f"{row['shadow_mean_ret']:+.4%}")
                                 c4.metric("Shadow total PnL", f"{row['shadow_total_pnl']:+.4%}")
@@ -270,8 +287,12 @@ with tabs[1]:
 
                         # Зберегти у session_state для Tab 5
                         st.session_state["fa_result"] = {
-                            "strat": fa_strat, "sym": fa_sym, "iv": fa_iv,
-                            "res": res, "trace": trace, "pnl_df": pnl_df,
+                            "strat": fa_strat,
+                            "sym": fa_sym,
+                            "iv": fa_iv,
+                            "res": res,
+                            "trace": trace,
+                            "pnl_df": pnl_df,
                         }
         else:
             # Завантажити з sweep store якщо є
@@ -281,12 +302,13 @@ with tabs[1]:
                         attr_store = store.load_filter_attribution()
                     if not attr_store.empty:
                         st.info("Дані filter attribution зі sweep-прогонів:")
-                        pivot_attr = attr_store.groupby(
-                            ["filter_name", "strategy"]
-                        )["n_blocked"].sum().reset_index()
+                        pivot_attr = attr_store.groupby(["filter_name", "strategy"])["n_blocked"].sum().reset_index()
                         fig2 = px.bar(
-                            pivot_attr, x="filter_name", y="n_blocked",
-                            color="strategy", barmode="stack",
+                            pivot_attr,
+                            x="filter_name",
+                            y="n_blocked",
+                            color="strategy",
+                            barmode="stack",
                             title="Filter attribution (агрегований sweep)",
                         )
                         st.plotly_chart(fig2, use_container_width=True)
@@ -317,9 +339,7 @@ with tabs[2]:
         ec_sym = st.selectbox("Символ", SYMBOLS, key="ec_sym")
         ec_iv = st.selectbox("Таймфрейм", ["1m", "5m", "15m", "1h"], index=1, key="ec_iv")
         ec_days = st.slider("Днів", 14, 180, 60, key="ec_days")
-        ec_label = st.text_input(
-            "Мітка", value=f"{ec_strat} {ec_sym} {ec_iv}", key="ec_label"
-        )
+        ec_label = st.text_input("Мітка", value=f"{ec_strat} {ec_sym} {ec_iv}", key="ec_label")
         add_curve_btn = st.button("➕ Додати криву", key="ec_add")
         clear_curves_btn = st.button("🗑 Очистити всі", key="ec_clear")
 
@@ -337,8 +357,9 @@ with tabs[2]:
                 st.warning(f"Немає даних {ec_sym} {ec_iv}")
             else:
                 strat = get_strategy(ec_strat)
-                cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee,
-                                 slippage_frac=settings.slippage_frac)
+                cost = CostModel(
+                    maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac
+                )
                 with st.spinner("Бектест..."):
                     res = run_backtest(df_k, strat, cost=cost, position_pct=settings.position_pct)
                 st.session_state["eq_curves"][ec_label] = res.equity
@@ -366,14 +387,16 @@ with tabs[2]:
             # Correlation matrix
             if len(curves) > 1:
                 # Ресемплінг до спільного денного індексу
-                daily = pd.DataFrame({
-                    lbl: eq.resample("1D").last().pct_change().dropna()
-                    for lbl, eq in curves.items()
-                }).dropna()
+                daily = pd.DataFrame(
+                    {lbl: eq.resample("1D").last().pct_change().dropna() for lbl, eq in curves.items()}
+                ).dropna()
                 if len(daily) > 5:
                     corr = daily.corr()
                     fig_corr = px.imshow(
-                        corr, color_continuous_scale="RdBu_r", zmin=-1, zmax=1,
+                        corr,
+                        color_continuous_scale="RdBu_r",
+                        zmin=-1,
+                        zmax=1,
                         title="Кореляція денних дохідностей між стратегіями",
                         text_auto=".2f",
                     )
@@ -386,16 +409,20 @@ with tabs[2]:
             for label, equity in curves.items():
                 daily_ret = equity.resample("1D").last().pct_change().dropna()
                 if len(daily_ret) >= 30:
-                    rolling_sharpe = (
-                        daily_ret.rolling(30).mean() / daily_ret.rolling(30).std()
-                    ) * np.sqrt(365)
-                    fig_rs.add_trace(go.Scatter(
-                        x=rolling_sharpe.index, y=rolling_sharpe.values,
-                        mode="lines", name=label,
-                    ))
+                    rolling_sharpe = (daily_ret.rolling(30).mean() / daily_ret.rolling(30).std()) * np.sqrt(365)
+                    fig_rs.add_trace(
+                        go.Scatter(
+                            x=rolling_sharpe.index,
+                            y=rolling_sharpe.values,
+                            mode="lines",
+                            name=label,
+                        )
+                    )
             fig_rs.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
             fig_rs.update_layout(
-                height=300, yaxis_title="Sharpe (30d rolling)", xaxis_title="",
+                height=300,
+                yaxis_title="Sharpe (30d rolling)",
+                xaxis_title="",
             )
             st.plotly_chart(fig_rs, use_container_width=True)
 
@@ -434,8 +461,9 @@ with tabs[3]:
                 st.warning(f"Немає даних {tq_sym} {tq_iv}")
             else:
                 strat = get_strategy(tq_strat)
-                cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee,
-                                 slippage_frac=settings.slippage_frac)
+                cost = CostModel(
+                    maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac
+                )
                 with st.spinner("Бектест..."):
                     res = run_backtest(df_k, strat, cost=cost, position_pct=settings.position_pct)
 
@@ -459,7 +487,10 @@ with tabs[3]:
                         mae_df = mae_mfe_analysis(trades, df_k)
                         if not mae_df.empty:
                             fig_mf = px.scatter(
-                                mae_df, x="mfe", y="mae", color="ret",
+                                mae_df,
+                                x="mfe",
+                                y="mae",
+                                color="ret",
                                 color_continuous_scale="RdYlGn",
                                 hover_data=["entry_ts", "side", "ret", "efficiency"],
                                 title="MAE vs MFE (кожна угода — точка)",
@@ -487,7 +518,8 @@ with tabs[3]:
                                 x=list(hm.columns),
                                 y=list(hm.index),
                                 color_continuous_scale="RdYlGn",
-                                zmin=0, zmax=1,
+                                zmin=0,
+                                zmax=1,
                                 title="Win rate: день тижня × година UTC",
                                 labels={"color": "Win rate"},
                             )
@@ -499,8 +531,11 @@ with tabs[3]:
                             if not sess.empty:
                                 st.subheader("Розбивка по годинах UTC")
                                 fig_sess = px.bar(
-                                    sess.reset_index(), x="hour_utc", y="n_trades",
-                                    color="win_rate", color_continuous_scale="RdYlGn",
+                                    sess.reset_index(),
+                                    x="hour_utc",
+                                    y="n_trades",
+                                    color="win_rate",
+                                    color_continuous_scale="RdYlGn",
                                     title="Кількість угод та win rate по годинах",
                                     labels={"n_trades": "Угод", "win_rate": "Win rate"},
                                 )
@@ -512,15 +547,18 @@ with tabs[3]:
                         if "ret" in trades.columns:
                             rets = trades["ret"].dropna()
                             fig_hist = px.histogram(
-                                rets, nbins=50,
+                                rets,
+                                nbins=50,
                                 title="Розподіл PnL угод",
                                 labels={"value": "PnL (відн.)", "count": "Кількість"},
                                 color_discrete_sequence=["#3b82f6"],
                             )
                             fig_hist.add_vline(x=0, line_dash="dash", line_color="red", opacity=0.5)
                             fig_hist.add_vline(
-                                x=float(rets.mean()), line_dash="dot",
-                                line_color="green", opacity=0.7,
+                                x=float(rets.mean()),
+                                line_dash="dot",
+                                line_color="green",
+                                opacity=0.7,
                                 annotation_text=f"mean={rets.mean():.4%}",
                             )
                             fig_hist.update_layout(height=380)
@@ -565,8 +603,11 @@ with tabs[4]:
             bc_min_wr = bc3.number_input("Min win rate", 0.0, 1.0, 0.4, step=0.05, key="bc_minwr")
             bc_show_n = bc4.number_input("Показати топ N", 5, 200, 30, key="bc_n")
 
-            ok = all_df[all_df.get("status", pd.Series("ok", index=all_df.index)) == "ok"] \
-                if "status" in all_df.columns else all_df
+            ok = (
+                all_df[all_df.get("status", pd.Series("ok", index=all_df.index)) == "ok"]
+                if "status" in all_df.columns
+                else all_df
+            )
 
             filtered = ok.copy()
             if "sharpe" in filtered.columns:
@@ -582,13 +623,29 @@ with tabs[4]:
                 sort_col = "avg_oos_sharpe" if "avg_oos_sharpe" in filtered.columns else "sharpe"
                 top = filtered.nlargest(int(bc_show_n), sort_col)
 
-                disp_cols = [c for c in [
-                    "strategy", "symbol", "interval", "mode",
-                    "n_trades", "sharpe", "sortino", "calmar",
-                    "total_return", "max_dd", "win_rate", "profit_factor",
-                    "trades_per_day", "avg_oos_sharpe", "oos_positive_frac",
-                    "n_raw_signals", "n_filtered",
-                ] if c in top.columns]
+                disp_cols = [
+                    c
+                    for c in [
+                        "strategy",
+                        "symbol",
+                        "interval",
+                        "mode",
+                        "n_trades",
+                        "sharpe",
+                        "sortino",
+                        "calmar",
+                        "total_return",
+                        "max_dd",
+                        "win_rate",
+                        "profit_factor",
+                        "trades_per_day",
+                        "avg_oos_sharpe",
+                        "oos_positive_frac",
+                        "n_raw_signals",
+                        "n_filtered",
+                    ]
+                    if c in top.columns
+                ]
                 st.dataframe(
                     top[disp_cols].reset_index(drop=True),
                     use_container_width=True,

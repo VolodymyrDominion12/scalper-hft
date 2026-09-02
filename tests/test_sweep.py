@@ -72,12 +72,20 @@ def test_sweep_runs_all_cells() -> None:
 def test_sweep_parallel_matches_sequential() -> None:
     strategies = ["mean_reversion"]
     seq = run_sweep(
-        strategies=strategies, symbols=["BTCUSDT"], intervals=["1m", "5m"],
-        days=2, data_provider=_make_data, workers=1,
+        strategies=strategies,
+        symbols=["BTCUSDT"],
+        intervals=["1m", "5m"],
+        days=2,
+        data_provider=_make_data,
+        workers=1,
     )
     par = run_sweep(
-        strategies=strategies, symbols=["BTCUSDT"], intervals=["1m", "5m"],
-        days=2, data_provider=_make_data, workers=2,
+        strategies=strategies,
+        symbols=["BTCUSDT"],
+        intervals=["1m", "5m"],
+        days=2,
+        data_provider=_make_data,
+        workers=2,
     )
     sort_cols = [c for c in seq.columns if c not in {"status", "error"}]
     seq_sorted = seq.sort_values(sort_cols).reset_index(drop=True)
@@ -88,8 +96,13 @@ def test_sweep_parallel_matches_sequential() -> None:
 def test_sweep_walkforward_mode() -> None:
     strategies = ["mean_reversion"]
     res = run_sweep(
-        strategies=strategies, symbols=["BTCUSDT"], intervals=["1m"],
-        days=4, mode="walkforward", train_bars=1000, test_bars=250,
+        strategies=strategies,
+        symbols=["BTCUSDT"],
+        intervals=["1m"],
+        days=4,
+        mode="walkforward",
+        train_bars=1000,
+        test_bars=250,
         data_provider=_make_data,
     )
     row = res.iloc[0]
@@ -103,8 +116,11 @@ def test_sweep_isolates_cell_errors() -> None:
         raise RuntimeError("network down")
 
     res = run_sweep(
-        strategies=["mean_reversion"], symbols=["BTCUSDT"],
-        intervals=["1m"], days=2, data_provider=bad_provider,
+        strategies=["mean_reversion"],
+        symbols=["BTCUSDT"],
+        intervals=["1m"],
+        days=2,
+        data_provider=bad_provider,
     )
     row = res.iloc[0]
     assert row["status"] == "error"
@@ -120,17 +136,18 @@ def test_sweep_defaults_use_settings(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("DEFAULT_SYMBOLS", "AAAUSDT,BBBUSDT")
     # скинути кешований синглтон Settings, щоб підхопити нове оточення
     monkeypatch.setattr("scalper_hft.config._settings", None)
-    res = run_sweep(
-        strategies=["mean_reversion"], intervals=["1m"], days=2, data_provider=_make_data
-    )
+    res = run_sweep(strategies=["mean_reversion"], intervals=["1m"], days=2, data_provider=_make_data)
     assert set(res["symbol"]) == {"AAAUSDT", "BBBUSDT"}
     monkeypatch.setattr("scalper_hft.config._settings", None)  # відновити для інших тестів
 
 
 def test_save_sweep_report(tmp_path) -> None:
     res = run_sweep(
-        strategies=["mean_reversion"], symbols=["BTCUSDT"],
-        intervals=["1m", "5m"], days=2, data_provider=_make_data,
+        strategies=["mean_reversion"],
+        symbols=["BTCUSDT"],
+        intervals=["1m", "5m"],
+        days=2,
+        data_provider=_make_data,
     )
     csv_path = tmp_path / "sweep.csv"
     save_sweep_report(res, out_csv=str(csv_path), out_md=str(csv_path.with_suffix(".md")))

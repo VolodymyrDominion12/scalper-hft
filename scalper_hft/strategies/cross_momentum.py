@@ -71,23 +71,18 @@ class CrossMomentum(Strategy):
         return self._time_series_momentum(price, lookback, top_pct, smooth)
 
     @staticmethod
-    def _cross_sectional(
-        prices: pd.DataFrame, lookback: int, top_pct: float, smooth: int
-    ) -> pd.Series:
+    def _cross_sectional(prices: pd.DataFrame, lookback: int, top_pct: float, smooth: int) -> pd.Series:
         """Справжній cross-sectional: ранжуємо symbols за returns."""
         ret = prices.pct_change(lookback)
         ranks = ret.rank(axis=1, pct=True)
-        sig_matrix = np.where(ranks.values >= 1.0 - top_pct, 1.0,
-                     np.where(ranks.values <= top_pct, -1.0, 0.0))
+        sig_matrix = np.where(ranks.values >= 1.0 - top_pct, 1.0, np.where(ranks.values <= top_pct, -1.0, 0.0))
         first = pd.Series(sig_matrix[:, 0], index=prices.index, dtype=float)
         if smooth > 1:
             first = first.ewm(span=smooth, adjust=False).mean().round()
         return first.fillna(0.0).shift(1).fillna(0.0).clip(-1, 1).astype(int)
 
     @staticmethod
-    def _time_series_momentum(
-        close: pd.Series, lookback: int, top_pct: float, smooth: int
-    ) -> pd.Series:
+    def _time_series_momentum(close: pd.Series, lookback: int, top_pct: float, smooth: int) -> pd.Series:
         """Time-series momentum: ret vs rolling percentile як proxy cross-section."""
         ret = close.pct_change(lookback).fillna(0.0)
         high_thresh = ret.rolling(lookback * 3, min_periods=lookback).quantile(1.0 - top_pct)

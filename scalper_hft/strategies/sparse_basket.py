@@ -131,7 +131,6 @@ class SparseBasketArb(Strategy):
         self.sparsity_k = int(sparsity_k)
         self.l1_penalty = float(l1_penalty)
 
-
     def generate_signals(
         self,
         df: pd.DataFrame,

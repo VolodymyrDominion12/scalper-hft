@@ -65,7 +65,6 @@ def _extract_leg_df(df: pd.DataFrame, leg_num: int) -> pd.DataFrame:
     return res
 
 
-
 def _maker_pair_positions(
     signals: pd.Series,
     common: pd.DataFrame,
@@ -151,8 +150,12 @@ def run_pairs_backtest(
         from scalper_hft.backtest.execution import _atr_from_ohlc
 
         # середня волатильність двох ніг як частка ціни
-        _l1_df = common[["l1_high", "l1_low", "leg1"]].rename(columns={"l1_high": "high", "l1_low": "low", "leg1": "close"})
-        _l2_df = common[["l2_high", "l2_low", "leg2"]].rename(columns={"l2_high": "high", "l2_low": "low", "leg2": "close"})
+        _l1_df = common[["l1_high", "l1_low", "leg1"]].rename(
+            columns={"l1_high": "high", "l1_low": "low", "leg1": "close"}
+        )
+        _l2_df = common[["l2_high", "l2_low", "leg2"]].rename(
+            columns={"l2_high": "high", "l2_low": "low", "leg2": "close"}
+        )
         atr1 = _atr_from_ohlc(_l1_df) / common["leg1"].replace(0, np.nan)
         atr2 = _atr_from_ohlc(_l2_df) / common["leg2"].replace(0, np.nan)
         vol_frac_series = ((atr1 + atr2) / 2.0).fillna(cost.vol_ref if cost.vol_ref > 0 else 0.0)

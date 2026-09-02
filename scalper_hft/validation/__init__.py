@@ -15,8 +15,15 @@ from scalper_hft.validation.cv import PurgedKFold, purged_kfold_indices, time_se
 from scalper_hft.validation.deflated_sharpe import (
     deflated_sharpe_ratio,
     estimate_n_trials,
+    probabilistic_sharpe_ratio,
     probability_of_backtest_overfitting,
 )
+from scalper_hft.validation.experiments import (
+    Verdict,
+    compare_to_baseline,
+    qualifies_for_oos,
+)
+from scalper_hft.validation.forensics import analyze_trades, compute_mfe_mae
 from scalper_hft.validation.lift import decile_lift, feature_lift_report, lift_summary
 from scalper_hft.validation.optimize import optimize_params
 from scalper_hft.validation.sensitivity import parameter_sensitivity
@@ -43,6 +50,12 @@ __all__ = [
     "deflated_sharpe_ratio",
     "estimate_n_trials",
     "probability_of_backtest_overfitting",
+    "probabilistic_sharpe_ratio",
+    "Verdict",
+    "compare_to_baseline",
+    "qualifies_for_oos",
+    "analyze_trades",
+    "compute_mfe_mae",
     "decile_lift",
     "feature_lift_report",
     "lift_summary",

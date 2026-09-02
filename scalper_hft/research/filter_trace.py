@@ -39,9 +39,9 @@ class SignalEvent:
     """Один потенційний сигнал на барі — з результатом та причиною блокування."""
 
     ts: pd.Timestamp
-    raw_signal: int          # +1 / -1 — що хотіла логіка
-    final_signal: int        # 0 / +1 / -1 — що пройшло після всіх фільтрів
-    blocked_by: list[str]    # список назв фільтрів, що заблокували
+    raw_signal: int  # +1 / -1 — що хотіла логіка
+    final_signal: int  # 0 / +1 / -1 — що пройшло після всіх фільтрів
+    blocked_by: list[str]  # список назв фільтрів, що заблокували
     context: dict[str, Any] = field(default_factory=dict)  # rsi, atr, trend, ...
 
     @property
@@ -71,9 +71,7 @@ class FilterTrace:
     def to_dataframe(self) -> pd.DataFrame:
         """Конвертує в DataFrame для аналізу та збереження."""
         if not self._events:
-            return pd.DataFrame(
-                columns=["ts", "raw_signal", "final_signal", "blocked_by", "was_blocked", "side"]
-            )
+            return pd.DataFrame(columns=["ts", "raw_signal", "final_signal", "blocked_by", "was_blocked", "side"])
         rows = []
         for e in self._events:
             row: dict[str, Any] = {

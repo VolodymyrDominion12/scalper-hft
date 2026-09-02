@@ -20,6 +20,7 @@ from scalper_hft.config import get_settings
 from scalper_hft.data.binance_client import BinanceClient
 from scalper_hft.live.account import PaperAccount
 from scalper_hft.live.fills import both_or_neither, decide_fill
+from scalper_hft.live.risk_gate import CooldownState, correlated_size_mult, decide_entry, open_pair_size_pcts
 from scalper_hft.live.store import PaperStore
 from scalper_hft.live.trader import closed_klines
 from scalper_hft.strategies.base import Strategy
@@ -128,6 +129,14 @@ class PairsEngine:
         self.max_losing_months = settings.max_losing_months
         self.daily_loss_limit = settings.daily_loss_limit
         self.weekly_loss_limit = settings.weekly_loss_limit
+        self.cooldown_losses = settings.cooldown_losses
+        self.max_consecutive_losses = settings.max_consecutive_losses
+        self.cooldown_hours = settings.cooldown_hours
+        self.cooldown_size_mult = settings.cooldown_size_mult
+        self.corr_notional_cap = settings.corr_notional_cap
+        self.cooldown = CooldownState()
+        self.consecutive_pair_losses = 0
+        self._entry_size_mult = 1.0
         self.week_start_equity = account.equity
         self._last_day: object | None = None
         self._last_week: tuple[int, int] | None = None
@@ -168,14 +177,29 @@ class PairsEngine:
         self._month_key = month
         self._month_start_eq = equity
 
-    def _can_open(self) -> tuple[bool, str]:
+    def _can_open(self, ts: pd.Timestamp | None = None) -> tuple[bool, str]:
         if self.losing_months >= self.max_losing_months:
             return False, "два збиткові місяці — пауза"
         if self.account.equity <= self.account.day_start_equity * (1 - self.daily_loss_limit):
             return False, "денний ліміт збитків"
         if self.account.equity <= self.week_start_equity * (1 - self.weekly_loss_limit):
             return False, "тижневий ліміт збитків"
-        return True, "ok"
+        now = ts if ts is not None else (self.last_bar_ts or pd.Timestamp.now(tz="UTC").tz_convert(None))
+        decision = decide_entry(
+            consecutive_losses=self.consecutive_pair_losses,
+            now=now,
+            cooldown=self.cooldown,
+            cooldown_losses=self.cooldown_losses,
+            max_consecutive_losses=self.max_consecutive_losses,
+            cooldown_hours=self.cooldown_hours,
+            cooldown_size_mult=self.cooldown_size_mult,
+            flattening=False,
+        )
+        self.cooldown = decision.cooldown
+        self._entry_size_mult = decision.size_mult
+        if decision.status == "reject":
+            return False, decision.reason
+        return True, decision.reason
 
     def _log_order(self, ts: pd.Timestamp, o: PendingOrder, status: str, reason: str) -> None:
         if self.store:
@@ -220,6 +244,10 @@ class PairsEngine:
             pair_pnl = sum(float(t.get("pnl") or 0.0) for t in closed)
             if closed:
                 self.account.consecutive_losses = 1 if pair_pnl < 0 else 0
+                if pair_pnl < 0:
+                    self.consecutive_pair_losses += 1
+                else:
+                    self.consecutive_pair_losses = 0
             return
         self.account.open_position(o1.key, o1.pos_side, o1.size, px1, ts, is_maker=self.is_maker)
         self.account.open_position(o2.key, o2.pos_side, o2.size, px2, ts, is_maker=self.is_maker)
@@ -232,10 +260,18 @@ class PairsEngine:
         if want == self.have:
             return "hold"
         if want != 0 and self.have == 0:
-            ok, reason = self._can_open()
+            ok, reason = self._can_open(ts)
             if not ok:
                 return f"blocked:{reason}"
         equity = self.account.equity_at(self._marks(p1, p2))
+        size_pct = self.size_pct
+        if want != 0 and self.have == 0:
+            size_pct *= self._entry_size_mult
+            others = open_pair_size_pcts(self.account.positions, self.size_pct)
+            others.pop(self.pid, None)
+            size_pct *= correlated_size_mult(self.pid, self.size_pct, others, self.corr_notional_cap)
+            if size_pct <= 0:
+                return "blocked:корельований ноціонал"
         if want == 0:
             pos1 = self.account.positions.get(self._k(self.leg1))
             pos2 = self.account.positions.get(self._k(self.leg2))
@@ -264,8 +300,8 @@ class PairsEngine:
             )
         else:
             s1, s2 = legs_for_want(want)
-            size1 = self.size_pct * equity / p1
-            size2 = self.size_pct * equity / p2
+            size1 = size_pct * equity / p1
+            size2 = size_pct * equity / p2
             o1 = PendingOrder(
                 self.leg1,
                 self._k(self.leg1),
