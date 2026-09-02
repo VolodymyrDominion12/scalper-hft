@@ -11,7 +11,6 @@ Live-стріми (WebSocket) винесені в scalper_hft.live — тут л
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any
 
 import ccxt

@@ -168,6 +168,7 @@ def test_calculate_backoff_ip_ban() -> None:
 
 def test_calculate_backoff_ip_ban_with_timestamp(monkeypatch) -> None:
     import time
+
     from scalper_hft.data.downloader import _calculate_backoff
 
     now = 1700000000.0
@@ -203,7 +204,6 @@ def test_calculate_backoff_network_error() -> None:
 
 
 def test_downloader_checkpointing_saves_intermediate(monkeypatch) -> None:
-    import pytest
     from scalper_hft.data import downloader as dl
 
     now = pd.Timestamp("2024-01-10 12:00:00")

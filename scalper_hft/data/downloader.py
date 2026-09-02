@@ -20,6 +20,7 @@ import random
 import re
 import time
 from collections.abc import Callable
+from functools import partial
 from typing import Any
 
 import pandas as pd
@@ -393,7 +394,7 @@ class Downloader:
     def klines(self, symbol: str, interval: str, days: int, force: bool = False) -> pd.DataFrame:
         """Завантажити klines за останні `days` днів, доповнюючи кеш без перезапису середини."""
         existing = self.store.load_klines(symbol, interval)
-        save_fn = lambda df: self.store.save_klines(symbol, interval, df)
+        save_fn = partial(self.store.save_klines, symbol, interval)
         out = self._extend_klines(
             existing,
             self.client.fetch_klines,
@@ -411,7 +412,7 @@ class Downloader:
         """Спотові klines (для delta-neutral арбітражу) у окремий кеш."""
         existing = self.store.load_spot_klines(symbol, interval)
         spot_client = BinanceClient(market_type="spot")
-        save_fn = lambda df: self.store.save_spot_klines(symbol, interval, df)
+        save_fn = partial(self.store.save_spot_klines, symbol, interval)
         out = self._extend_klines(
             existing,
             spot_client.fetch_klines,
