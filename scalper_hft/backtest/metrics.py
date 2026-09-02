@@ -11,6 +11,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
 
 _TRADING_DAYS = 365
@@ -88,12 +89,14 @@ def compute_metrics(
     ann_vol = ret.std(ddof=0) * math.sqrt(bars_per_year) if len(ret) else 0.0
     sharpe = (ret.mean() / ret.std(ddof=0) * math.sqrt(bars_per_year)) if ret.std(ddof=0) > 0 else 0.0
 
-    downside = ret[ret < 0]
-    sortino = (
-        (ret.mean() / downside.std(ddof=0) * math.sqrt(bars_per_year))
-        if len(downside) > 1 and downside.std(ddof=0) > 0
-        else 0.0
-    )
+    # Sortino: стандартне downside deviation = sqrt(mean(min(r,0)^2))
+    # (RMS лише збиткових періодів), а не std підмножини збитків. При
+    # відсутності збитків — безкінечність (ідеальна крива), а не 0.
+    downside_dev = float(np.sqrt((np.minimum(ret.values, 0.0) ** 2).mean())) if len(ret) else 0.0
+    if downside_dev > 0:
+        sortino = ret.mean() / downside_dev * math.sqrt(bars_per_year)
+    else:
+        sortino = float("inf") if ret.mean() > 0 else 0.0
 
     peak = equity.cummax()
     dd = (equity - peak) / peak
@@ -138,15 +141,20 @@ def compute_metrics(
     except Exception:  # noqa: BLE001 — нерегулярний індекс, не критично
         pass
 
-    # імовірність розорення за спрощеною формулою Келлі P(ruin) = exp(-2 * edge * N)
-    # де N = capital / stake. Для фіксованого f = 0.01, N = 100
-    edge = avg_trade_return
-    f = 0.01  # частка капіталу на угоду (конфігурується окремо)
-    if edge > 0:
-        # Експоненційне наближення (більш реалістичне для трейдингу)
-        risk_of_ruin = math.exp(-2.0 * edge * (1.0 / f))
+    # Імовірність розорення: класичне наближення для адитивного випадкового
+    # блукання капіталу з дрейфом — P(ruin) = exp(-2·μ/σ²), де μ і σ — середній
+    # прибуток і волатильність ПРИБУТКУ НА УГОДУ (у частках капіталу).
+    # Раніше формула використовувала захардкоджену f=0.01 і μ у змішаних
+    # одиницях (avg_trade_return вже масштабований position_pct), тож результат
+    # був ≈константою. Тепер — лише з фактичного розподілу угод.
+    if n_trades >= 5 and avg_trade_return > 0:
+        sigma_trade = float(tr.std(ddof=0))
+        if sigma_trade > 0:
+            risk_of_ruin = math.exp(-2.0 * avg_trade_return / (sigma_trade * sigma_trade))
+        else:
+            risk_of_ruin = 0.0  # детермінований додатний прибуток — руїни немає
     else:
-        risk_of_ruin = 1.0
+        risk_of_ruin = 1.0  # мало даних або від'ємний edge — консервативно
 
     return BacktestMetrics(
         total_return=total_return,

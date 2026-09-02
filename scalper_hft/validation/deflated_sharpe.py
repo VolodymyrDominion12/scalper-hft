@@ -102,7 +102,9 @@ def deflated_sharpe_ratio(
     if skew is None:
         skew = float(pd.Series(ret).skew())
     if kurtosis is None:
-        kurtosis = float(pd.Series(ret).kurt())  # надлишковий ексцес
+        # pandas .kurt() = НАДЛИШКОВИЙ ексцес; формула Bailey-LdP хоче ЗВИЧАЙНИЙ
+        # (raw) γ4 = excess + 3 — інакше variance-терм занижений, DSR завищений.
+        kurtosis = float(pd.Series(ret).kurt()) + 3.0
 
     # дисперсія оцінки Sharpe (Lo 2002 / Bailey-LdP):
     # V[SR] = (1 − skew×SR + (kurt−1)/4×SR²) / (n−1)

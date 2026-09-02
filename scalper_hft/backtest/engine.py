@@ -218,16 +218,18 @@ def run_backtest(
     # Ставка, опублікована в момент fts, застосовується до позиції, активної
     # у барі, що покриває fts: funding_pnl = −pos[bar] × rate.
     # Позиція вирішена на попередньому барі — без lookahead.
+    # Якщо бар грубіший за каденцію ставок (напр. 1d-бар і 3 ставки/день) —
+    # ставки групуються за баром і СУМУЮТЬСЯ (раніше лишалась лише остання).
     if funding is not None and not funding.empty:
         rates = funding["fundingRate"].sort_index()
         bar_idx = df.index.searchsorted(rates.index, side="right") - 1  # останній бар ≤ fts
         mask = (bar_idx >= 0) & (bar_idx < len(df))
-        valid_bars = bar_idx[mask]
-        valid_rates = rates.values[mask]
-        funding_impact = pd.Series(0.0, index=df.index)
-        if len(valid_bars):
-            funding_impact.iloc[valid_bars] = -(pos.iloc[valid_bars].values * valid_rates)
-        strat_ret = strat_ret + funding_impact
+        if mask.any():
+            bars = pd.Index(bar_idx[mask])
+            summed = pd.Series(rates.values[mask], index=bars).groupby(level=0).sum()
+            funding_impact = pd.Series(0.0, index=df.index)
+            funding_impact.iloc[summed.index.values] = -(pos.iloc[summed.index.values].values * summed.values)
+            strat_ret = strat_ret + funding_impact
 
     equity = (1.0 + strat_ret).cumprod() * initial_capital
 

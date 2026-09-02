@@ -81,15 +81,17 @@ def run_delta_neutral_backtest(
     dbasis = basis.diff().fillna(0.0)
     price_pnl = -pos * dbasis
 
-    # funding: один раз за 8h-блок (carry × rate × position_pct)
+    # funding: один раз за 8h-блок (carry × rate × position_pct).
+    # Якщо бар грубіший за каденцію ставок (напр. 1d-бар і 3 ставки/день) —
+    # ставки групуються за баром і СУМУЮТЬСЯ (раніше лишалась лише остання).
     rates = funding["fundingRate"].sort_index()
     bar_idx = common.index.searchsorted(rates.index, side="right") - 1
     mask = (bar_idx >= 0) & (bar_idx < len(common))
     funding_impact = pd.Series(0.0, index=common.index)
     if mask.any():
-        valid_bars = bar_idx[mask]
-        valid_rates = rates.values[mask]
-        funding_impact.iloc[valid_bars] = pos.iloc[valid_bars].values * valid_rates
+        bars = pd.Index(bar_idx[mask])
+        summed = pd.Series(rates.values[mask], index=bars).groupby(level=0).sum()
+        funding_impact.iloc[summed.index.values] = pos.iloc[summed.index.values].values * summed.values
 
     # комісії: turnover × 2 ноги (maker або taker)
     leg_cost = cost.maker_cost_per_side() if maker_execution else cost.taker_cost_per_side()

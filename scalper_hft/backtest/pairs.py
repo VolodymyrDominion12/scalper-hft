@@ -195,14 +195,17 @@ def _leg_funding(actual_pos: pd.Series, funding: pd.DataFrame, common: pd.DataFr
     """Funding-вплив однієї ноги: −actual_pos × rate (шорт отримує позитивний фандінг).
 
     actual_pos — ФАКТИЧНА позиція ноги на спільному індексі (вже зсунута на 1 бар).
+    Якщо бар грубіший за каденцію ставок (напр. 1d-бар і 3 ставки/день) —
+    ставки групуються за баром і СУМУЮТЬСЯ (раніше лишалась лише остання).
     """
     rates = funding["fundingRate"].sort_index()
     bar_idx = common.index.searchsorted(rates.index, side="right") - 1
     mask = (bar_idx >= 0) & (bar_idx < len(common))
     impact = pd.Series(0.0, index=common.index)
     if mask.any():
-        valid_bars = bar_idx[mask]
-        impact.iloc[valid_bars] = -actual_pos.iloc[valid_bars].values * rates.values[mask]
+        bars = pd.Index(bar_idx[mask])
+        summed = pd.Series(rates.values[mask], index=bars).groupby(level=0).sum()
+        impact.iloc[summed.index.values] = -actual_pos.iloc[summed.index.values].values * summed.values
     return impact
 
 
