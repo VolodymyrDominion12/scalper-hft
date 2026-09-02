@@ -9,11 +9,15 @@
 у data/) або DATA_BACKEND=postgres (PostgreSQL у Docker). Дані завантажуються
 з Binance лише тоді, коли кеш не покриває період, має дірки або застарів.
 Закриті бари не перекачуються: дописуються префікс, внутрішні пропуски і хвіст.
+Підтримується стійкість до лімітів (429), блокувань (418), періодичний чекпоінтинг
+та автоматичне збереження прогресу при збоях чи перериваннях.
 """
 
 from __future__ import annotations
 
 import logging
+import random
+import re
 import time
 from collections.abc import Callable
 from typing import Any
@@ -165,12 +169,80 @@ def _default_client() -> BinanceClient:
     return _client
 
 
-class Downloader:
-    """Ітеративне завантаження історії з повторними спробами та батчами."""
+def _calculate_backoff(attempt: int, exc: Exception, max_retries: int) -> tuple[float, str]:
+    """Обчислити час очікування (секунди) та категорію помилки для логування.
 
-    def __init__(self, client: BinanceClient | None = None, retries: int = 3, store: Any = None) -> None:
+    Категорії:
+    1. IP Ban (HTTP 418, -1003, 'IP banned', 'banned until'):
+       - Якщо є точний timestamp закінчення бану ('banned until 1708935600000'), спимо до нього + 2с.
+       - Інакше експоненційно: 60s, 120s, 180s... з джиттером.
+    2. Rate Limit (HTTP 429, RateLimitExceeded, 'Too many requests'):
+       - 10s * (2 ** attempt) + jitter, обмежено 180s (10s, 20s, 40s, 80s, 160s...).
+    3. Мережеві помилки (502, 503, 504, NetworkError, RequestTimeout, ExchangeNotAvailable):
+       - 2s * (2 ** attempt) + jitter, обмежено 60s (2s, 4s, 8s, 16s, 32s...).
+    """
+    exc_str = str(exc)
+    exc_type = type(exc).__name__
+    combined = f"{exc_type} {exc_str}".lower()
+
+    # 1. IP Ban / 418 / -1003 / "banned until"
+    is_ip_ban = (
+        "418" in combined
+        or "-1003" in combined
+        or "ip ban" in combined
+        or "banned until" in combined
+        or "ip has been auto-banned" in combined
+    )
+    if is_ip_ban:
+        match = re.search(r"banned until (\d{10,13})", exc_str, flags=re.IGNORECASE)
+        if match:
+            try:
+                ban_ts_raw = int(match.group(1))
+                ban_ts_ms = ban_ts_raw if ban_ts_raw > 10_000_000_000 else ban_ts_raw * 1000
+                now_ms = int(time.time() * 1000)
+                diff_s = (ban_ts_ms - now_ms) / 1000.0
+                if diff_s > 0:
+                    return min(600.0, diff_s + 2.0), "ip_ban"
+            except (ValueError, TypeError):
+                pass
+        base_ban = 60.0 * (attempt + 1) + random.uniform(1.0, 5.0)
+        return min(300.0, base_ban), "ip_ban"
+
+    # 2. Rate limit / 429 / RateLimitExceeded / DDoSProtection
+    is_rate_limit = (
+        "429" in combined
+        or "too many requests" in combined
+        or "ratelimitexceeded" in combined
+        or "ddosprotection" in combined
+        or "rate limit" in combined
+    )
+    if is_rate_limit:
+        base_rl = 10.0 * (2**attempt) + random.uniform(1.0, 5.0)
+        return min(180.0, base_rl), "rate_limit"
+
+    # 3. Network / Server / Timeout / Other transient
+    base_net = 2.0 * (2**attempt) + random.uniform(0.5, 2.0)
+    return min(60.0, base_net), "network"
+
+
+class Downloader:
+    """Ітеративне завантаження історії з повторними спробами, батчами та чекпоінтами."""
+
+    def __init__(
+        self,
+        client: BinanceClient | None = None,
+        retries: int | None = None,
+        store: Any = None,
+        batch_delay: float | None = None,
+        checkpoint_batches: int | None = None,
+    ) -> None:
+        settings = get_settings()
         self.client = client or _default_client()
-        self.retries = retries
+        self.retries = int(retries if retries is not None else settings.download_retries)
+        self.batch_delay = float(batch_delay if batch_delay is not None else settings.download_batch_delay)
+        self.checkpoint_batches = int(
+            checkpoint_batches if checkpoint_batches is not None else settings.download_checkpoint_batches
+        )
         self.store = store if store is not None else get_store()
 
     def _with_retry(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
@@ -180,13 +252,34 @@ class Downloader:
                 return fn(*args, **kwargs)
             except Exception as exc:  # noqa: BLE001 — мережеві помилки різні
                 last = exc
-                # rate limit — чекаємо довше, ліміт IP 2400/хв спільний з іншими процесами
-                if "429" in str(exc) or "Too many requests" in str(exc) or "RateLimitExceeded" in type(exc).__name__:
-                    sleep_s = 15.0 * (attempt + 1)
-                    logger.warning("Rate limit: сплю %.0f с (спроба %d/%d)", sleep_s, attempt + 1, self.retries)
+                if attempt == self.retries - 1:
+                    logger.warning("Спроба %d/%d (остання) не вдалась: %s", attempt + 1, self.retries, exc)
+                    break
+                sleep_s, category = _calculate_backoff(attempt, exc, self.retries)
+                if category == "ip_ban":
+                    logger.warning(
+                        "Binance IP тимчасово заблоковано (418 / -1003): очікую %.1f с (спроба %d/%d) [%s]",
+                        sleep_s,
+                        attempt + 1,
+                        self.retries,
+                        exc,
+                    )
+                elif category == "rate_limit":
+                    logger.warning(
+                        "Rate limit Binance (429): очікую %.1f с (спроба %d/%d) [%s]",
+                        sleep_s,
+                        attempt + 1,
+                        self.retries,
+                        exc,
+                    )
                 else:
-                    sleep_s = 1.5 * (attempt + 1)
-                logger.warning("Спроба %d/%d не вдалась: %s", attempt + 1, self.retries, exc)
+                    logger.warning(
+                        "Спроба %d/%d не вдалась: %s. Очікую %.1f с перед повтором...",
+                        attempt + 1,
+                        self.retries,
+                        exc,
+                        sleep_s,
+                    )
                 time.sleep(sleep_s)
         raise RuntimeError(f"Не вдалося завантажити дані після {self.retries} спроб: {last}")
 
@@ -197,17 +290,21 @@ class Downloader:
         interval: str,
         windows: list[tuple[int, int]],
         interval_ms: int,
+        on_batch: Callable[[pd.DataFrame, int], None] | None = None,
     ) -> list[pd.DataFrame]:
         """Качати лише задані вікна; бари з ts >= end_ms відкидаються (без overlap)."""
         frames: list[pd.DataFrame] = []
+        batch_count = 0
         for start_ms, end_ms in windows:
             since = start_ms
             end_ts = pd.Timestamp(end_ms, unit="ms")
             guard = 0
             while since < end_ms:
                 guard += 1
-                if guard > 10_000:
+                if guard > 20_000:
                     raise RuntimeError("Забагато батчів — ймовірно застрягли у циклі завантаження")
+                if self.batch_delay > 0:
+                    time.sleep(self.batch_delay)
                 batch = self._with_retry(fetch_fn, symbol, interval, since)
                 if not batch:
                     break
@@ -216,6 +313,9 @@ class Downloader:
                 if df.empty:
                     break
                 frames.append(df)
+                batch_count += 1
+                if on_batch is not None:
+                    on_batch(df, batch_count)
                 since = _to_ms(df.index[-1]) + interval_ms
                 if len(batch) < 1000:
                     break
@@ -230,8 +330,9 @@ class Downloader:
         days: int,
         *,
         force: bool = False,
+        save_fn: Callable[[pd.DataFrame], None] | None = None,
     ) -> pd.DataFrame:
-        """Долити в кеш лише відсутні вікна (префікс / дірки / хвіст)."""
+        """Долити в кеш лише відсутні вікна (префікс / дірки / хвіст) з чекпоінтами та graceful recovery."""
         interval_ms = _interval_ms(interval)
         requested_start = _to_ms(_utc_now() - pd.Timedelta(days=days))
         now_ms = _to_ms(_utc_now())
@@ -241,31 +342,87 @@ class Downloader:
             windows = merge_windows([*windows, (last_ms, now_ms + interval_ms)])
         if not windows:
             return existing if existing is not None and not existing.empty else _empty_ohlcv()
+
         logger.info("Докачую klines %s %s: %d вікон %s", symbol, interval, len(windows), windows)
         frames: list[pd.DataFrame] = [existing] if existing is not None and not existing.empty else []
-        frames.extend(self._fetch_klines_windows(fetch_fn, symbol, interval, windows, interval_ms))
-        if not frames:
-            return _empty_ohlcv()
-        out = pd.concat(frames).sort_index()
-        return out[~out.index.duplicated(keep="last")]
+        new_frames: list[pd.DataFrame] = []
+
+        def _make_merged(extra: list[pd.DataFrame]) -> pd.DataFrame:
+            all_f = [*frames, *extra]
+            if not all_f:
+                return _empty_ohlcv()
+            merged = pd.concat(all_f).sort_index()
+            return merged[~merged.index.duplicated(keep="last")]
+
+        def _on_batch(batch_df: pd.DataFrame, batch_idx: int) -> None:
+            new_frames.append(batch_df)
+            if self.checkpoint_batches > 0 and batch_idx % self.checkpoint_batches == 0:
+                checkpoint_df = _make_merged(new_frames)
+                if save_fn is not None:
+                    save_fn(checkpoint_df)
+                logger.info(
+                    "klines %s %s: збережено чекпоінт %d свічок (батч %d, до %s)",
+                    symbol,
+                    interval,
+                    len(checkpoint_df),
+                    batch_idx,
+                    batch_df.index[-1],
+                )
+
+        try:
+            self._fetch_klines_windows(fetch_fn, symbol, interval, windows, interval_ms, on_batch=_on_batch)
+        except BaseException as exc:
+            if new_frames and save_fn is not None:
+                try:
+                    partial_df = _make_merged(new_frames)
+                    save_fn(partial_df)
+                    logger.warning(
+                        "Збережено проміжний прогрес klines %s %s (%d свічок) перед перериванням: %s",
+                        symbol,
+                        interval,
+                        len(partial_df),
+                        exc,
+                    )
+                except Exception as save_err:  # noqa: BLE001
+                    logger.error("Не вдалося зберегти аварійний чекпоінт: %s", save_err)
+            raise
+
+        out = _make_merged(new_frames)
+        return out
 
     def klines(self, symbol: str, interval: str, days: int, force: bool = False) -> pd.DataFrame:
         """Завантажити klines за останні `days` днів, доповнюючи кеш без перезапису середини."""
         existing = self.store.load_klines(symbol, interval)
-        out = self._extend_klines(existing, self.client.fetch_klines, symbol, interval, days, force=force)
-        if out.empty:
-            return out
-        self.store.save_klines(symbol, interval, out)
+        save_fn = lambda df: self.store.save_klines(symbol, interval, df)
+        out = self._extend_klines(
+            existing,
+            self.client.fetch_klines,
+            symbol,
+            interval,
+            days,
+            force=force,
+            save_fn=save_fn,
+        )
+        if not out.empty:
+            self.store.save_klines(symbol, interval, out)
         return out
 
     def spot_klines(self, symbol: str, interval: str, days: int, force: bool = False) -> pd.DataFrame:
         """Спотові klines (для delta-neutral арбітражу) у окремий кеш."""
         existing = self.store.load_spot_klines(symbol, interval)
         spot_client = BinanceClient(market_type="spot")
-        out = self._extend_klines(existing, spot_client.fetch_klines, symbol, interval, days, force=force)
-        if out.empty:
-            return out
-        self.store.save_spot_klines(symbol, interval, out)
+        save_fn = lambda df: self.store.save_spot_klines(symbol, interval, df)
+        out = self._extend_klines(
+            existing,
+            spot_client.fetch_klines,
+            symbol,
+            interval,
+            days,
+            force=force,
+            save_fn=save_fn,
+        )
+        if not out.empty:
+            self.store.save_spot_klines(symbol, interval, out)
         return out
 
     def agg_trades(self, symbol: str, days: int, start_ms: int | None = None) -> pd.DataFrame:
@@ -284,52 +441,80 @@ class Downloader:
             begin_ms = min(begin_ms, max(existing.index[-1].value // 1_000_000, end_ms - max_window_ms))
 
         frames: list[pd.DataFrame] = [existing] if existing is not None and not existing.empty else []
+        new_frames: list[pd.DataFrame] = []
         since = begin_ms
         guard = 0
         total_rows = 0
         synthetic = 0
-        while since < end_ms:
-            guard += 1
-            if guard > 20_000:
-                raise RuntimeError("Забагато батчів aggTrades")
-            batch = self._with_retry(self.client.fetch_agg_trades, symbol, since)
-            if not batch:
-                break
-            rows = []
-            for t in batch:
-                synthetic -= 1  # негативні id-и резервуються для синтетичних
-                rows.append(
-                    {
-                        "trade_id": _trade_id(t, synthetic),
-                        "ts": t["timestamp"],
-                        "price": float(t["price"]),
-                        "amount": float(t["amount"]),
-                        "side": "buy"
-                        if t.get("side") == "buy"
-                        else (
-                            "sell"
-                            if t.get("side") == "sell"
-                            else ("buy" if not t.get("info", {}).get("m", True) else "sell")
-                        ),
-                    }
-                )
-            df = pd.DataFrame(rows)
-            if df.empty:
-                break
-            df["ts"] = pd.to_datetime(df["ts"], unit="ms")
-            df = df.set_index("ts").sort_index()
-            frames.append(df)
-            total_rows += len(df)
-            since = int(df.index[-1].value // 1_000_000) + 1
-            if guard % 200 == 0:
-                logger.info("aggTrades %s: %d батчів, %d трейдів (до %s)", symbol, guard, total_rows, df.index[-1])
-            if len(batch) < 1000:
-                break
-        if not frames:
-            return pd.DataFrame(columns=["trade_id", "price", "amount", "side"])
-        out = pd.concat(frames).sort_index()
-        out = out[~out.index.duplicated(keep="last")]
-        self.store.save_trades(symbol, out)
+
+        def _make_merged() -> pd.DataFrame:
+            all_f = [*frames, *new_frames]
+            if not all_f:
+                return pd.DataFrame(columns=["trade_id", "price", "amount", "side"])
+            merged = pd.concat(all_f).sort_index()
+            return merged[~merged.index.duplicated(keep="last")]
+
+        try:
+            while since < end_ms:
+                guard += 1
+                if guard > 20_000:
+                    raise RuntimeError("Забагато батчів aggTrades")
+                if self.batch_delay > 0:
+                    time.sleep(self.batch_delay)
+                batch = self._with_retry(self.client.fetch_agg_trades, symbol, since)
+                if not batch:
+                    break
+                rows = []
+                for t in batch:
+                    synthetic -= 1  # негативні id-и резервуються для синтетичних
+                    rows.append(
+                        {
+                            "trade_id": _trade_id(t, synthetic),
+                            "ts": t["timestamp"],
+                            "price": float(t["price"]),
+                            "amount": float(t["amount"]),
+                            "side": "buy"
+                            if t.get("side") == "buy"
+                            else (
+                                "sell"
+                                if t.get("side") == "sell"
+                                else ("buy" if not t.get("info", {}).get("m", True) else "sell")
+                            ),
+                        }
+                    )
+                df = pd.DataFrame(rows)
+                if df.empty:
+                    break
+                df["ts"] = pd.to_datetime(df["ts"], unit="ms")
+                df = df.set_index("ts").sort_index()
+                new_frames.append(df)
+                total_rows += len(df)
+                since = int(df.index[-1].value // 1_000_000) + 1
+                if guard % 200 == 0:
+                    logger.info("aggTrades %s: %d батчів, %d трейдів (до %s)", symbol, guard, total_rows, df.index[-1])
+                if self.checkpoint_batches > 0 and guard % (self.checkpoint_batches * 2) == 0:
+                    checkpoint_df = _make_merged()
+                    self.store.save_trades(symbol, checkpoint_df)
+                if len(batch) < 1000:
+                    break
+        except BaseException as exc:
+            if new_frames:
+                try:
+                    partial_df = _make_merged()
+                    self.store.save_trades(symbol, partial_df)
+                    logger.warning(
+                        "Збережено проміжний прогрес aggTrades %s (%d трейдів) перед перериванням: %s",
+                        symbol,
+                        len(partial_df),
+                        exc,
+                    )
+                except Exception as save_err:  # noqa: BLE001
+                    logger.error("Не вдалося зберегти чекпоінт aggTrades: %s", save_err)
+            raise
+
+        out = _make_merged()
+        if not out.empty:
+            self.store.save_trades(symbol, out)
         return out
 
     def funding(self, symbol: str, days: int) -> pd.DataFrame:
@@ -340,29 +525,54 @@ class Downloader:
             start_ms = min(start_ms, int(existing.index[-1].value // 1_000_000))
 
         frames: list[pd.DataFrame] = [existing] if existing is not None and not existing.empty else []
+        new_frames: list[pd.DataFrame] = []
         since = start_ms
         guard = 0
-        while True:
-            guard += 1
-            if guard > 1000:
-                break
-            batch = self._with_retry(self.client.fetch_funding_rate_history, symbol, since)
-            if not batch:
-                break
-            df = pd.DataFrame(batch)
-            if df.empty:
-                break
-            df["ts"] = pd.to_datetime(df["timestamp"], unit="ms")
-            df = df.set_index("ts")
-            frames.append(df[["fundingRate"]])
-            since = int(df.index[-1].value // 1_000_000) + 1
-            if len(batch) < 1000:
-                break
-        if not frames:
-            return pd.DataFrame(columns=["fundingRate"])
-        out = pd.concat(frames).sort_index()
-        out = out[~out.index.duplicated(keep="last")]
-        self.store.save_funding(symbol, out)
+
+        def _make_merged() -> pd.DataFrame:
+            all_f = [*frames, *new_frames]
+            if not all_f:
+                return pd.DataFrame(columns=["fundingRate"])
+            merged = pd.concat(all_f).sort_index()
+            return merged[~merged.index.duplicated(keep="last")]
+
+        try:
+            while True:
+                guard += 1
+                if guard > 1000:
+                    break
+                if self.batch_delay > 0:
+                    time.sleep(self.batch_delay)
+                batch = self._with_retry(self.client.fetch_funding_rate_history, symbol, since)
+                if not batch:
+                    break
+                df = pd.DataFrame(batch)
+                if df.empty:
+                    break
+                df["ts"] = pd.to_datetime(df["timestamp"], unit="ms")
+                df = df.set_index("ts")
+                new_frames.append(df[["fundingRate"]])
+                since = int(df.index[-1].value // 1_000_000) + 1
+                if len(batch) < 1000:
+                    break
+        except BaseException as exc:
+            if new_frames:
+                try:
+                    partial_df = _make_merged()
+                    self.store.save_funding(symbol, partial_df)
+                    logger.warning(
+                        "Збережено проміжний прогрес funding %s (%d записів) перед перериванням: %s",
+                        symbol,
+                        len(partial_df),
+                        exc,
+                    )
+                except Exception as save_err:  # noqa: BLE001
+                    logger.error("Не вдалося зберегти чекпоінт funding: %s", save_err)
+            raise
+
+        out = _make_merged()
+        if not out.empty:
+            self.store.save_funding(symbol, out)
         return out
 
 
@@ -373,7 +583,15 @@ def _klines_windows_for(existing: pd.DataFrame, days: int, interval: str) -> lis
     return missing_klines_windows(existing, requested_start, _to_ms(_utc_now()), interval_ms)
 
 
-def download_klines(symbol: str, interval: str, days: int, force: bool = False) -> pd.DataFrame:
+def download_klines(
+    symbol: str,
+    interval: str,
+    days: int,
+    force: bool = False,
+    retries: int | None = None,
+    batch_delay: float | None = None,
+    checkpoint_batches: int | None = None,
+) -> pd.DataFrame:
     """Завантажити/оновити klines. Старі бари не видаляються: докачуються
     лише префікс, внутрішні дірки та застарілий хвіст."""
     store = get_store()
@@ -397,10 +615,22 @@ def download_klines(symbol: str, interval: str, days: int, force: bool = False) 
             len(cached),
         )
     logger.info("Завантаження klines %s %s за %d днів", symbol, interval, days)
-    return Downloader(store=store).klines(symbol, interval, days, force=force)
+    return Downloader(
+        store=store,
+        retries=retries,
+        batch_delay=batch_delay,
+        checkpoint_batches=checkpoint_batches,
+    ).klines(symbol, interval, days, force=force)
 
 
-def download_agg_trades(symbol: str, days: int, force: bool = False) -> pd.DataFrame:
+def download_agg_trades(
+    symbol: str,
+    days: int,
+    force: bool = False,
+    retries: int | None = None,
+    batch_delay: float | None = None,
+    checkpoint_batches: int | None = None,
+) -> pd.DataFrame:
     store = get_store()
     cached = None if force else store.load_trades(symbol)
     if cached is not None and not cached.empty:
@@ -413,10 +643,21 @@ def download_agg_trades(symbol: str, days: int, force: bool = False) -> pd.DataF
             return cached
         logger.info("Оновлення aggTrades %s: було %d рядків до %s", symbol, len(cached), newest)
     logger.info("Завантаження aggTrades %s за %d днів", symbol, days)
-    return Downloader(store=store).agg_trades(symbol, days)
+    return Downloader(
+        store=store,
+        retries=retries,
+        batch_delay=batch_delay,
+        checkpoint_batches=checkpoint_batches,
+    ).agg_trades(symbol, days)
 
 
-def download_funding(symbol: str, days: int, force: bool = False) -> pd.DataFrame:
+def download_funding(
+    symbol: str,
+    days: int,
+    force: bool = False,
+    retries: int | None = None,
+    batch_delay: float | None = None,
+) -> pd.DataFrame:
     """Кеш фандінгу: свіжий лише якщо покриває період і остання ставка < 16 год.
 
     Binance USDT-M нараховує фандінг кожні 8 год; 2 періоди без оновлення = stale.
@@ -434,10 +675,18 @@ def download_funding(symbol: str, days: int, force: bool = False) -> pd.DataFram
             return cached
         logger.info("Оновлення funding %s: %d рядків (до %s, stale=%s)", symbol, len(cached), newest, stale)
     logger.info("Завантаження funding %s за %d днів", symbol, days)
-    return Downloader(store=store).funding(symbol, days)
+    return Downloader(store=store, retries=retries, batch_delay=batch_delay).funding(symbol, days)
 
 
-def download_spot_klines(symbol: str, interval: str, days: int, force: bool = False) -> pd.DataFrame:
+def download_spot_klines(
+    symbol: str,
+    interval: str,
+    days: int,
+    force: bool = False,
+    retries: int | None = None,
+    batch_delay: float | None = None,
+    checkpoint_batches: int | None = None,
+) -> pd.DataFrame:
     """Спотові klines (для delta-neutral арбітражу) з окремим кешем."""
     store = get_store()
     cached = None if force else store.load_spot_klines(symbol, interval)
@@ -447,4 +696,9 @@ def download_spot_klines(symbol: str, interval: str, days: int, force: bool = Fa
             logger.info("Кеш spot klines %s %s свіжий: %d рядків", symbol, interval, len(cached))
             return cached
     logger.info("Завантаження spot klines %s %s за %d днів", symbol, interval, days)
-    return Downloader(store=store).spot_klines(symbol, interval, days, force=force)
+    return Downloader(
+        store=store,
+        retries=retries,
+        batch_delay=batch_delay,
+        checkpoint_batches=checkpoint_batches,
+    ).spot_klines(symbol, interval, days, force=force)

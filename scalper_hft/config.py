@@ -72,6 +72,9 @@ class Settings:
         )
     )
     default_interval: str = field(default_factory=lambda: os.getenv("DEFAULT_INTERVAL", "1m"))
+    download_retries: int = field(default_factory=lambda: _env_int("DOWNLOAD_RETRIES", 8))
+    download_batch_delay: float = field(default_factory=lambda: _env_float("DOWNLOAD_BATCH_DELAY", 0.15))
+    download_checkpoint_batches: int = field(default_factory=lambda: _env_int("DOWNLOAD_CHECKPOINT_BATCHES", 50))
 
     # Бекенд кешу даних: "parquet" (за замовчуванням, файли у data/) або
     # "postgres" (PostgreSQL у Docker — зручно для багатьох символів/таймфреймів).

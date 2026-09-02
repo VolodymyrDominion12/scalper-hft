@@ -79,30 +79,15 @@ class BinanceClient:
     # ── дані ─────────────────────────────────────────────────────────────────
     def fetch_klines(self, symbol: str, timeframe: str, since_ms: int, limit: int = 1000) -> list[list[Any]]:
         """Один батч історичних свічок. Повертає сирі списки (у форматі ccxt)."""
-        try:
-            return self.exchange.fetch_ohlcv(symbol, timeframe, since=since_ms, limit=limit)
-        except ccxt.RateLimitExceeded as exc:
-            logger.warning("Rate limit: sleep 5s і повтор (%s)", exc)
-            time.sleep(5.0)
-            return self.exchange.fetch_ohlcv(symbol, timeframe, since=since_ms, limit=limit)
+        return self.exchange.fetch_ohlcv(symbol, timeframe, since=since_ms, limit=limit)
 
     def fetch_agg_trades(self, symbol: str, since_ms: int, limit: int = 1000) -> list[dict[str, Any]]:
         """Історичні агреговані трейди (aggTrades) з флагом buy/sell."""
-        try:
-            return self.exchange.fetch_trades(symbol, since=since_ms, limit=limit)
-        except ccxt.RateLimitExceeded as exc:
-            logger.warning("Rate limit: sleep 5s і повтор (%s)", exc)
-            time.sleep(5.0)
-            return self.exchange.fetch_trades(symbol, since=since_ms, limit=limit)
+        return self.exchange.fetch_trades(symbol, since=since_ms, limit=limit)
 
     def fetch_funding_rate_history(self, symbol: str, since_ms: int, limit: int = 1000) -> list[dict[str, Any]]:
         """Історія ставок фандінгу."""
-        try:
-            return self.exchange.fetch_funding_rate_history(symbol, since=since_ms, limit=limit)
-        except ccxt.RateLimitExceeded as exc:
-            logger.warning("Rate limit: sleep 5s і повтор (%s)", exc)
-            time.sleep(5.0)
-            return self.exchange.fetch_funding_rate_history(symbol, since=since_ms, limit=limit)
+        return self.exchange.fetch_funding_rate_history(symbol, since=since_ms, limit=limit)
 
     # ── торгівля (використовується live-модулем) ─────────────────────────────
     def create_order(

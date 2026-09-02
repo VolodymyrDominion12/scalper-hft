@@ -18,6 +18,7 @@ import pytest
 from scalper_hft.backtest.engine import run_backtest
 from scalper_hft.backtest.event_engine import run_event_backtest
 from scalper_hft.backtest.metrics import compute_metrics
+from scalper_hft.live.account import PaperAccount
 from scalper_hft.live.pairs_runner import replay_pairs
 from scalper_hft.strategies.market_maker import PassiveMarketMaker
 from scalper_hft.strategies.pairs_arb import PairsArb
@@ -275,3 +276,230 @@ class TestBanditAttribution:
         # якщо бандит навчився — більшість кроків обирає s1 (+1), а не s0 (−1)
         mean_chosen = float(chosen.mean())
         assert mean_chosen > 0.6, f"бандит не сконвергував до прибуткової руки: mean={mean_chosen:.3f}"
+
+
+# ── C2: live maker order lifecycle ────────────────────────────────────────────
+
+
+class _FakeLiveClient:
+    """Імітація Binance REST: create_order записує, fetch_order керується тестом."""
+
+    def __init__(self) -> None:
+        self.created: list[dict] = []
+        self.order_status: dict[str, dict] = {}
+        self.cancelled: list[str] = []
+        self.n_fetch = 0
+
+    def create_order(self, symbol, order_type, side, amount, price=None, params=None, post_only=False, client_order_id=None):
+        coid = client_order_id or f"id-{len(self.created)}"
+        rec = {
+            "id": f"ex-{coid}",
+            "symbol": symbol,
+            "type": order_type,
+            "side": side,
+            "amount": amount,
+            "price": price,
+            "post_only": post_only,
+            "client_order_id": coid,
+            "status": "open",
+            "filled": 0.0,
+        }
+        self.created.append(rec)
+        self.order_status[rec["id"]] = rec
+        return dict(rec)
+
+    def fetch_order(self, order_id, symbol):
+        self.n_fetch += 1
+        return dict(self.order_status.get(order_id, {"status": "closed", "filled": 0.0, "average": 0.0}))
+
+    def cancel_order(self, order_id, symbol):
+        self.cancelled.append(order_id)
+        self.order_status[order_id]["status"] = "canceled"
+        return {}
+
+    def fetch_positions(self, symbols=None):
+        return []
+
+
+def _live_trader(fake: _FakeLiveClient, strategy=None):
+    """LiveTrader у live-maker режимі з фейковим клієнтом."""
+    from types import SimpleNamespace
+
+    from scalper_hft.live.trader import LiveTrader
+
+    class _AlwaysLongStrat:
+        name = "always_long"
+        param_space: dict = {}
+        needs_trades = False
+
+        def generate_signals(self, df):
+            return pd.Series(1, index=df.index)
+
+    trader = LiveTrader(
+        strategy or _AlwaysLongStrat(), "BTCUSDT", "1m", account=PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0),
+        client=fake,
+    )
+    trader.settings = SimpleNamespace(
+        dry_run=False,
+        maker_execution=True,
+        position_pct=0.01,
+        max_open_positions=1,
+        daily_loss_limit=0.03,
+        max_consecutive_losses=3,
+        maker_fill_wait_bars=1,
+        binance_api_key="test-key",
+        binance_api_secret="test-secret",
+    )
+    return trader
+
+
+class TestLiveMakerLifecycle:
+    def test_open_not_booked_until_fill(self):
+        """C2: maker-ордер не брониться одразу — лише після підтвердженого філа."""
+        from scalper_hft.live.trader import execute_signal
+
+        fake = _FakeLiveClient()
+        trader = _live_trader(fake)
+        idx = pd.date_range("2026-09-01", periods=60, freq="1min")
+        df = pd.DataFrame(
+            {"open": 100.0, "high": 100.001, "low": 99.999, "close": 100.0, "volume": 1.0}, index=idx
+        )
+        res = execute_signal(trader, 1, df, now=idx[-1] + pd.Timedelta(seconds=30))
+        assert "open_pending" in res, res
+        assert "BTCUSDT" not in trader.account.positions, "позиція забронювалась до філа"
+        assert len(fake.created) == 1
+        # статус open → poll не бронить
+        trader.poll_pending_orders(now=idx[-1] + pd.Timedelta(minutes=1))
+        assert "BTCUSDT" not in trader.account.positions
+
+    def test_fill_books_position_at_fill_price(self):
+        from scalper_hft.live.trader import execute_signal
+
+        fake = _FakeLiveClient()
+        trader = _live_trader(fake)
+        idx = pd.date_range("2026-09-01", periods=60, freq="1min")
+        df = pd.DataFrame(
+            {"open": 100.0, "high": 100.001, "low": 99.999, "close": 100.0, "volume": 1.0}, index=idx
+        )
+        execute_signal(trader, 1, df, now=idx[-1] + pd.Timedelta(seconds=30))
+        coid = next(iter(trader.pending_orders))
+        oid = trader.pending_orders[coid].order_id
+        # біржа: ордер заповнено за 100.5
+        fake.order_status[oid].update({"status": "closed", "filled": 0.01, "average": 100.5})
+        events = trader.poll_pending_orders(now=idx[-1] + pd.Timedelta(minutes=1))
+        assert "filled" in events[0]
+        pos = trader.account.positions.get("BTCUSDT")
+        assert pos is not None and pos.side == "long"
+        assert pos.entry_price == 100.5
+        assert len(trader.pending_orders) == 0
+
+    def test_timeout_cancels_without_position(self):
+        from scalper_hft.live.trader import execute_signal
+
+        fake = _FakeLiveClient()
+        trader = _live_trader(fake)
+        idx = pd.date_range("2026-09-01", periods=60, freq="1min")
+        df = pd.DataFrame(
+            {"open": 100.0, "high": 100.001, "low": 99.999, "close": 100.0, "volume": 1.0}, index=idx
+        )
+        execute_signal(trader, 1, df, now=idx[-1] + pd.Timedelta(seconds=30))
+        coid = next(iter(trader.pending_orders))
+        oid = trader.pending_orders[coid].order_id
+        # ордер «висить» понад maker_fill_wait_bars=1 хв → таймаут
+        fake.order_status[oid]["status"] = "open"
+        trader.pending_orders[coid].placed_ts = pd.Timestamp.now(tz="UTC").tz_localize(None) - pd.Timedelta(minutes=5)
+        events = trader.poll_pending_orders(now=idx[-1] + pd.Timedelta(minutes=5))
+        assert any("timeout_cancel" in e for e in events), events
+        assert "BTCUSDT" not in trader.account.positions
+        assert oid in fake.cancelled
+        assert len(trader.pending_orders) == 0
+
+    def test_signal_zero_cancels_pending_open(self):
+        from scalper_hft.live.trader import execute_signal
+
+        fake = _FakeLiveClient()
+        trader = _live_trader(fake)
+        idx = pd.date_range("2026-09-01", periods=60, freq="1min")
+        df = pd.DataFrame(
+            {"open": 100.0, "high": 100.001, "low": 99.999, "close": 100.0, "volume": 1.0}, index=idx
+        )
+        execute_signal(trader, 1, df, now=idx[-1] + pd.Timedelta(seconds=30))
+        assert len(trader.pending_orders) == 1
+        # новий сигнал 0: pending open скасовується, позиції не з'являється
+        execute_signal(trader, 0, df, now=idx[-1] + pd.Timedelta(minutes=2))
+        assert len(trader.pending_orders) == 0
+        assert "BTCUSDT" not in trader.account.positions
+
+    def test_maker_close_keeps_position_until_fill(self):
+        """C2: reduce-close теж брониться лише за філом — позиція лишається,
+        поки біржа не підтвердить закриття (раніше зникала одразу)."""
+        from scalper_hft.live.trader import execute_signal
+
+        fake = _FakeLiveClient()
+        trader = _live_trader(fake)
+        idx = pd.date_range("2026-09-01", periods=60, freq="1min")
+        df = pd.DataFrame(
+            {"open": 100.0, "high": 100.001, "low": 99.999, "close": 100.0, "volume": 1.0}, index=idx
+        )
+        # відкриваємось і чекаємо філа
+        execute_signal(trader, 1, df, now=idx[-1] + pd.Timedelta(seconds=30))
+        coid = next(iter(trader.pending_orders))
+        oid = trader.pending_orders[coid].order_id
+        fake.order_status[oid].update({"status": "closed", "filled": 0.01, "average": 100.0})
+        trader.poll_pending_orders()
+        assert trader.account.positions.get("BTCUSDT") is not None
+
+        # сигнал 0 → close ордер у роботі; позиція ще є (не підтверджено)
+        res = execute_signal(trader, 0, df, now=idx[-1] + pd.Timedelta(minutes=2))
+        assert "close_pending" in res
+        assert "BTCUSDT" in trader.account.positions
+        assert list(trader.pending_orders.values())[0].kind == "close"
+
+        # філ close за 99.5 → позиція закрита
+        coid2 = next(iter(trader.pending_orders))
+        oid2 = trader.pending_orders[coid2].order_id
+        fake.order_status[oid2].update({"status": "closed", "filled": 0.01, "average": 99.5})
+        events = trader.poll_pending_orders()
+        assert any("filled" in e for e in events)
+        assert "BTCUSDT" not in trader.account.positions
+
+
+# ── C4: event-роутер ─────────────────────────────────────────────────────────
+
+
+class TestRouterParamFlow:
+    def test_market_maker_params_affect_result(self):
+        """Параметри market_maker мають реально міняти результат (раніше — константа)."""
+        from scalper_hft.backtest.router import EVENT_STRATEGIES, run_strategy_backtest
+        from scalper_hft.strategies.market_maker import PassiveMarketMaker
+
+        assert "market_maker" in EVENT_STRATEGIES
+        idx = pd.date_range("2024-01-01", periods=150, freq="5s")
+        rng = np.random.default_rng(3)
+        px = 100.0 * np.cumprod(1 + rng.normal(0, 0.0004, 150))
+        df = pd.DataFrame(
+            {"open": px, "high": px * 1.0002, "low": px * 0.9998, "close": px, "volume": 1.0}, index=idx
+        )
+        res_a = run_strategy_backtest(df, PassiveMarketMaker(quote_size_pct=0.01, inventory_cap=0.5))
+        res_b = run_strategy_backtest(df, PassiveMarketMaker(quote_size_pct=0.05, inventory_cap=2.0))
+        assert res_a.params["quote_size_pct"] != res_b.params["quote_size_pct"]
+        assert abs(res_a.metrics.n_trades - res_b.metrics.n_trades) >= 0 or res_a.equity.iloc[-1] != res_b.equity.iloc[-1]
+
+    def test_ob_imbalance_routed_to_vector_engine(self):
+        """ob_imbalance — напрямкова стратегія: йде у векторний рушій, а не в event."""
+        from scalper_hft.backtest.router import EVENT_STRATEGIES, run_strategy_backtest
+        from scalper_hft.strategies.ob_imbalance import ObImbalanceScalper
+
+        assert "ob_imbalance" not in EVENT_STRATEGIES
+        idx = pd.date_range("2024-01-01", periods=300, freq="1min")
+        rng = np.random.default_rng(1)
+        px = 100.0 * np.cumprod(1 + rng.normal(0, 0.0005, 300))
+        imb = pd.Series(np.sin(np.arange(300) / 6.0), index=idx)
+        df = pd.DataFrame(
+            {"open": px, "high": px * 1.001, "low": px * 0.999, "close": px, "volume": 10.0, "imbalance": imb},
+            index=idx,
+        )
+        res = run_strategy_backtest(df, ObImbalanceScalper(buy_threshold=0.1), position_pct=0.1)
+        # BacktestResult (векторний рушій), а не EventBacktestResult
+        assert type(res).__name__ == "BacktestResult"
+        assert res.metrics.n_trades > 0

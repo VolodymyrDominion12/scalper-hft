@@ -150,3 +150,124 @@ def test_klines_fresh_complete_cache_skips_network(monkeypatch) -> None:
 
 def test_interval_ms_1m() -> None:
     assert _interval_ms("1m") == 60_000
+
+
+def test_calculate_backoff_ip_ban() -> None:
+    from scalper_hft.data.downloader import _calculate_backoff
+
+    exc = RuntimeError("binance 418 IP banned until further notice")
+    sleep_s, cat = _calculate_backoff(attempt=0, exc=exc, max_retries=8)
+    assert cat == "ip_ban"
+    assert 60.0 <= sleep_s <= 66.0
+
+    exc_1003 = RuntimeError("code -1003: Too many requests, IP has been auto-banned")
+    sleep_s2, cat2 = _calculate_backoff(attempt=1, exc=exc_1003, max_retries=8)
+    assert cat2 == "ip_ban"
+    assert 120.0 <= sleep_s2 <= 126.0
+
+
+def test_calculate_backoff_ip_ban_with_timestamp(monkeypatch) -> None:
+    import time
+    from scalper_hft.data.downloader import _calculate_backoff
+
+    now = 1700000000.0
+    ban_until_ms = int((now + 45.0) * 1000)
+    monkeypatch.setattr(time, "time", lambda: now)
+
+    exc = RuntimeError(f"binance 418 IP banned until {ban_until_ms}")
+    sleep_s, cat = _calculate_backoff(attempt=0, exc=exc, max_retries=8)
+    assert cat == "ip_ban"
+    assert abs(sleep_s - 47.0) < 0.5
+
+
+def test_calculate_backoff_rate_limit() -> None:
+    from scalper_hft.data.downloader import _calculate_backoff
+
+    exc = RuntimeError("binance 429 Too many requests")
+    sleep_s, cat = _calculate_backoff(attempt=0, exc=exc, max_retries=8)
+    assert cat == "rate_limit"
+    assert 10.0 <= sleep_s <= 16.0
+
+    sleep_s2, cat2 = _calculate_backoff(attempt=2, exc=exc, max_retries=8)
+    assert cat2 == "rate_limit"
+    assert 40.0 <= sleep_s2 <= 46.0
+
+
+def test_calculate_backoff_network_error() -> None:
+    from scalper_hft.data.downloader import _calculate_backoff
+
+    exc = RuntimeError("Connection reset by peer / 502 Bad Gateway")
+    sleep_s, cat = _calculate_backoff(attempt=0, exc=exc, max_retries=8)
+    assert cat == "network"
+    assert 2.0 <= sleep_s <= 5.0
+
+
+def test_downloader_checkpointing_saves_intermediate(monkeypatch) -> None:
+    import pytest
+    from scalper_hft.data import downloader as dl
+
+    now = pd.Timestamp("2024-01-10 12:00:00")
+    monkeypatch.setattr(dl, "_utc_now", lambda: now)
+
+    # 3 батчі по 1000 свічок (всього 3000 свічок)
+    bars = _bars_df("2024-01-08 00:00", 3000)
+    store = _MemStore()
+
+    class _MockClient:
+        def __init__(self) -> None:
+            self.rows = _rows_from_df(bars)
+
+        def fetch_klines(self, symbol: str, timeframe: str, since_ms: int, limit: int = 1000):
+            return [r for r in self.rows if r[0] >= since_ms][:limit]
+
+    # чекпоінт кожні 2 батчі
+    dl_inst = Downloader(
+        client=_MockClient(),
+        retries=1,
+        store=store,
+        batch_delay=0.0,
+        checkpoint_batches=2,
+    )
+    out = dl_inst.klines("BTCUSDT", "1m", days=3)
+    assert len(out) == 3000
+    saved = store.load_klines("BTCUSDT", "1m")
+    assert saved is not None and len(saved) == 3000
+
+
+def test_downloader_saves_partial_progress_on_failure(monkeypatch) -> None:
+    import pytest
+    from scalper_hft.data import downloader as dl
+
+    now = pd.Timestamp("2024-01-10 12:00:00")
+    monkeypatch.setattr(dl, "_utc_now", lambda: now)
+
+    bars = _bars_df("2024-01-08 00:00", 3000)
+    store = _MemStore()
+
+    class _FailingClient:
+        def __init__(self) -> None:
+            self.rows = _rows_from_df(bars)
+            self.calls = 0
+
+        def fetch_klines(self, symbol: str, timeframe: str, since_ms: int, limit: int = 1000):
+            self.calls += 1
+            if self.calls == 2:
+                # Падаємо на другому батчі після успішного першого
+                raise RuntimeError("Simulated network fatal failure")
+            return [r for r in self.rows if r[0] >= since_ms][:limit]
+
+    # retries=1 щоб швидше впасти
+    dl_inst = Downloader(
+        client=_FailingClient(),
+        retries=1,
+        store=store,
+        batch_delay=0.0,
+    )
+
+    with pytest.raises(RuntimeError, match="Не вдалося завантажити дані"):
+        dl_inst.klines("BTCUSDT", "1m", days=3)
+
+    # Перевіряємо, що перший батч (1000 свічок) зберігся у сховищі незважаючи на падіння!
+    saved = store.load_klines("BTCUSDT", "1m")
+    assert saved is not None
+    assert len(saved) == 1000

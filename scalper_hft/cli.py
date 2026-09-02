@@ -47,15 +47,40 @@ def cmd_download(args: argparse.Namespace) -> None:
     settings = get_settings()
     symbols = args.symbol.split(",") if args.symbol else list(settings.default_symbols)
     intervals = args.interval.split(",") if args.interval else ["1m"]
+    retries = getattr(args, "retries", None)
+    batch_delay = getattr(args, "delay", None)
+    checkpoint_batches = getattr(args, "checkpoint_batches", None)
+
     for sym in symbols:
         for iv in intervals:
-            df = download_klines(sym, iv, args.days, force=args.force)
+            df = download_klines(
+                sym,
+                iv,
+                args.days,
+                force=args.force,
+                retries=retries,
+                batch_delay=batch_delay,
+                checkpoint_batches=checkpoint_batches,
+            )
             logger.info("klines %s %s: %d свічок (%s … %s)", sym, iv, len(df), df.index[0], df.index[-1])
         if args.trades:
-            tr = download_agg_trades(sym, args.trades_days or min(args.days, 2), force=args.force)
+            tr = download_agg_trades(
+                sym,
+                args.trades_days or min(args.days, 2),
+                force=args.force,
+                retries=retries,
+                batch_delay=batch_delay,
+                checkpoint_batches=checkpoint_batches,
+            )
             logger.info("aggTrades %s: %d трейдів", sym, len(tr) if tr is not None else 0)
         if args.funding:
-            fu = download_funding(sym, args.days, force=args.force)
+            fu = download_funding(
+                sym,
+                args.days,
+                force=args.force,
+                retries=retries,
+                batch_delay=batch_delay,
+            )
             logger.info("funding %s: %d точок", sym, len(fu) if fu is not None else 0)
         if getattr(args, "vision", False):
             from datetime import date, timedelta
@@ -1247,6 +1272,22 @@ def cmd_mcp(args: argparse.Namespace) -> None:
     run_stdio()
 
 
+def cmd_dashboard(args: argparse.Namespace) -> None:
+    """Запуск Streamlit-дашборду тим самим Python, що й CLI (не Anaconda PATH)."""
+    import subprocess
+
+    script = Path(__file__).resolve().parent / "dashboard.py"
+    try:
+        import streamlit  # noqa: F401
+    except ImportError:
+        logger.error("Немає streamlit. Встановіть: uv pip install -e '.[dashboard]'")
+        sys.exit(1)
+    cmd = [sys.executable, "-m", "streamlit", "run", str(script)]
+    if args.port is not None:
+        cmd.extend(["--server.port", str(args.port)])
+    raise SystemExit(subprocess.call(cmd))
+
+
 def cmd_sweep(args: argparse.Namespace) -> None:
     """Матричний прогон: всі стратегії × символи × таймфрейми.
 
@@ -1386,6 +1427,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--trades-days", type=int, default=None, help="Глибина aggTrades (Binance обмежує 2 доби)")
     p.add_argument("--funding", action="store_true", help="Також funding")
     p.add_argument("--force", action="store_true", help="Ігнорувати кеш")
+    p.add_argument("--retries", type=int, default=None, help="Кількість спроб при помилках/лімітах (за замовч. 8)")
+    p.add_argument("--delay", type=float, default=None, help="Затримка між батчами у сек (за замовч. 0.15)")
+    p.add_argument("--checkpoint-batches", type=int, default=None, help="Періодичність збереження чекпоінтів (за замовч. 50)")
     p.add_argument("--vision", action="store_true", help="Історичні aggTrades з data.binance.vision")
     p.add_argument("--vision-start", default=None, help="YYYY-MM-DD початок Vision-дампів")
     p.add_argument("--vision-freq", default="daily", choices=["daily", "monthly"])
@@ -1656,6 +1700,10 @@ def main(argv: list[str] | None = None) -> None:
 
     p = sub.add_parser("mcp", help="Запуск MCP-сервера для трейдінгу (stdio)")
     p.set_defaults(func=cmd_mcp)
+
+    p = sub.add_parser("dashboard", help="Запуск Streamlit-дашборду (інтерпретатор цього venv)")
+    p.add_argument("--port", type=int, default=None, help="Порт Streamlit (за замовч. 8501)")
+    p.set_defaults(func=cmd_dashboard)
 
     p = sub.add_parser(
         "sweep",

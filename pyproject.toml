@@ -60,6 +60,7 @@ ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "*.ipynb" = ["E402"]
+"scalper_hft/dashboard.py" = ["E402"]
 
 [tool.mypy]
 python_version = "3.12"

@@ -1,8 +1,9 @@
 """Головний вхід Streamlit-дашборду scalper-hft (мультисторінка).
 
-Запуск:
+Запуск (завжди через venv проєкту, не Anaconda `streamlit` з PATH):
+
     uv pip install -e ".[dashboard]"
-    .venv/bin/streamlit run scalper_hft/dashboard.py
+    uv run python -m scalper_hft.cli dashboard
 
 Сторінки (app_pages/):
     - «Моніторинг» — кеш даних по символах та paper-результати;
@@ -15,7 +16,17 @@
 
 from __future__ import annotations
 
-import streamlit as st
+import sys
+from pathlib import Path
+
+# Streamlit додає каталог скрипта (scalper_hft/), а не корінь репо.
+# Без цього `from scalper_hft...` у app_pages падає ModuleNotFoundError,
+# якщо пакет не встановлено в той самий інтерпретатор (часто Anaconda PATH).
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+import streamlit as st  # noqa: E402
 
 st.set_page_config(page_title="scalper-hft", page_icon="📈", layout="wide")
 

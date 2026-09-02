@@ -154,8 +154,9 @@ uv venv .venv && uv pip install -e ".[optim,ml,dev]"
 
 ```bash
 uv pip install -e ".[dashboard]"
-.venv/bin/streamlit run scalper_hft/dashboard.py
+uv run python -m scalper_hft.cli dashboard
 ```
+Не запускайте системний / Anaconda `streamlit` з PATH — пакет `scalper_hft` там немає.
 Мультисторінка (`st.navigation`, сторінки у `scalper_hft/app_pages/`):
 - **Моніторинг** — кеш даних по символах, paper pairs (SQLite), paper-run CSV;
 - **Бектест** — запуск бектесту, інтерактивний графік угод (свічки +
