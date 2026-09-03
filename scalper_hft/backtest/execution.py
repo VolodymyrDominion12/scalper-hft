@@ -105,6 +105,30 @@ class CostModel:
             impact = self.sqrt_law_impact(qty_notional, adv_notional, sigma_frac)
         return float(fee + slip + impact)
 
+    def with_is_slippage(self, records: list[object], kind: str = "all") -> CostModel:
+        from dataclasses import replace
+
+        return replace(self, slippage_frac=calibrate_from_is(records, kind=kind))
+
+
+def calibrate_from_is(
+    records: list[object],
+    *,
+    kind: str = "all",
+    fallback: float = 0.0002,
+) -> float:
+    """Median IS (bps) → slippage_frac. kind: all | maker | chase."""
+    rows = list(records)
+    if kind == "maker":
+        rows = [r for r in rows if bool(getattr(r, "is_maker", True))]
+    elif kind == "chase":
+        rows = [r for r in rows if not bool(getattr(r, "is_maker", True))]
+    if not rows:
+        return fallback
+    vals = sorted(float(getattr(r, "shortfall_bps", 0.0)) for r in rows)
+    median_bps = vals[len(vals) // 2]
+    return max(median_bps / 10_000.0, 0.0)
+
 
 def estimate_impact_k_from_bars(df: pd.DataFrame, sigma_col: str | None = None) -> float:
     """Калібровка константи Square-Root Law k з OHLCV-барів (проксі).

@@ -1,8 +1,6 @@
 """Тести для Avellaneda-Stoikov Market Maker та VPIN захисту."""
 
 import numpy as np
-import pytest
-
 from scalper_hft.strategies.market_maker import PassiveMarketMaker
 
 

@@ -163,5 +163,5 @@ Paper-моніторинг 8 тижнів іде **паралельно**. Пі�
 - [x] Фаза C: CLI `--use-kalman`; звіт/протокол Kalman vs OLS; дефолт off
 - [x] Фаза D: портфельний daily-loss halt у циклі; IS у paper-audit
 - [x] Фаза E: session UTC; markout наступний бар; warn pairs 1m/5m
-- [ ] `uv run pytest tests/ -q` зелений (перевіряється після реалізації)
+- [x] `uv run pytest tests/ -q` зелений (перевіряється після реалізації)
 - [x] Kalman/chase не ввімкнені «тихо» в paper systemd-юніті без прапорців

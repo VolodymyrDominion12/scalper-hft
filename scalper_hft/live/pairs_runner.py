@@ -14,6 +14,7 @@ import logging
 import time
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
 
 from scalper_hft.config import get_settings
@@ -118,6 +119,7 @@ class PairsEngine:
         is_maker: bool = True,
         legging_mode: str = "strict_both",
         max_drift_bps: float = 10.0,
+        coint_kill: bool = True,
     ) -> None:
         settings = get_settings()
         self.leg1 = leg1
@@ -129,6 +131,9 @@ class PairsEngine:
         self.is_maker = is_maker
         self.legging_mode = legging_mode
         self.max_drift_bps = max_drift_bps
+        self.coint_kill = coint_kill
+        self.portfolio_block_entries = False
+        self._spread_hist = pd.Series(dtype=float)
         self.wait_bars = wait_bars if wait_bars is not None else settings.maker_fill_wait_bars
         self.size_pct = pair_size_pct(n_pairs, settings.pair_notional_pct, settings.portfolio_notional_pct)
         self.max_losing_months = settings.max_losing_months
@@ -183,8 +188,18 @@ class PairsEngine:
         self._month_start_eq = equity
 
     def _can_open(self, ts: pd.Timestamp | None = None) -> tuple[bool, str]:
+        if self.portfolio_block_entries:
+            return False, "портфельний ліміт збитків"
         if self.losing_months >= self.max_losing_months:
             return False, "два збиткові місяці — пауза"
+        if self.coint_kill and not self._spread_hist.empty:
+            from scalper_hft.live.pair_health import pair_entry_allowed
+
+            lookback = int(self.strategy.get("lookback", 240))
+            window = self._spread_hist.tail(max(lookback, 80))
+            ok, reason = pair_entry_allowed(window)
+            if not ok:
+                return False, reason
         if self.account.equity <= self.account.day_start_equity * (1 - self.daily_loss_limit):
             return False, "денний ліміт збитків"
         if self.account.equity <= self.week_start_equity * (1 - self.weekly_loss_limit):
@@ -323,8 +338,8 @@ class PairsEngine:
         self.account.open_position(o2.key, o2.pos_side, o2.size, px2, ts, is_maker=m2)
         self.have = 1 if o1.pos_side == "short" else -1
         if self.is_journal:
-        rec1 = self.is_journal.log(ts, self.pid, o1.symbol, o1.side, o1.limit_price, px1, is_maker=m1)
-        rec2 = self.is_journal.log(ts, self.pid, o2.symbol, o2.side, o2.limit_price, px2, is_maker=m2)
+            self.is_journal.log(ts, self.pid, o1.symbol, o1.side, o1.limit_price, px1, is_maker=m1)
+            self.is_journal.log(ts, self.pid, o2.symbol, o2.side, o2.limit_price, px2, is_maker=m2)
 
     def _quote(self, ts: pd.Timestamp, want: int, p1: float, p2: float) -> str:
         if want == self.have:
@@ -450,6 +465,13 @@ class PairsEngine:
             self.week_start_equity = equity
         self._last_week = week
         self._roll_month(ts, equity)
+        if close1 > 0 and close2 > 0:
+            self._spread_hist.loc[ts] = float(np.log(close1) - np.log(close2))
+        if self.is_journal.records:
+            mid1 = 0.5 * (high1 + low1)
+            mid2 = 0.5 * (high2 + low2)
+            self.is_journal.apply_next_bar_markout(self.leg1, mid1)
+            self.is_journal.apply_next_bar_markout(self.leg2, mid2)
         parts.append(self._resolve_pending(ts, high1, low1, high2, low2))
         if self.pending is None:
             parts.append(self._quote(ts, int(signal), close1, close2))
@@ -694,10 +716,36 @@ class PairsPortfolioRunner:
                     client=self.client,
                 )
             )
+        self.daily_loss_limit = settings.daily_loss_limit
+        self.weekly_loss_limit = settings.weekly_loss_limit
+        self.week_start_equity = self.account.equity
+        self._last_week: tuple[int, int] | None = None
+        self.enable_vol_target = False
+
+    def _roll_week(self, now: pd.Timestamp | None) -> None:
+        ts = now if now is not None else pd.Timestamp.now(tz="UTC").tz_convert(None)
+        iso = ts.isocalendar()
+        week = (int(iso.year), int(iso.week))
+        if self._last_week is not None and week != self._last_week:
+            self.week_start_equity = self.account.equity
+        self._last_week = week
+
+    def _should_halt_entries(self) -> bool:
+        eq = self.account.equity
+        if eq <= self.account.day_start_equity * (1.0 - self.daily_loss_limit):
+            return True
+        if eq <= self.week_start_equity * (1.0 - self.weekly_loss_limit):
+            return True
+        return False
 
     def step(self, now: pd.Timestamp | None = None) -> str:
+        self._roll_week(now)
         reconcile_exchange_state(self.account, self.client, dry_run=self._dry_run)
-        return " || ".join(r.step(now=now, reconcile=False) for r in self.runners)
+        halt = self._should_halt_entries()
+        for r in self.runners:
+            r.engine.portfolio_block_entries = halt
+        prefix = "halt:portfolio_loss " if halt else ""
+        return prefix + " || ".join(r.step(now=now, reconcile=False) for r in self.runners)
 
     def run(self, iterations: int = 10, sleep_sec: int = 300) -> PairsPaperResult:
         actions: list[str] = []

@@ -80,6 +80,35 @@ def weekday_breakdown(trades_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows).set_index("weekday")
 
 
+def hourly_fill_rate(orders_df: pd.DataFrame) -> pd.DataFrame:
+    """Fill-rate по годинах UTC з журналу ордерів (status filled/unfilled)."""
+    if orders_df is None or orders_df.empty or "ts" not in orders_df.columns:
+        return pd.DataFrame()
+    if "status" not in orders_df.columns:
+        return pd.DataFrame()
+    df = orders_df.copy()
+    df["hour_utc"] = pd.to_datetime(df["ts"]).dt.hour
+    rows: list[dict] = []
+    for hour in range(24):
+        sub = df[df["hour_utc"] == hour]
+        if sub.empty:
+            continue
+        filled = int((sub["status"] == "filled").sum())
+        unfilled = int((sub["status"] == "unfilled").sum())
+        total = filled + unfilled
+        rows.append(
+            {
+                "hour_utc": hour,
+                "n_filled": filled,
+                "n_unfilled": unfilled,
+                "fill_rate": (filled / total) if total else 0.0,
+            }
+        )
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows).set_index("hour_utc")
+
+
 def regime_breakdown(trades_df: pd.DataFrame, regime_series: pd.Series | None = None) -> pd.DataFrame:
     """Метрики угод по режимах волатильності (low/normal/high).
 

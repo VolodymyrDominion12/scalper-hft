@@ -92,7 +92,7 @@ class BinanceUserDataStream:
         self.refresh_listen_key = refresh_listen_key
         self.keepalive_interval_sec = float(keepalive_interval_sec)
         self._running = False
-        self._last_keepalive_mono: float = 0.0
+        self._last_keepalive_mono: float | None = None
 
     @property
     def ws_url(self) -> str:
@@ -103,7 +103,7 @@ class BinanceUserDataStream:
         now = time.monotonic() if now_mono is None else now_mono
         if self.keepalive is None:
             return False
-        if self._last_keepalive_mono == 0.0:
+        if self._last_keepalive_mono is None:
             self._last_keepalive_mono = now
             return False
         if now - self._last_keepalive_mono < self.keepalive_interval_sec:
@@ -120,7 +120,7 @@ class BinanceUserDataStream:
         if not new_key:
             return False
         self.listen_key = str(new_key)
-        self._last_keepalive_mono = 0.0
+        self._last_keepalive_mono = None
         logger.info("listenKey регенеровано")
         return True
 

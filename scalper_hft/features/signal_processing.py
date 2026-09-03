@@ -183,4 +183,3 @@ def estimate_half_life(spread: pd.Series, min_obs: int = 20) -> float:
     if b >= 0:
         return float("inf")
     return float(-np.log(2) / b)
-

@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from scalper_hft.live.ws_urls import bookticker_url, depth5_url
+
 logger = logging.getLogger(__name__)
 
 try:

@@ -277,7 +277,7 @@ with tabs[1]:
                                 else "✅ фільтр відкидає збиткові угоди"
                             )
                             verdict_badge = ":red-badge[Шкідливий]" if "⚠️" in verdict_msg else ":green-badge[Корисний]"
-                            
+
                             with st.container(border=True):
                                 st.markdown(f"**{row['filter_name']}** {verdict_badge} — {verdict_msg}")
                                 with st.container(horizontal=True):

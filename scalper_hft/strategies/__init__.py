@@ -44,7 +44,7 @@ REGISTRY: dict[str, type[Strategy]] = {
 }
 
 
-def get_strategy(name: str, **params: float | int | str) -> Strategy:
+def get_strategy(name: str, **params: float | int | str | bool) -> Strategy:
     if name not in REGISTRY:
         raise KeyError(f"Невідома стратегія '{name}'. Доступні: {sorted(REGISTRY)}")
     return REGISTRY[name](**params)

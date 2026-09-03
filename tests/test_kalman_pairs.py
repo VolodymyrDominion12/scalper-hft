@@ -2,8 +2,6 @@
 
 import numpy as np
 import pandas as pd
-import pytest
-
 from scalper_hft.features.signal_processing import (
     KalmanHedgeRatio,
     dynamic_hedge_ratio,
@@ -105,4 +103,3 @@ def test_pairs_backtest_with_kalman():
     assert res is not None
     assert len(res.equity) == 250
     assert res.metrics is not None
-

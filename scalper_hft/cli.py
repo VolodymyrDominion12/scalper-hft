@@ -26,6 +26,23 @@ from scalper_hft.config import get_settings
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
 logger = logging.getLogger("scalper_hft.cli")
 
+_SHORT_PAIRS_INTERVALS = frozenset({"1m", "5m"})
+
+
+def _warn_pairs_short_interval(strategy: str, interval: str | None) -> None:
+    if strategy == "pairs_arb" and str(interval) in _SHORT_PAIRS_INTERVALS:
+        logger.warning(
+            "pairs_arb на %s: fee-drag уже відхилив 1m; валідований edge — 1h maker",
+            interval,
+        )
+
+
+def _apply_use_kalman(args: argparse.Namespace, params: dict) -> dict:
+    out = dict(params)
+    if getattr(args, "use_kalman", False):
+        out["use_kalman"] = True
+    return out
+
 
 def _load_klines(symbol: str, interval: str, days: int, base: str | None = None, derive: bool = True) -> pd.DataFrame:
     """Завантажити klines: за замовчуванням ресемплінг старших ТФ із 1m-кешу.
@@ -102,10 +119,11 @@ def cmd_backtest(args: argparse.Namespace) -> None:
     from scalper_hft.data.research import load_research_data
     from scalper_hft.strategies import get_strategy
 
-    params = dict(args.param_dict)
+    params = _apply_use_kalman(args, dict(args.param_dict))
     if getattr(args, "breakeven_gate", False):
         params["breakeven_gate"] = True
     strategy = get_strategy(args.strategy, **params)
+    _warn_pairs_short_interval(args.strategy, args.interval)
     settings = get_settings()
     bar_type = getattr(args, "bar_type", "time")
     bundle = load_research_data(
@@ -197,7 +215,7 @@ def cmd_walkforward(args: argparse.Namespace) -> None:
     df = _load_klines(
         args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", True)
     )
-    strategy = get_strategy(args.strategy, **args.param_dict)
+    strategy = get_strategy(args.strategy, **_apply_use_kalman(args, args.param_dict))
     trades = None
     if strategy.needs_trades:
         from scalper_hft.data.downloader import download_agg_trades
@@ -304,7 +322,7 @@ def cmd_overfit(args: argparse.Namespace) -> None:
     df = _load_klines(
         args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", True)
     )
-    strategy = get_strategy(args.strategy, **args.param_dict)
+    strategy = get_strategy(args.strategy, **_apply_use_kalman(args, args.param_dict))
     settings = get_settings()
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
     trades = None
@@ -701,7 +719,7 @@ def cmd_pairs(args: argparse.Namespace) -> None:
     )
     f1 = download_funding(leg1, args.days)
     f2 = download_funding(leg2, args.days)
-    strategy = get_strategy(args.strategy, **args.param_dict)
+    strategy = get_strategy(args.strategy, **_apply_use_kalman(args, args.param_dict))
     settings = get_settings()
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
 
@@ -873,6 +891,19 @@ def cmd_paper_audit(args: argparse.Namespace) -> None:
         dd_mult=args.dd_mult,
     )
     print("\n" + audit.summary())
+    from scalper_hft.research.session_analysis import hourly_fill_rate, session_breakdown
+    from scalper_hft.validation.forensics import trades_from_paper_frames
+
+    orders = store.all_orders()
+    fills = hourly_fill_rate(orders)
+    if not fills.empty:
+        print("\nFill-rate by hour UTC:")
+        print(fills.to_string())
+    trades = trades_from_paper_frames(store.all_trades(), orders)
+    sess = session_breakdown(trades)
+    if not sess.empty:
+        print("\nPnL by hour UTC:")
+        print(sess.to_string())
     store.close()
 
 
@@ -1468,6 +1499,7 @@ def main(argv: list[str] | None = None) -> None:
     add_common(p)
     p.add_argument("--train", type=int, default=2000, help="Барів у train (IS)")
     p.add_argument("--test", type=int, default=500, help="Барів у test (OOS)")
+    p.add_argument("--use-kalman", action="store_true", help="PairsArb: динамічний Kalman hedge ratio")
     p.set_defaults(func=cmd_walkforward)
 
     p = sub.add_parser("optimize", help="Оптимізація параметрів (Optuna)")
@@ -1494,6 +1526,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--train", type=int, default=2000)
     p.add_argument("--test", type=int, default=500)
     p.add_argument("--trials", type=int, default=50, help="Оцінка кількості спроб для DSR")
+    p.add_argument("--use-kalman", action="store_true", help="PairsArb: динамічний Kalman hedge ratio")
     p.set_defaults(func=cmd_overfit)
 
     p = sub.add_parser("cscv", help="PBO через Combinatorial Purged CV")
@@ -1527,6 +1560,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--walkforward", action="store_true", help="Додатково walk-forward")
     p.add_argument("--train", type=int, default=1500)
     p.add_argument("--test", type=int, default=500)
+    p.add_argument(
+        "--use-kalman", action="store_true", help="Динамічний Kalman hedge ratio (дефолт off до OOS bake-off)"
+    )
     p.set_defaults(func=cmd_pairs)
 
     p = sub.add_parser("pairs-portfolio", help="Бектест портфеля валідованих пар")

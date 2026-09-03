@@ -134,3 +134,42 @@ def test_replay_mean_reversion_opens_two_legs():
         t.get("type") == "trade" for t in acc.trades
     )
     assert not res.equity.empty
+
+
+def test_portfolio_block_entries_blocks_open() -> None:
+    acc = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
+    eng = PairsEngine("AAA", "BBB", PairsArb(lookback=20), acc, wait_bars=1, coint_kill=False)
+    eng.portfolio_block_entries = True
+    ts = pd.Timestamp("2025-03-01")
+    msg = eng.on_bar(ts, 101, 99, 100, 51, 49, 50, signal=1)
+    assert "blocked" in msg
+    assert acc.is_flat
+
+
+def test_markout_logged_on_next_bar() -> None:
+    acc = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
+    eng = PairsEngine("AAA", "BBB", PairsArb(lookback=20), acc, wait_bars=1, coint_kill=False)
+    ts0 = pd.Timestamp("2025-01-01 00:00")
+    ts1 = pd.Timestamp("2025-01-01 01:00")
+    ts2 = pd.Timestamp("2025-01-01 02:00")
+    eng.on_bar(ts0, 101, 99, 100, 51, 49, 50, signal=1)
+    eng.on_bar(ts1, 101, 99, 100, 51, 49, 50, signal=1)
+    assert eng.n_filled == 1
+    eng.on_bar(ts2, 102, 100, 101, 52, 50, 51, signal=0)
+    marked = [r for r in eng.is_journal.records if r.markout_bps is not None]
+    assert len(marked) >= 1
+
+
+def test_portfolio_should_halt_on_daily_loss() -> None:
+    acc = PaperAccount(10_000.0)
+    acc.cash = 9_600.0  # −4% vs 3% default daily_loss_limit
+    from scalper_hft.live.pairs_runner import PairsPortfolioRunner
+
+    r = object.__new__(PairsPortfolioRunner)
+    r.account = acc
+    r.daily_loss_limit = 0.03
+    r.weekly_loss_limit = 0.07
+    r.week_start_equity = 10_000.0
+    assert PairsPortfolioRunner._should_halt_entries(r) is True
+    acc.cash = 10_000.0
+    assert PairsPortfolioRunner._should_halt_entries(r) is False

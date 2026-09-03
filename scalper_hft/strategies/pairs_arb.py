@@ -81,9 +81,7 @@ class PairsArb(Strategy):
 
             kq = float(self.get("kalman_q", 1e-5))
             kr = float(self.get("kalman_r", 1e-3))
-            kf_res = dynamic_hedge_ratio(
-                np.log(df["leg1"]), np.log(df["leg2"]), q_beta=kq, q_alpha=kq, r=kr
-            )
+            kf_res = dynamic_hedge_ratio(np.log(df["leg1"]), np.log(df["leg2"]), q_beta=kq, q_alpha=kq, r=kr)
             spread_series = kf_res["spread"]
             self.betas = kf_res["beta"]
         else:

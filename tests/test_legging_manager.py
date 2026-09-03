@@ -1,6 +1,7 @@
 """Тести для Legging Risk Manager (chase/unwind логіка розсинхронізації ніг)."""
 
 import pandas as pd
+import pytest
 from scalper_hft.live.account import PaperAccount
 from scalper_hft.live.fills import FillDecision, resolve_legging
 from scalper_hft.live.pairs_runner import PairsEngine, PendingOrder
@@ -109,17 +110,22 @@ def test_unwind_flattens_open_leg_as_taker() -> None:
         PendingOrder("XRPUSDT", key, "buy", "long", 10.0, 100.0, False, now),
         PendingOrder("BTCUSDT", engine._k("BTCUSDT"), "sell", "short", 0.1, 50.0, False, now),
     )
-    status = engine._resolve_pending(now, high1=102.0, low1=99.0, high2=45.0, low2=44.0)
+    # Buy still touches (low ≤ 100), mid=95 < entry → flatten taker-ом у збиток.
+    status = engine._resolve_pending(now, high1=100.0, low1=90.0, high2=45.0, low2=44.0)
     assert "unwind" in status
     assert key not in acc.positions
     assert acc.cash < cash_after_open
+    exit_px = acc.trades[-1]["exit_price"]
+    assert exit_px == pytest.approx(95.0)
+    taker_fee = exit_px * 10.0 * acc.taker_fee
+    assert cash_after_open - acc.cash >= taker_fee
     assert engine.pending is None
 
 
 def test_strict_both_partial_does_not_open() -> None:
     acc = PaperAccount(initial_capital=10_000.0)
     strat = PairsArb(lookback=60)
-    engine = PairsEngine("XRPUSDT", "BTCUSDT", strat, acc, legging_mode="strict_both")
+    engine = PairsEngine("XRPUSDT", "BTCUSDT", strat, acc, legging_mode="strict_both", wait_bars=3)
     now = pd.Timestamp("2026-01-01 12:00:00")
     engine.pending = (
         PendingOrder("XRPUSDT", engine._k("XRPUSDT"), "buy", "long", 10.0, 100.0, False, now),
