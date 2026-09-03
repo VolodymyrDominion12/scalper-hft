@@ -30,6 +30,7 @@ from scalper_hft.backtest.execution import CostModel
 from scalper_hft.config import get_settings, require_live_credentials
 from scalper_hft.data.binance_client import BinanceClient
 from scalper_hft.live.account import PaperAccount
+from scalper_hft.live.exit_ladders import OneWayTradingLadder
 from scalper_hft.live.risk_gate import CooldownState, decide_entry
 from scalper_hft.strategies.base import Strategy
 
@@ -203,6 +204,9 @@ class LiveTrader:
         # M4: live-базис equity з біржі (замість фіктивного депозиту)
         self._live_equity_seeded = False
         self.last_live_equity: float | None = None
+        
+        self.use_exit_ladders = getattr(self.settings, "use_exit_ladders", False)
+        self.ladder: OneWayTradingLadder | None = None
 
     # ── сигнал ───────────────────────────────────────────────────────────────
     def compute_signal(self, df: pd.DataFrame, now: pd.Timestamp | None = None) -> int:
@@ -369,7 +373,7 @@ class LiveTrader:
             if decision.action == "hold":
                 return "hold"
             if decision.action == "close":
-                ok = self._close_instant(price, ts)
+                ok = self._close_instant(price, ts, size=decision.size)
                 return "closed" if ok else "submit_failed:close"
             side = "long" if decision.action == "open_long" else "short"
             size = decision.size * float(getattr(self, "_entry_size_mult", 1.0))
@@ -404,13 +408,15 @@ class LiveTrader:
                 return "closed"  # позиції немає — закривати нічого
             pos = self.account.positions[self.symbol]
             side = "sell" if pos.side == "long" else "buy"
-            ok, status = self._submit_order(side, pos.size, price, reduce_only=True, kind="close", pos_side=pos.side)
+            
+            close_size = decision.size if decision.size > 0 else pos.size
+            ok, status = self._submit_order(side, close_size, price, reduce_only=True, kind="close", pos_side=pos.side)
             if not ok:
                 return "submit_failed:close"
             if status == "pending":
                 # локальна позиція лишається, поки close не заповнився
                 return "close_pending"
-            self.account.close_position(self.symbol, price, ts, is_maker=False)
+            self.account.close_position(self.symbol, price, ts, is_maker=False, size=close_size)
             return "closed"
 
         side = "long" if decision.action == "open_long" else "short"
@@ -600,7 +606,7 @@ class LiveTrader:
                 self.account.open_position(self.symbol, po.pos_side, size, price, ts, is_maker=True)
         else:
             if self.symbol in self.account.positions:
-                self.account.close_position(self.symbol, price, ts, is_maker=True)
+                self.account.close_position(self.symbol, price, ts, is_maker=True, size=size)
 
     # ── M4: live equity з біржі ──────────────────────────────────────────────
 
@@ -647,15 +653,16 @@ class LiveTrader:
         self.account.open_position(self.symbol, side, size, price, ts, is_maker=self.settings.maker_execution)
         return True
 
-    def _close_instant(self, price: float, ts: pd.Timestamp) -> bool:
+    def _close_instant(self, price: float, ts: pd.Timestamp, size: float | None = None) -> bool:
         """Paper/market шлях: submit + миттєвий філ (як було до C2)."""
         if self.symbol not in self.account.positions:
             return True
         pos = self.account.positions[self.symbol]
         side = "sell" if pos.side == "long" else "buy"
-        if not self._submit_order(side, pos.size, price, reduce_only=True)[0]:
+        close_sz = size if size is not None and size > 0 else pos.size
+        if not self._submit_order(side, close_sz, price, reduce_only=True)[0]:
             return False
-        self.account.close_position(self.symbol, price, ts, is_maker=self.settings.maker_execution)
+        self.account.close_position(self.symbol, price, ts, is_maker=self.settings.maker_execution, size=close_sz)
         return True
 
 
@@ -685,17 +692,29 @@ def execute_signal(
         have = 1 if pos.side == "long" else -1
 
     parts: list[str] = []
+    
+    ladder_exit = 0.0
+    if have != 0 and trader.use_exit_ladders and trader.ladder is not None:
+        ladder_exit = trader.ladder.update_price(close)
+    
     if want == 0:
         if have != 0:
             parts.append(trader.execute(TradeDecision("close", trader.symbol, 0.0, "сигнал=0"), close, ts))
+            trader.ladder = None
         else:
             parts.append(trader.execute(TradeDecision("hold", trader.symbol, 0.0, ""), close, ts))
     elif want == have:
-        parts.append(trader.execute(TradeDecision("hold", trader.symbol, 0.0, "вже в позиції"), close, ts))
+        if ladder_exit > 0:
+            parts.append(trader.execute(TradeDecision("close", trader.symbol, pos.size * ladder_exit, "ladder_exit"), close, ts))
+            if trader.ladder.is_fully_closed:
+                trader.ladder = None
+        else:
+            parts.append(trader.execute(TradeDecision("hold", trader.symbol, 0.0, "вже в позиції"), close, ts))
     else:
         # close-before-flip: закриття ніколи не блокується (зменшення ризику)
         if have != 0:
             parts.append(trader.execute(TradeDecision("close", trader.symbol, 0.0, "реверс"), close, ts))
+            trader.ladder = None
         # HMM-режимний блок: нові входи лише у «спокійному» стані
         if trader.hmm_blocked(closed):
             parts.append("blocked:hmm_regime")
@@ -704,6 +723,8 @@ def execute_signal(
             size = trader.vol_scaled_size(base_size, closed)
             action = "open_long" if want > 0 else "open_short"
             parts.append(trader.execute(TradeDecision(action, trader.symbol, size, f"сигнал={signal}"), close, ts))
+            if trader.use_exit_ladders:
+                trader.ladder = OneWayTradingLadder(close, want, base_step_pct=0.002, num_levels=4, geometric_factor=1.5)
 
     trader.last_signal = signal
     return " | ".join(parts)

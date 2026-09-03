@@ -84,23 +84,35 @@ class PaperAccount:
         self.positions[symbol] = Position(symbol, side, size, price, ts, entry_fee=fee)
         self._marks[symbol] = price
 
-    def close_position(self, symbol: str, price: float, ts: pd.Timestamp, is_maker: bool = False) -> dict:
-        pos = self.positions.pop(symbol)
+    def close_position(self, symbol: str, price: float, ts: pd.Timestamp, is_maker: bool = False, size: float | None = None) -> dict:
+        if symbol not in self.positions:
+            raise ValueError(f"позиція {symbol} не знайдена")
+        pos = self.positions[symbol]
+        close_sz = size if size is not None else pos.size
+        if close_sz <= 0 or close_sz > pos.size + 1e-9:
+            raise ValueError(f"некоректний розмір для закриття: {close_sz} (доступно {pos.size})")
+
         fee_rate = self.maker_fee if is_maker else self.taker_fee
-        fee = price * pos.size * fee_rate
+        fee = price * close_sz * fee_rate
+        
         if pos.side == "long":
-            price_pnl = (price - pos.entry_price) * pos.size
+            price_pnl = (price - pos.entry_price) * close_sz
         else:
-            price_pnl = (pos.entry_price - price) * pos.size
-        pnl = price_pnl - fee - pos.entry_fee
+            price_pnl = (pos.entry_price - price) * close_sz
+            
+        # Proportion of entry fee to realize
+        frac = close_sz / pos.size
+        realized_entry_fee = pos.entry_fee * frac
+        
+        pnl = price_pnl - fee - realized_entry_fee
         self.cash += price_pnl - fee
         self.realized_pnl += pnl
-        self._marks.pop(symbol, None)
+        
         trade = {
             "type": "trade",
             "symbol": symbol,
             "side": pos.side,
-            "size": pos.size,
+            "size": close_sz,
             "entry_price": pos.entry_price,
             "exit_price": price,
             "entry_ts": pos.entry_ts,
@@ -108,10 +120,19 @@ class PaperAccount:
             "pnl": pnl,
         }
         self.trades.append(trade)
+        
         if pnl < 0:
             self.consecutive_losses += 1
         else:
             self.consecutive_losses = 0
+            
+        if close_sz >= pos.size - 1e-9:
+            self.positions.pop(symbol)
+            self._marks.pop(symbol, None)
+        else:
+            pos.size -= close_sz
+            pos.entry_fee -= realized_entry_fee
+            
         return trade
 
     @property

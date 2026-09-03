@@ -76,7 +76,9 @@ def compute_metrics(
         raise ValueError("equity має містити щонайменше 2 точки")
 
     ret = equity.pct_change().dropna()
-    total_return = equity.iloc[-1] / equity.iloc[0] - 1.0
+    first_eq = float(equity.iloc[0])
+    last_eq = float(equity.iloc[-1])
+    total_return = last_eq / first_eq - 1.0 if first_eq > 0 else float("nan")
 
     # CAGR: на вікнах ≪ 1 року (500 годинних барів ≈ 0.057 року) показник
     # степеня 1/years експлодує (×~17.5 річного множника) — це вводить в оману.
@@ -85,7 +87,13 @@ def compute_metrics(
     span_seconds = (equity.index[-1] - equity.index[0]).total_seconds()
     years = max(span_seconds / (365 * 24 * 3600), 1e-9)
     if years >= 1.0:
-        cagr = (equity.iloc[-1] / equity.iloc[0]) ** (1 / years) - 1.0
+        if first_eq > 0 and last_eq > 0:
+            cagr = (last_eq / first_eq) ** (1 / years) - 1.0
+        elif first_eq > 0 and last_eq <= 0:
+            # Капітал знищено (equity ≤ 0): степінь від'ємного → NaN + RuntimeWarning.
+            cagr = -1.0  # повна втрата капіталу
+        else:
+            cagr = float("nan")  # старт ≤ 0 або нечислові значення — CAGR безглуздий
     else:
         cagr = total_return
 

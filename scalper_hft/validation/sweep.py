@@ -254,14 +254,18 @@ def run_sweep(
             raise KeyError(f"Невідома стратегія '{name}' (доступні: {sorted(REGISTRY)})")
 
     # прогріти базовий таймфрейм послідовно — один API-прохід на символ,
-    # щоб паралельні клітинки не качали базу одночасно (гонка)
+    # щоб паралельні клітинки не качали базу одночасно (гонка на запис
+    # Postgres = duplicate key / повторні завантаження тих самих вікон).
+    # Прогрів потрібен і коли 1m немає у списку інтервалів (5m/15m/1h
+    # ресемпляться з бази), тому перевіряємо can_derive, а не `in intervals`.
     if data_provider is None:
-        need_funding = any(getattr(REGISTRY[n], "needs_funding", False) for n in strategies)
-        if base_interval in intervals:
-            from scalper_hft.data.access import warm_base_cache
+        from scalper_hft.data.access import can_derive, warm_base_cache
 
+        need_base = any(iv == base_interval or can_derive(iv, base_interval) for iv in intervals)
+        if need_base:
             logger.info("Прогрів бази %s для %s символів (%d днів)...", base_interval, len(symbols), days)
             warm_base_cache(symbols, days, base_interval=base_interval)
+        need_funding = any(getattr(REGISTRY[n], "needs_funding", False) for n in strategies)
         if need_funding:
             from scalper_hft.data.downloader import download_funding
 

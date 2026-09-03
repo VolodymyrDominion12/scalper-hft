@@ -51,9 +51,26 @@ def ensure_klines(
     from scalper_hft.data.downloader import download_klines
 
     if interval == base_interval or not derive or not can_derive(interval, base_interval):
-        return download_klines(symbol, interval, days, force=force)
+        df = download_klines(symbol, interval, days, force=force)
+    else:
+        df = _derive_klines(symbol, interval, days, base_interval, force=force)
+    return _tail_days(df, days)
 
-    return _derive_klines(symbol, interval, days, base_interval, force=force)
+
+def _tail_days(df: pd.DataFrame, days: int) -> pd.DataFrame:
+    """Залишити лише останні `days` днів даних.
+
+    Кеш може містити більше, ніж запитує клієнт (раніше качали 3 роки, а
+    sweep просить 60–180 днів): без обрізання клітинки мовчки бектестили
+    весь кеш, і результати не відповідали конфігу `--days`.
+    """
+    if df is None or df.empty or days <= 0:
+        return df
+    if not df.index.is_monotonic_increasing:
+        df = df.sort_index()
+    cutoff = df.index[-1] - pd.Timedelta(days=days)
+    trimmed = df[df.index >= cutoff]
+    return trimmed if not trimmed.empty else df  # кеш коротший за запит — що є, те й повертаємо
 
 
 def _derive_klines(symbol: str, interval: str, days: int, base_interval: str, *, force: bool) -> pd.DataFrame:

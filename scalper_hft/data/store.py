@@ -210,8 +210,20 @@ class PostgresStore:
                 for row in clean:
                     copy.write_row(row)
 
+    @staticmethod
+    def _lock_replace(conn, *keys: str) -> None:
+        """Серіалізувати replace (symbol, interval) через pg_advisory_xact_lock.
+
+        DELETE+COPY «атомарний» лише в межах одного з'єднання: два паралельні
+        воркери на тому самому ключі (sweep workers>1, кілька процесів) ловили
+        unique violation на klines_pkey / втрачали чужі щойно записані рядки.
+        Xact-лок тримається до commit/rollback і працює між тредами й процесами.
+        """
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))", keys)
+
     def _replace_klines(self, symbol: str, interval: str, df: pd.DataFrame) -> None:
-        """Атомарна заміна рядків klines для (symbol, interval)."""
+        """Атомарна заміна рядків klines для (symbol, interval), race-safe."""
         self.ensure_schema()
         cols = ["symbol", "interval", "ts", *self._KLINES_COLS]
         rows = [
@@ -219,6 +231,7 @@ class PostgresStore:
             for row in df[self._KLINES_COLS].itertuples(index=True, name=None)
         ]
         with self._connect() as conn:
+            self._lock_replace(conn, symbol, interval)
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM klines WHERE symbol = %s AND interval = %s", (symbol, interval))
             if rows:
@@ -226,9 +239,10 @@ class PostgresStore:
             conn.commit()
 
     def _replace(self, table: str, symbol: str, df: pd.DataFrame) -> None:
-        """Атомарна заміна рядків agg_trades / funding для символу."""
+        """Атомарна заміна рядків agg_trades / funding для символу, race-safe."""
         self.ensure_schema()
         with self._connect() as conn:
+            self._lock_replace(conn, table, symbol)
             with conn.cursor() as cur:
                 rows: list[tuple[Any, ...]]
                 if table == "agg_trades":
