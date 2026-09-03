@@ -1,12 +1,10 @@
-"""WebSocket User Data Stream для Binance Futures.
+"""WebSocket User Data Stream для Binance USDT-M.
 
-Отримує події виконання ордерів (ORDER_TRADE_UPDATE) та балансу (ACCOUNT_UPDATE)
-у реальному часі без затримок REST-полінгу.
-
-Підключення:
-    1. Отримання listenKey через REST (POST /fapi/v1/listenKey)
-    2. Підключення до wss://fstream.binance.com/ws/{listenKey}
-    3. Keep-alive кожні 30-50 хвилин (PUT /fapi/v1/listenKey)
+Підключення (після 2026-04-23):
+    1. REST POST /fapi/v1/listenKey
+    2. wss://fstream.binance.com/private/ws?listenKey=…&events=…
+    3. Keep-alive PUT /fapi/v1/listenKey кожні 30 хв (інакше ключ помирає за 60 хв)
+    4. Регенерація listenKey на reconnect і події listenKeyExpired
 """
 
 from __future__ import annotations
@@ -14,13 +12,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
+
+from scalper_hft.live.ws_urls import KEEPALIVE_INTERVAL_SEC, private_user_stream_url
 
 logger = logging.getLogger(__name__)
-
-_WS_BASE_URL = "wss://fstream.binance.com/ws/{}"
-_WS_TESTNET_BASE_URL = "wss://stream.binancefuture.com/ws/{}"
 
 
 @dataclass(frozen=True)
@@ -70,6 +69,10 @@ def parse_order_trade_update(data: dict[str, Any]) -> OrderTradeEvent | None:
         return None
 
 
+def is_listen_key_expired(data: dict[str, Any]) -> bool:
+    return str(data.get("e", "")) == "listenKeyExpired"
+
+
 class BinanceUserDataStream:
     """Асинхронний клієнт User Data Stream Binance USDT-M."""
 
@@ -78,20 +81,56 @@ class BinanceUserDataStream:
         listen_key: str,
         testnet: bool = False,
         on_order_update: Callable[[OrderTradeEvent], Any] | None = None,
+        keepalive: Callable[[str], None] | None = None,
+        refresh_listen_key: Callable[[], str] | None = None,
+        keepalive_interval_sec: float = KEEPALIVE_INTERVAL_SEC,
     ) -> None:
         self.listen_key = listen_key
         self.testnet = testnet
         self.on_order_update = on_order_update
+        self.keepalive = keepalive
+        self.refresh_listen_key = refresh_listen_key
+        self.keepalive_interval_sec = float(keepalive_interval_sec)
         self._running = False
+        self._last_keepalive_mono: float = 0.0
 
     @property
     def ws_url(self) -> str:
-        base = _WS_TESTNET_BASE_URL if self.testnet else _WS_BASE_URL
-        return base.format(self.listen_key)
+        return private_user_stream_url(self.listen_key, testnet=self.testnet)
+
+    def maybe_keepalive(self, now_mono: float | None = None) -> bool:
+        """PUT listenKey якщо минув інтервал. Повертає True, якщо викликано."""
+        now = time.monotonic() if now_mono is None else now_mono
+        if self.keepalive is None:
+            return False
+        if self._last_keepalive_mono == 0.0:
+            self._last_keepalive_mono = now
+            return False
+        if now - self._last_keepalive_mono < self.keepalive_interval_sec:
+            return False
+        self.keepalive(self.listen_key)
+        self._last_keepalive_mono = now
+        return True
+
+    def regenerate_listen_key(self) -> bool:
+        """Новий listenKey через інжектований REST-колбек. True якщо оновлено."""
+        if self.refresh_listen_key is None:
+            return False
+        new_key = self.refresh_listen_key()
+        if not new_key:
+            return False
+        self.listen_key = str(new_key)
+        self._last_keepalive_mono = 0.0
+        logger.info("listenKey регенеровано")
+        return True
 
     def handle_raw_message(self, raw_msg: str | dict) -> OrderTradeEvent | None:
         """Обробляє сире повідомлення з вебсокета і викликає колбек."""
         data = json.loads(raw_msg) if isinstance(raw_msg, str) else raw_msg
+        if is_listen_key_expired(data):
+            logger.warning("listenKeyExpired — регенерація ключа")
+            self.regenerate_listen_key()
+            return None
         event = parse_order_trade_update(data)
         if event and self.on_order_update:
             try:
@@ -108,6 +147,7 @@ class BinanceUserDataStream:
             raise ImportError("Потрібно встановити websockets: uv pip install websockets")
 
         self._running = True
+        self._last_keepalive_mono = time.monotonic()
         logger.info("Підключення до User Data Stream: %s", self.ws_url)
 
         while self._running:
@@ -119,12 +159,13 @@ class BinanceUserDataStream:
                             msg = await asyncio.wait_for(ws.recv(), timeout=30.0)
                             self.handle_raw_message(msg)
                         except TimeoutError:
-                            # Періодичний пінг
+                            self.maybe_keepalive()
                             continue
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.warning("Розрив WebSocket зв'язку (%s), перепідключення за 5 сек...", e)
+                self.regenerate_listen_key()
                 await asyncio.sleep(5.0)
 
     def stop(self) -> None:

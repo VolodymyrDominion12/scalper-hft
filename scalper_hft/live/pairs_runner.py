@@ -222,7 +222,7 @@ class PairsEngine:
         if self.legging_mode == "strict_both":
             d1, d2 = both_or_neither(d1, d2)
             if d1.filled and d2.filled:
-                self._apply_fills(ts, o1, o2, d1.fill_price, d2.fill_price)
+                self._apply_fills(ts, o1, o2, d1.fill_price, d2.fill_price, True, True)
                 self._log_order(ts, o1, "filled", "filled")
                 self._log_order(ts, o2, "filled", "filled")
                 self.pending = None
@@ -244,20 +244,29 @@ class PairsEngine:
                 mode=self.legging_mode,
             )
             if res.action in ("both_filled", "chase_leg1", "chase_leg2"):
-                self._apply_fills(ts, o1, o2, res.d1.fill_price, res.d2.fill_price)
+                self._apply_fills(
+                    ts,
+                    o1,
+                    o2,
+                    res.d1.fill_price,
+                    res.d2.fill_price,
+                    res.leg1_maker,
+                    res.leg2_maker,
+                )
                 self._log_order(ts, o1, "filled", res.d1.reason)
                 self._log_order(ts, o2, "filled", res.d2.reason)
                 self.pending = None
                 self.n_filled += 1
                 return f"filled:{res.action}"
             elif res.action in ("unwind_leg1", "unwind_leg2"):
+                filled = o1 if res.action == "unwind_leg1" else o2
+                px = mid1 if res.action == "unwind_leg1" else mid2
+                self._unwind_filled_leg(ts, filled, px)
                 self._log_order(ts, o1, "unfilled", f"legging_unwound_{res.action}")
                 self._log_order(ts, o2, "unfilled", f"legging_unwound_{res.action}")
                 self.pending = None
                 self.n_unfilled += 1
-                logger.warning(
-                    "%s legging risk triggered %s, drift=%.1f bps", self.pid, res.action, res.drift_bps
-                )
+                logger.warning("%s legging risk triggered %s, drift=%.1f bps", self.pid, res.action, res.drift_bps)
                 return f"unfilled:{res.action}"
 
         o1.bars_waited += 1
@@ -272,12 +281,32 @@ class PairsEngine:
             return f"unfilled:{reason}"
         return "pending"
 
-    def _apply_fills(self, ts: pd.Timestamp, o1: PendingOrder, o2: PendingOrder, px1: float, px2: float) -> None:
+    def _unwind_filled_leg(self, ts: pd.Timestamp, order: PendingOrder, price: float) -> None:
+        """Flatten уже відкриту ногу taker-ом; pending без позиції — no-op."""
+        if order.key not in self.account.positions:
+            return
+        tr = self.account.close_position(order.key, price, ts, is_maker=False)
+        if self.store:
+            self.store.log_trade(ts, self.pid, tr)
+        self.have = 0
+
+    def _apply_fills(
+        self,
+        ts: pd.Timestamp,
+        o1: PendingOrder,
+        o2: PendingOrder,
+        px1: float,
+        px2: float,
+        maker1: bool | None = None,
+        maker2: bool | None = None,
+    ) -> None:
+        m1 = self.is_maker if maker1 is None else maker1
+        m2 = self.is_maker if maker2 is None else maker2
         if o1.reduce_only:
             closed: list[dict] = []
-            for o, px in ((o1, px1), (o2, px2)):
+            for o, px, mk in ((o1, px1, m1), (o2, px2, m2)):
                 if o.key in self.account.positions:
-                    tr = self.account.close_position(o.key, px, ts, is_maker=self.is_maker)
+                    tr = self.account.close_position(o.key, px, ts, is_maker=mk)
                     closed.append(tr)
                     if self.store:
                         self.store.log_trade(ts, self.pid, tr)
@@ -290,12 +319,12 @@ class PairsEngine:
                 else:
                     self.consecutive_pair_losses = 0
             return
-        self.account.open_position(o1.key, o1.pos_side, o1.size, px1, ts, is_maker=self.is_maker)
-        self.account.open_position(o2.key, o2.pos_side, o2.size, px2, ts, is_maker=self.is_maker)
+        self.account.open_position(o1.key, o1.pos_side, o1.size, px1, ts, is_maker=m1)
+        self.account.open_position(o2.key, o2.pos_side, o2.size, px2, ts, is_maker=m2)
         self.have = 1 if o1.pos_side == "short" else -1
         if self.is_journal:
-            self.is_journal.log(ts, self.pid, o1.symbol, o1.side, o1.limit_price, px1)
-            self.is_journal.log(ts, self.pid, o2.symbol, o2.side, o2.limit_price, px2)
+        rec1 = self.is_journal.log(ts, self.pid, o1.symbol, o1.side, o1.limit_price, px1, is_maker=m1)
+        rec2 = self.is_journal.log(ts, self.pid, o2.symbol, o2.side, o2.limit_price, px2, is_maker=m2)
 
     def _quote(self, ts: pd.Timestamp, want: int, p1: float, p2: float) -> str:
         if want == self.have:

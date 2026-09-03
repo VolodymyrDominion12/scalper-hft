@@ -88,6 +88,8 @@ class LeggingResolution:
     d2: FillDecision
     drift_bps: float = 0.0
     reason: str = ""
+    leg1_maker: bool = True
+    leg2_maker: bool = True
 
 
 def resolve_legging(
@@ -110,7 +112,7 @@ def resolve_legging(
         - mode="unwind" або drift > max_drift_bps: негайно закриваємо першу ногу.
     """
     if d1.filled and d2.filled:
-        return LeggingResolution("both_filled", d1, d2, reason="both_filled")
+        return LeggingResolution("both_filled", d1, d2, reason="both_filled", leg1_maker=True, leg2_maker=True)
     if (not d1.filled) and (not d2.filled):
         return LeggingResolution("neither", d1, d2, reason="neither_filled")
 
@@ -120,14 +122,45 @@ def resolve_legging(
         drift = float(max(drift, 0.0))
         if mode == "chase" and drift <= max_drift_bps:
             chased_d2 = FillDecision(True, mid2, f"chase_taker_drift_{drift:.1f}bps")
-            return LeggingResolution("chase_leg2", d1, chased_d2, drift_bps=drift, reason="chased_leg2")
-        return LeggingResolution("unwind_leg1", d1, d2, drift_bps=drift, reason="drift_exceeded_or_unwind")
+            return LeggingResolution(
+                "chase_leg2",
+                d1,
+                chased_d2,
+                drift_bps=drift,
+                reason="chased_leg2",
+                leg1_maker=True,
+                leg2_maker=False,
+            )
+        return LeggingResolution(
+            "unwind_leg1",
+            d1,
+            d2,
+            drift_bps=drift,
+            reason="drift_exceeded_or_unwind",
+            leg1_maker=True,
+            leg2_maker=True,
+        )
 
     # Leg 2 виконалась, Leg 1 — ні
     drift = (mid1 - limit1) / limit1 * 10_000.0 if side1 == "buy" else (limit1 - mid1) / limit1 * 10_000.0
     drift = float(max(drift, 0.0))
     if mode == "chase" and drift <= max_drift_bps:
         chased_d1 = FillDecision(True, mid1, f"chase_taker_drift_{drift:.1f}bps")
-        return LeggingResolution("chase_leg1", chased_d1, d2, drift_bps=drift, reason="chased_leg1")
-    return LeggingResolution("unwind_leg2", d1, d2, drift_bps=drift, reason="drift_exceeded_or_unwind")
-
+        return LeggingResolution(
+            "chase_leg1",
+            chased_d1,
+            d2,
+            drift_bps=drift,
+            reason="chased_leg1",
+            leg1_maker=False,
+            leg2_maker=True,
+        )
+    return LeggingResolution(
+        "unwind_leg2",
+        d1,
+        d2,
+        drift_bps=drift,
+        reason="drift_exceeded_or_unwind",
+        leg1_maker=True,
+        leg2_maker=True,
+    )

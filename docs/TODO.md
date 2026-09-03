@@ -53,11 +53,12 @@
 - [x] Щотижневий звіт tracking error: CLI `paper-audit` (`validation/paper_audit.py`) — fill-rate, maxDD vs BT×1.5, MAE/MFE forensics.
 
 ### 2. План змін 2026-09 (практики vs код)
-- [ ] **A (P0)** Міграція USDT-M WS на `/public` і `/private` + listenKey keepalive (`ws_user_stream.py`, `bookticker_recorder.py`).
-- [ ] **B (P1)** Chase-нога = taker; unwind flatten вже виконаної ноги; дефолт лишається `strict_both`.
-- [ ] **C (P1)** Kalman vs OLS bake-off (WF/DSR) на 4 валідованих парах; дефолт `use_kalman=False` до прийняття.
-- [ ] **D (P1)** Калібровка CostModel з IsJournal; daily/weekly halt у `PairsPortfolioRunner`.
-- [ ] **E (P2)** Session-розбивка в `paper-audit`; попередження pairs на 1m/5m.
+- [x] **A (P0)** Міграція USDT-M WS на `/public` і `/private` + PUT listenKey keepalive.
+- [x] **B (P1)** Chase-нога = taker; unwind flatten вже виконаної ноги; дефолт `strict_both`.
+- [x] **B2 (P1)** Rolling ADF / half-life kill у paper (блок нових входів).
+- [x] **C (P1)** CLI `--use-kalman`; протокол OLS vs Kalman; дефолт `use_kalman=False` до прийняття.
+- [x] **D (P1)** Калібровка CostModel з IsJournal; daily/weekly halt у `PairsPortfolioRunner`.
+- [x] **E (P2)** Session-розбивка в `paper-audit`; markout наступний бар; попередження pairs на 1m/5m.
 
 ### 3. Накопичення даних глибини стакана (L2 / Depth) — Phase 4, не цей цикл
 - [ ] Накопичення архіву depth5 снапшотів для повноцінної перевірки `ob_imbalance` на мікроструктурних рівнях.

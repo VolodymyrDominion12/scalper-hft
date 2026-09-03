@@ -78,10 +78,12 @@ paper-replay реверсує і рахує daily-loss на mark-to-market. Те
 
 | ID | Що | Статус |
 |---|---|---|
-| A | USDT-M WS `/public` `/private` + listenKey keepalive | 🔜 P0 |
-| B | Chase = taker; unwind = flatten; дефолт `strict_both` | 🔜 P1 |
-| C | Kalman vs OLS OOS bake-off; дефолт Kalman off до прийняття | 🔜 P1 |
-| D | IS → CostModel; daily/weekly halt у portfolio runner | 🔜 P1 |
+| A | USDT-M WS `/public` `/private` + PUT listenKey keepalive 30 хв | код у цьому циклі |
+| B | Chase = taker; unwind = flatten; дефолт `strict_both` | код у цьому циклі |
+| B2 | Rolling ADF / half-life kill у paper (блок входів, не flatten) | код у цьому циклі |
+| C | Kalman vs OLS OOS bake-off; CLI `--use-kalman`; дефолт off | код у цьому циклі |
+| D | IS → CostModel; daily/weekly halt у portfolio runner | код у цьому циклі |
+| E | Session UTC у paper-audit; markout наступний бар; warn 1m/5m | код у цьому циклі |
 
 **Головне правило розгортання** не змінюється: жоден live з реальними коштами,
 поки paper pairs не пройде ≥8 тижнів. Після фази B — перезапуск paper, бо
@@ -112,7 +114,7 @@ paper-replay реверсує і рахує daily-loss на mark-to-market. Те
 |---|---|---|
 | 0 | Усі P0 закриті тестами; `cli pairs` і weekly-audit зелені | ✅ Закрито |
 | 1 | Paper vs backtest tracking error; % unfilled post-only; 8 тижнів без розриву | ⏳ В процесі моніторингу |
-| 1.5 | WS `/public`/`private`; chase=taker; Kalman OOS; IS→cost + portfolio halt | 🔜 [CHANGE_PLAN.md](CHANGE_PLAN.md) |
+| 1.5 | WS `/public`/`private` + keepalive; chase=taker; ADF-kill; Kalman OOS; IS→cost + halt; session/markout | код у циклі 2026-09-03; paper-gate ще відкритий |
 | 2 | Hardening: reconcile в циклі; kill-switch; OLS/Johansen. Ladders/risk budget — модулі | ✅ Код + тести |
 | 3 | ML meta-labeling, CFI, micro-price, sparse basket, stress/cohort валідація | ✅ Реалізовано в коді |
 | 4 | L2 Tardis дані, черга лімітних ордерів, live під реальний капітал | 🔜 Наступний етап |

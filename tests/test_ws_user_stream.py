@@ -1,7 +1,6 @@
 """Тести для Binance WebSocket User Data Stream парсера та клієнта."""
 
 import json
-import pytest
 
 from scalper_hft.live.ws_user_stream import (
     BinanceUserDataStream,
@@ -63,10 +62,10 @@ def test_user_data_stream_callback():
     def on_update(e: OrderTradeEvent):
         received.append(e)
 
-    stream = BinanceUserDataStream(
-        listen_key="test_key_123", testnet=True, on_order_update=on_update
-    )
-    assert "test_key_123" in stream.ws_url
+    stream = BinanceUserDataStream(listen_key="test_key_123", testnet=True, on_order_update=on_update)
+    assert "listenKey=test_key_123" in stream.ws_url
+    assert "/private/ws" in stream.ws_url
+    assert "/ws/test_key_123" not in stream.ws_url
     assert "stream.binancefuture.com" in stream.ws_url
 
     msg = json.dumps(
@@ -96,3 +95,39 @@ def test_user_data_stream_callback():
     assert len(received) == 1
     assert received[0].symbol == "ETHUSDT"
     assert received[0].status == "PARTIALLY_FILLED"
+
+
+def test_prod_ws_url_uses_private_query_listen_key() -> None:
+    stream = BinanceUserDataStream(listen_key="prod_key")
+    assert "/private/ws" in stream.ws_url
+    assert "listenKey=prod_key" in stream.ws_url
+    assert "fstream.binance.com" in stream.ws_url
+    assert "/ws/prod_key" not in stream.ws_url
+    assert "events=" in stream.ws_url
+
+
+def test_maybe_keepalive_fires_after_interval() -> None:
+    calls: list[str] = []
+    stream = BinanceUserDataStream(
+        listen_key="k1",
+        keepalive=calls.append,
+        keepalive_interval_sec=30.0,
+    )
+    assert stream.maybe_keepalive(0.0) is False
+    assert calls == []
+    assert stream.maybe_keepalive(10.0) is False
+    assert stream.maybe_keepalive(30.0) is True
+    assert calls == ["k1"]
+    assert stream.maybe_keepalive(40.0) is False
+    assert stream.maybe_keepalive(60.0) is True
+    assert calls == ["k1", "k1"]
+
+
+def test_listen_key_expired_regenerates() -> None:
+    stream = BinanceUserDataStream(
+        listen_key="old",
+        refresh_listen_key=lambda: "new_key",
+    )
+    event = stream.handle_raw_message({"e": "listenKeyExpired", "E": 1})
+    assert event is None
+    assert stream.listen_key == "new_key"

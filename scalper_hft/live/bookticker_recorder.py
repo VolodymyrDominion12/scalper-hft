@@ -3,7 +3,7 @@
 Призначення: накопичення даних стакана для OB-стратегій (order book imbalance,
 spread dynamics). Історичні bookTicker НЕ доступні безкоштовно — записуємо самі.
 
-Стрім: wss://fstream.binance.com/ws/{symbol}@bookTicker
+Стрім: wss://fstream.binance.com/public/ws/{symbol}@bookTicker
 Повідомлення: {"u":..,"s":"BTCUSDT","b":"bid","B":"bid_qty","a":"ask","A":"ask_qty"}
 
 Використання:
@@ -29,8 +29,6 @@ except ImportError:  # pragma: no cover
     websockets = None  # type: ignore
     _HAS_WS = False
 
-_WS_URL = "wss://fstream.binance.com/ws/{}@bookTicker"
-
 
 async def _record_symbol(
     symbol: str,
@@ -46,7 +44,7 @@ async def _record_symbol(
     rows: list[dict] = []
     written = 0
     start = time.monotonic()
-    url = _WS_URL.format(symbol.lower())
+    url = bookticker_url(symbol)
     logger.info("Підключення до %s на %d сек", url, duration_sec)
 
     try:
@@ -141,9 +139,6 @@ def record_bookticker(symbol: str, minutes: int = 60, data_dir: Path | None = No
 
 
 # ── L2 depth (top N рівнів стакана) ─────────────────────────────────────────
-_DEPTH_URL = "wss://fstream.binance.com/ws/{}@depth5@100ms"
-
-
 async def _record_depth(
     symbol: str,
     out_path: Path,
@@ -162,7 +157,7 @@ async def _record_depth(
     rows: list[dict] = []
     written = 0
     start = time.monotonic()
-    url = _DEPTH_URL.format(symbol.lower())
+    url = depth5_url(symbol)
     logger.info("Підключення до depth5 %s на %d сек", symbol, duration_sec)
 
     try:
