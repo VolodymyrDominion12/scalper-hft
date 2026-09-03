@@ -51,6 +51,33 @@ class PendingOrder:
     placed_ts: pd.Timestamp
     bars_waited: int = 0
 
+    def to_snapshot(self) -> dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "key": self.key,
+            "side": self.side,
+            "pos_side": self.pos_side,
+            "size": float(self.size),
+            "limit_price": float(self.limit_price),
+            "reduce_only": bool(self.reduce_only),
+            "placed_ts": str(self.placed_ts),
+            "bars_waited": int(self.bars_waited),
+        }
+
+    @classmethod
+    def from_snapshot(cls, data: dict[str, Any]) -> PendingOrder:
+        return cls(
+            symbol=str(data["symbol"]),
+            key=str(data["key"]),
+            side=str(data["side"]),
+            pos_side=str(data["pos_side"]),
+            size=float(data["size"]),
+            limit_price=float(data["limit_price"]),
+            reduce_only=bool(data["reduce_only"]),
+            placed_ts=pd.Timestamp(data["placed_ts"]),
+            bars_waited=int(data.get("bars_waited") or 0),
+        )
+
 
 @dataclass
 class PairsPaperResult:
@@ -133,6 +160,7 @@ class PairsEngine:
         self.max_drift_bps = max_drift_bps
         self.coint_kill = coint_kill
         self.portfolio_block_entries = False
+        self.control_block_entries = False
         self._spread_hist = pd.Series(dtype=float)
         self.wait_bars = wait_bars if wait_bars is not None else settings.maker_fill_wait_bars
         self.size_pct = pair_size_pct(n_pairs, settings.pair_notional_pct, settings.portfolio_notional_pct)
@@ -190,6 +218,8 @@ class PairsEngine:
     def _can_open(self, ts: pd.Timestamp | None = None) -> tuple[bool, str]:
         if self.portfolio_block_entries:
             return False, "портфельний ліміт збитків"
+        if self.control_block_entries:
+            return False, "control:no_new_entries"
         if self.losing_months >= self.max_losing_months:
             return False, "два збиткові місяці — пауза"
         if self.coint_kill and not self._spread_hist.empty:
@@ -482,6 +512,68 @@ class PairsEngine:
         self.last_bar_ts = ts
         return " | ".join(parts)
 
+    def seed_spread_from_ohlc(self, common: pd.DataFrame) -> None:
+        """Відновити ADF-вікно після рестарту з уже завантажених klines."""
+        if common is None or common.empty:
+            return
+        if "l1_close" not in common.columns or "l2_close" not in common.columns:
+            return
+        l1 = common["l1_close"].astype(float)
+        l2 = common["l2_close"].astype(float)
+        ok = (l1 > 0) & (l2 > 0)
+        self._spread_hist = np.log(l1[ok]) - np.log(l2[ok])
+
+    def to_snapshot(self) -> dict[str, Any]:
+        pending: list[dict[str, Any]] | None = None
+        if self.pending is not None:
+            pending = [self.pending[0].to_snapshot(), self.pending[1].to_snapshot()]
+        last_week = list(self._last_week) if self._last_week is not None else None
+        until = self.cooldown.until
+        return {
+            "last_bar_ts": str(self.last_bar_ts) if self.last_bar_ts is not None else None,
+            "have": int(self.have),
+            "losing_months": int(self.losing_months),
+            "month_key": self._month_key,
+            "month_start_eq": float(self._month_start_eq),
+            "n_filled": int(self.n_filled),
+            "n_unfilled": int(self.n_unfilled),
+            "consecutive_pair_losses": int(self.consecutive_pair_losses),
+            "week_start_equity": float(self.week_start_equity),
+            "last_day": str(self._last_day) if self._last_day is not None else None,
+            "last_week": last_week,
+            "pending": pending,
+            "cooldown_until": str(until) if until is not None else None,
+            "cooldown_reason": self.cooldown.reason,
+        }
+
+    def apply_snapshot(self, data: dict[str, Any]) -> None:
+        raw_ts = data.get("last_bar_ts")
+        self.last_bar_ts = pd.Timestamp(raw_ts) if raw_ts else None
+        self.have = int(data.get("have") or 0)
+        self.losing_months = int(data.get("losing_months") or 0)
+        self._month_key = data.get("month_key")
+        if data.get("month_start_eq") is not None:
+            self._month_start_eq = float(data["month_start_eq"])
+        self.n_filled = int(data.get("n_filled") or 0)
+        self.n_unfilled = int(data.get("n_unfilled") or 0)
+        self.consecutive_pair_losses = int(data.get("consecutive_pair_losses") or 0)
+        if data.get("week_start_equity") is not None:
+            self.week_start_equity = float(data["week_start_equity"])
+        day = data.get("last_day")
+        self._last_day = None if not day else pd.Timestamp(str(day)).date()
+        lw = data.get("last_week")
+        self._last_week = (int(lw[0]), int(lw[1])) if lw and len(lw) == 2 else None
+        pending = data.get("pending")
+        if pending and len(pending) == 2:
+            self.pending = (PendingOrder.from_snapshot(pending[0]), PendingOrder.from_snapshot(pending[1]))
+        else:
+            self.pending = None
+        until_raw = data.get("cooldown_until")
+        self.cooldown = CooldownState(
+            until=pd.Timestamp(until_raw) if until_raw else None,
+            reason=str(data.get("cooldown_reason") or ""),
+        )
+
 
 def replay_pairs(
     leg1: str,
@@ -568,6 +660,93 @@ def _fetch_ohlcv(symbol: str, interval: str, limit: int = _RECENT_BARS) -> pd.Da
     return df.set_index("ts").sort_index()
 
 
+def should_persist_action(action: str) -> bool:
+    """Не писати знімок на pause / той самий бар / помилку."""
+    if action.startswith("error:") or action.startswith("hold:paused"):
+        return False
+    stripped = action.replace("halt:portfolio_loss ", "")
+    parts = [p.strip() for p in stripped.split("||")]
+    if parts and all("hold:same_bar" in p for p in parts):
+        return False
+    return True
+
+
+def _install_stop_signals(stop: threading.Event) -> None:
+    def _handle(signum: int, _frame: object) -> None:
+        logger.info("сигнал %s — зупиняю paper-демон", signum)
+        stop.set()
+
+    signal.signal(signal.SIGTERM, _handle)
+    signal.signal(signal.SIGINT, _handle)
+
+
+def _paper_loop(
+    step: Callable[[], str],
+    save: Callable[[], None] | None,
+    interval: str,
+    account: PaperAccount,
+    pair: str,
+    n_filled: Callable[[], int],
+    n_unfilled: Callable[[], int],
+    *,
+    daemon: bool,
+    iterations: int,
+    sleep_sec: int,
+    stop: threading.Event | None = None,
+    install_signals: bool = True,
+) -> PairsPaperResult:
+    halt = stop or threading.Event()
+    if daemon and install_signals:
+        _install_stop_signals(halt)
+    actions: list[str] = []
+    pts: list[tuple[pd.Timestamp, float]] = []
+    i = 0
+    while not halt.is_set():
+        if not daemon and i >= iterations:
+            break
+        try:
+            action = step()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Крок %d: %s", i, exc)
+            action = f"error:{exc}"
+        actions.append(action)
+        pts.append((pd.Timestamp.utcnow().tz_localize(None), account.equity))
+        i += 1
+        if daemon:
+            if halt.wait(timeout=daemon_sleep_sec(interval, action)):
+                break
+        elif i < iterations:
+            time.sleep(sleep_sec)
+    if save is not None:
+        save()
+    eq = pd.Series({t: v for t, v in pts}).sort_index() if pts else pd.Series(dtype=float)
+    return PairsPaperResult(
+        equity=eq,
+        actions=actions,
+        n_filled=n_filled(),
+        n_unfilled=n_unfilled(),
+        pair=pair,
+        account=account,
+    )
+
+
+def merge_runtime_payload(
+    existing: dict[str, Any] | None,
+    account: PaperAccount,
+    runners: dict[str, dict[str, Any]],
+    portfolio: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = dict(existing or {})
+    payload["version"] = 1
+    payload["account"] = account.to_snapshot()
+    merged = dict(payload.get("runners") or {})
+    merged.update(runners)
+    payload["runners"] = merged
+    if portfolio is not None:
+        payload["portfolio"] = portfolio
+    return payload
+
+
 class PairsPaperRunner:
     """Цикл paper на одній парі (REST → закритий бар → engine).
 
@@ -589,6 +768,8 @@ class PairsPaperRunner:
         n_pairs: int = 1,
         is_maker: bool = True,
         client: object | None = None,
+        restore: bool = True,
+        control_path: Path | str | None = None,
     ) -> None:
         settings = get_settings()
         if not settings.dry_run:
@@ -602,29 +783,64 @@ class PairsPaperRunner:
         self.leg2 = leg2
         self.interval = interval or "1h"
         self.strategy = strategy or PairsArb()
+        self.store = store
+        self.client = client  # лише для звірки у paper (no-op); live заборонено вище
+        self.control_path = Path(control_path) if control_path is not None else DEFAULT_CONTROL_PATH
+        payload: dict[str, Any] | None = None
+        if restore and store is not None and account is None:
+            payload = store.load_runtime()
+            if payload and "account" in payload:
+                account = PaperAccount.from_snapshot(payload["account"])
         self.account = account or PaperAccount(
             initial_capital=10_000.0, taker_fee=settings.taker_fee, maker_fee=settings.maker_fee
         )
-        self.store = store
-        self.client = client  # лише для звірки у paper (no-op); live заборонено вище
         self.engine = PairsEngine(
             leg1, leg2, self.strategy, self.account, store=store, n_pairs=n_pairs, is_maker=is_maker
         )
         self._last_ts: pd.Timestamp | None = None
+        if restore and store is not None:
+            payload = payload or store.load_runtime()
+            state = (payload or {}).get("runners", {}).get(self.engine.pid)
+            if state:
+                self.engine.apply_snapshot(state)
+                self._last_ts = self.engine.last_bar_ts
 
-    def step(self, now: pd.Timestamp | None = None, *, reconcile: bool = True) -> str:
+    def save_runtime(self) -> None:
+        if self.store is None:
+            return
+        existing = self.store.load_runtime()
+        payload = merge_runtime_payload(existing, self.account, {self.engine.pid: self.engine.to_snapshot()})
+        self.store.save_runtime(payload)
+
+    def _persist_if_needed(self, action: str) -> None:
+        if self.store is not None and should_persist_action(action):
+            self.save_runtime()
+
+    def step(
+        self,
+        now: pd.Timestamp | None = None,
+        *,
+        reconcile: bool = True,
+        control: ControlState | None = None,
+        persist: bool = True,
+    ) -> str:
+        ctrl = control if control is not None else load_control(self.control_path)
+        if ctrl.pause:
+            return "hold:paused"
         if reconcile:
             reconcile_exchange_state(self.account, self.client, dry_run=self._dry_run)
+        self.engine.control_block_entries = ctrl.no_new_entries
         df1 = closed_klines(_fetch_ohlcv(self.leg1, self.interval), self.interval, now=now)
         df2 = closed_klines(_fetch_ohlcv(self.leg2, self.interval), self.interval, now=now)
         common = align_ohlc(df1, df2)
         if len(common) < 50:
             return "hold:мало барів"
+        self.engine.seed_spread_from_ohlc(common)
         ts = common.index[-1]
         if self._last_ts is not None and ts == self._last_ts:
             return "hold:same_bar"
         sig_df = pd.DataFrame({"leg1": common["l1_close"], "leg2": common["l2_close"]}, index=common.index)
-        signal = int(self.strategy.generate_signals(sig_df).iloc[-1])
+        signal = 0 if ctrl.flatten else int(self.strategy.generate_signals(sig_df).iloc[-1])
         row = common.iloc[-1]
         action = self.engine.on_bar(
             ts,
@@ -638,29 +854,32 @@ class PairsPaperRunner:
         )
         self._last_ts = ts
         logger.info("%s %s | equity=%.2f", self.engine.pid, action, self.account.equity)
+        if persist:
+            self._persist_if_needed(action)
         return action
 
-    def run(self, iterations: int = 10, sleep_sec: int = 300) -> PairsPaperResult:
-        actions: list[str] = []
-        pts: list[tuple[pd.Timestamp, float]] = []
-        for i in range(iterations):
-            try:
-                action = self.step()
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Крок %d: %s", i, exc)
-                action = f"error:{exc}"
-            actions.append(action)
-            pts.append((pd.Timestamp.utcnow().tz_localize(None), self.account.equity))
-            if i < iterations - 1:
-                time.sleep(sleep_sec)
-        eq = pd.Series({t: v for t, v in pts}).sort_index()
-        return PairsPaperResult(
-            equity=eq,
-            actions=actions,
-            n_filled=self.engine.n_filled,
-            n_unfilled=self.engine.n_unfilled,
-            pair=self.engine.pid,
-            account=self.account,
+    def run(
+        self,
+        iterations: int = 10,
+        sleep_sec: int = 300,
+        *,
+        daemon: bool = False,
+        stop: threading.Event | None = None,
+        install_signals: bool = True,
+    ) -> PairsPaperResult:
+        return _paper_loop(
+            self.step,
+            self.save_runtime if self.store is not None else None,
+            self.interval,
+            self.account,
+            self.engine.pid,
+            lambda: self.engine.n_filled,
+            lambda: self.engine.n_unfilled,
+            daemon=daemon,
+            iterations=iterations,
+            sleep_sec=sleep_sec,
+            stop=stop,
+            install_signals=install_signals,
         )
 
 
@@ -679,6 +898,8 @@ class PairsPortfolioRunner:
         store: PaperStore | None = None,
         is_maker: bool = True,
         client: object | None = None,
+        restore: bool = True,
+        control_path: Path | str | None = None,
     ) -> None:
         settings = get_settings()
         if not settings.dry_run:
@@ -690,11 +911,17 @@ class PairsPortfolioRunner:
         self._dry_run = settings.dry_run
         self.configs = configs or [dict(p) for p in VALIDATED_PAIRS]
         self.interval = interval
+        self.store = store
+        self.client = client  # лише для звірки у paper (no-op); live заборонено вище
+        self.control_path = Path(control_path) if control_path is not None else DEFAULT_CONTROL_PATH
+        payload: dict[str, Any] | None = None
+        if restore and store is not None and account is None:
+            payload = store.load_runtime()
+            if payload and "account" in payload:
+                account = PaperAccount.from_snapshot(payload["account"])
         self.account = account or PaperAccount(
             initial_capital=10_000.0, taker_fee=settings.taker_fee, maker_fee=settings.maker_fee
         )
-        self.store = store
-        self.client = client  # лише для звірки у paper (no-op); live заборонено вище
         n = len(self.configs)
         self.runners: list[PairsPaperRunner] = []
         for cfg in self.configs:
@@ -714,6 +941,8 @@ class PairsPortfolioRunner:
                     n_pairs=n,
                     is_maker=is_maker,
                     client=self.client,
+                    restore=False,
+                    control_path=self.control_path,
                 )
             )
         self.daily_loss_limit = settings.daily_loss_limit
@@ -721,6 +950,18 @@ class PairsPortfolioRunner:
         self.week_start_equity = self.account.equity
         self._last_week: tuple[int, int] | None = None
         self.enable_vol_target = False
+        if payload:
+            for r in self.runners:
+                state = (payload.get("runners") or {}).get(r.engine.pid)
+                if state:
+                    r.engine.apply_snapshot(state)
+                    r._last_ts = r.engine.last_bar_ts
+            port = payload.get("portfolio") or {}
+            if port.get("week_start_equity") is not None:
+                self.week_start_equity = float(port["week_start_equity"])
+            lw = port.get("last_week")
+            if lw and len(lw) == 2:
+                self._last_week = (int(lw[0]), int(lw[1]))
 
     def _roll_week(self, now: pd.Timestamp | None) -> None:
         ts = now if now is not None else pd.Timestamp.now(tz="UTC").tz_convert(None)
@@ -738,35 +979,60 @@ class PairsPortfolioRunner:
             return True
         return False
 
+    def save_runtime(self) -> None:
+        if self.store is None:
+            return
+        runners = {r.engine.pid: r.engine.to_snapshot() for r in self.runners}
+        last_week = list(self._last_week) if self._last_week is not None else None
+        payload = merge_runtime_payload(
+            self.store.load_runtime(),
+            self.account,
+            runners,
+            portfolio={"week_start_equity": self.week_start_equity, "last_week": last_week},
+        )
+        self.store.save_runtime(payload)
+
+    def _persist_if_needed(self, action: str) -> None:
+        if self.store is not None and should_persist_action(action):
+            self.save_runtime()
+
     def step(self, now: pd.Timestamp | None = None) -> str:
+        ctrl = load_control(self.control_path)
+        if ctrl.pause:
+            return "hold:paused"
         self._roll_week(now)
         reconcile_exchange_state(self.account, self.client, dry_run=self._dry_run)
         halt = self._should_halt_entries()
         for r in self.runners:
             r.engine.portfolio_block_entries = halt
+            r.engine.control_block_entries = ctrl.no_new_entries
         prefix = "halt:portfolio_loss " if halt else ""
-        return prefix + " || ".join(r.step(now=now, reconcile=False) for r in self.runners)
+        action = prefix + " || ".join(
+            r.step(now=now, reconcile=False, control=ctrl, persist=False) for r in self.runners
+        )
+        self._persist_if_needed(action)
+        return action
 
-    def run(self, iterations: int = 10, sleep_sec: int = 300) -> PairsPaperResult:
-        actions: list[str] = []
-        pts: list[tuple[pd.Timestamp, float]] = []
-        for i in range(iterations):
-            try:
-                action = self.step()
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Портфель крок %d: %s", i, exc)
-                action = f"error:{exc}"
-            actions.append(action)
-            pts.append((pd.Timestamp.utcnow().tz_localize(None), self.account.equity))
-            if i < iterations - 1:
-                time.sleep(sleep_sec)
-        filled = sum(r.engine.n_filled for r in self.runners)
-        unfilled = sum(r.engine.n_unfilled for r in self.runners)
-        return PairsPaperResult(
-            equity=pd.Series({t: v for t, v in pts}).sort_index(),
-            actions=actions,
-            n_filled=filled,
-            n_unfilled=unfilled,
-            pair="portfolio",
-            account=self.account,
+    def run(
+        self,
+        iterations: int = 10,
+        sleep_sec: int = 300,
+        *,
+        daemon: bool = False,
+        stop: threading.Event | None = None,
+        install_signals: bool = True,
+    ) -> PairsPaperResult:
+        return _paper_loop(
+            self.step,
+            self.save_runtime if self.store is not None else None,
+            self.interval,
+            self.account,
+            "portfolio",
+            lambda: sum(r.engine.n_filled for r in self.runners),
+            lambda: sum(r.engine.n_unfilled for r in self.runners),
+            daemon=daemon,
+            iterations=iterations,
+            sleep_sec=sleep_sec,
+            stop=stop,
+            install_signals=install_signals,
         )

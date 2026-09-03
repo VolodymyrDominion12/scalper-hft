@@ -23,6 +23,27 @@ class Position:
     entry_ts: pd.Timestamp
     entry_fee: float = 0.0
 
+    def to_snapshot(self) -> dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "side": self.side,
+            "size": float(self.size),
+            "entry_price": float(self.entry_price),
+            "entry_ts": str(self.entry_ts),
+            "entry_fee": float(self.entry_fee),
+        }
+
+    @classmethod
+    def from_snapshot(cls, data: dict[str, Any]) -> Position:
+        return cls(
+            symbol=str(data["symbol"]),
+            side=str(data["side"]),
+            size=float(data["size"]),
+            entry_price=float(data["entry_price"]),
+            entry_ts=pd.Timestamp(data["entry_ts"]),
+            entry_fee=float(data.get("entry_fee") or 0.0),
+        )
+
 
 @dataclass
 class PaperAccount:
@@ -171,3 +192,35 @@ class PaperAccount:
         збитків і скидаємо лічильник серії збитків (пауза діє лише до кінця дня)."""
         self.day_start_equity = equity
         self.consecutive_losses = 0
+
+    def to_snapshot(self) -> dict[str, Any]:
+        """Стан рахунку для SQLite. Журнал trades не входить — він уже в store."""
+        return {
+            "initial_capital": float(self.initial_capital),
+            "taker_fee": float(self.taker_fee),
+            "maker_fee": float(self.maker_fee),
+            "cash": float(self.cash),
+            "realized_pnl": float(self.realized_pnl),
+            "consecutive_losses": int(self.consecutive_losses),
+            "day_start_equity": float(self.day_start_equity),
+            "positions": [p.to_snapshot() for p in self.positions.values()],
+            "marks": {k: float(v) for k, v in self._marks.items()},
+        }
+
+    @classmethod
+    def from_snapshot(cls, data: dict[str, Any]) -> PaperAccount:
+        acc = cls(
+            initial_capital=float(data.get("initial_capital") or 10_000.0),
+            taker_fee=float(data.get("taker_fee") or 0.0005),
+            maker_fee=float(data.get("maker_fee") or 0.0002),
+        )
+        acc.cash = float(data["cash"])
+        acc.realized_pnl = float(data.get("realized_pnl") or 0.0)
+        acc.consecutive_losses = int(data.get("consecutive_losses") or 0)
+        acc.day_start_equity = float(data.get("day_start_equity") or acc.cash)
+        acc.positions = {}
+        for row in data.get("positions") or []:
+            pos = Position.from_snapshot(row)
+            acc.positions[pos.symbol] = pos
+        acc._marks = {str(k): float(v) for k, v in (data.get("marks") or {}).items()}
+        return acc

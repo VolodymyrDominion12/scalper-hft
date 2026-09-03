@@ -1,4 +1,4 @@
-"""SQLite-журнал paper pairs: equity, ордери, угоди, місячний PnL."""
+"""SQLite-журнал paper pairs: equity, ордери, угоди, місячний PnL, runtime snapshot."""
 
 from __future__ import annotations
 
@@ -63,6 +63,11 @@ class PaperStore:
             CREATE TABLE IF NOT EXISTS meta (
                 k TEXT PRIMARY KEY,
                 v TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS snapshots (
+                id TEXT PRIMARY KEY,
+                payload TEXT NOT NULL,
+                saved_at TEXT NOT NULL
             );
             """
         )
@@ -172,3 +177,23 @@ class PaperStore:
         else:
             rows = self._conn.execute("SELECT status, COUNT(*) AS n FROM orders GROUP BY status").fetchall()
         return {str(r["status"]): int(r["n"]) for r in rows}
+
+    def save_runtime(self, payload: dict[str, Any], snapshot_id: str = "runtime") -> None:
+        """Атомарно замінити runtime-знімок (рахунок + engine)."""
+        body = json.dumps(payload, default=str)
+        saved_at = str(pd.Timestamp.utcnow().tz_localize(None))
+        self._conn.execute(
+            "INSERT OR REPLACE INTO snapshots (id, payload, saved_at) VALUES (?, ?, ?)",
+            (snapshot_id, body, saved_at),
+        )
+        self._conn.commit()
+
+    def load_runtime(self, snapshot_id: str = "runtime") -> dict[str, Any] | None:
+        row = self._conn.execute(
+            "SELECT payload FROM snapshots WHERE id = ?",
+            (snapshot_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        data = json.loads(str(row["payload"]))
+        return data if isinstance(data, dict) else None

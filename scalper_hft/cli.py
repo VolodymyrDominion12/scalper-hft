@@ -804,15 +804,20 @@ def cmd_pairs_portfolio(args: argparse.Namespace) -> None:
 
 def cmd_paper_run_pairs(args: argparse.Namespace) -> None:
     """Циклічний paper pairs (maker, 2 ноги) або портфель валідованих пар."""
+    from pathlib import Path
+
     from scalper_hft.live.pairs_runner import PairsPaperRunner, PairsPortfolioRunner
+    from scalper_hft.live.release import startup_banner
     from scalper_hft.live.store import PaperStore
     from scalper_hft.strategies import get_strategy
 
     store = PaperStore()
     interval = args.interval or "1h"
+    control_path = Path(args.control) if getattr(args, "control", None) else None
     runner: PairsPaperRunner | PairsPortfolioRunner
     if args.portfolio:
-        runner = PairsPortfolioRunner(interval=interval, store=store, is_maker=True)
+        runner = PairsPortfolioRunner(interval=interval, store=store, is_maker=True, control_path=control_path)
+        extra = "portfolio"
     else:
         strategy = get_strategy(args.strategy or "pairs_arb", **args.param_dict)
         runner = PairsPaperRunner(
@@ -822,8 +827,20 @@ def cmd_paper_run_pairs(args: argparse.Namespace) -> None:
             strategy=strategy,
             store=store,
             is_maker=True,
+            control_path=control_path,
         )
-    result = runner.run(iterations=args.iterations, sleep_sec=args.sleep)
+        extra = f"{args.leg1 or 'XRPUSDT'}/{args.leg2 or 'BTCUSDT'}"
+    daemon = bool(getattr(args, "daemon", False))
+    banner = startup_banner(mode="paper-pairs", extra=("daemon " + extra) if daemon else extra)
+    print(banner)
+    if args.notify:
+        from scalper_hft.live.telegram import send_telegram
+
+        send_telegram(banner)
+    if daemon:
+        result = runner.run(daemon=True)
+    else:
+        result = runner.run(iterations=args.iterations, sleep_sec=args.sleep)
     print("\n" + result.summary())
     if args.notify:
         from scalper_hft.live.telegram import send_telegram
@@ -1588,6 +1605,16 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--iterations", type=int, default=10)
     p.add_argument("--sleep", type=int, default=300, help="Пауза між кроками, сек (для 1h — 300+)")
     p.add_argument("--notify", action="store_true")
+    p.add_argument(
+        "--daemon",
+        action="store_true",
+        help="Нескінченний цикл до SIGTERM; ігнорує --iterations (для systemd)",
+    )
+    p.add_argument(
+        "--control",
+        default="results/control.json",
+        help="Шлях до control.json (pause / no_new_entries / flatten)",
+    )
     p.set_defaults(func=cmd_paper_run_pairs, strategy="pairs_arb", interval="1h")
 
     p = sub.add_parser("paper-replay-pairs", help="Історичний paper pairs з моделлю unfilled")
