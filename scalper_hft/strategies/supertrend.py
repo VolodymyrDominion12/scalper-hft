@@ -16,6 +16,7 @@
 
 Увага: стратегія stateful, тому використовує python-цикл (як і оригінал).
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -54,9 +55,7 @@ class SupertrendStrategy(Strategy):
             allow_short=bool(allow_short),
         )
 
-    def _supertrend_lines(
-        self, df: pd.DataFrame
-    ) -> tuple[np.ndarray, np.ndarray]:
+    def _supertrend_lines(self, df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
         """Лінія Supertrend та напрямок (+1/−1) на закритті кожного бару.
 
         ATR рахується локально через `ewm(span=…)` (як в оригіналі): без

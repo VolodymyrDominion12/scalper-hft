@@ -204,7 +204,7 @@ class LiveTrader:
         # M4: live-базис equity з біржі (замість фіктивного депозиту)
         self._live_equity_seeded = False
         self.last_live_equity: float | None = None
-        
+
         self.use_exit_ladders = getattr(self.settings, "use_exit_ladders", False)
         self.ladder: OneWayTradingLadder | None = None
 
@@ -408,7 +408,7 @@ class LiveTrader:
                 return "closed"  # позиції немає — закривати нічого
             pos = self.account.positions[self.symbol]
             side = "sell" if pos.side == "long" else "buy"
-            
+
             close_size = decision.size if decision.size > 0 else pos.size
             ok, status = self._submit_order(side, close_size, price, reduce_only=True, kind="close", pos_side=pos.side)
             if not ok:
@@ -430,7 +430,9 @@ class LiveTrader:
             if pend.pos_side == side:
                 return "hold:open_pending"  # той самий напрямок вже в роботі
             self._cancel_pending(pend, reason="flip_pending_open")  # протилежний — скасовуємо
-        ok, status = self._submit_order("buy" if side == "long" else "sell", size, price, reduce_only=False, kind="open", pos_side=side)
+        ok, status = self._submit_order(
+            "buy" if side == "long" else "sell", size, price, reduce_only=False, kind="open", pos_side=side
+        )
         if not ok:
             return "submit_failed:open"
         if status == "pending":
@@ -692,11 +694,11 @@ def execute_signal(
         have = 1 if pos.side == "long" else -1
 
     parts: list[str] = []
-    
+
     ladder_exit = 0.0
     if have != 0 and trader.use_exit_ladders and trader.ladder is not None:
         ladder_exit = trader.ladder.update_price(close)
-    
+
     if want == 0:
         if have != 0:
             parts.append(trader.execute(TradeDecision("close", trader.symbol, 0.0, "сигнал=0"), close, ts))
@@ -705,7 +707,9 @@ def execute_signal(
             parts.append(trader.execute(TradeDecision("hold", trader.symbol, 0.0, ""), close, ts))
     elif want == have:
         if ladder_exit > 0:
-            parts.append(trader.execute(TradeDecision("close", trader.symbol, pos.size * ladder_exit, "ladder_exit"), close, ts))
+            parts.append(
+                trader.execute(TradeDecision("close", trader.symbol, pos.size * ladder_exit, "ladder_exit"), close, ts)
+            )
             if trader.ladder.is_fully_closed:
                 trader.ladder = None
         else:
@@ -724,7 +728,9 @@ def execute_signal(
             action = "open_long" if want > 0 else "open_short"
             parts.append(trader.execute(TradeDecision(action, trader.symbol, size, f"сигнал={signal}"), close, ts))
             if trader.use_exit_ladders:
-                trader.ladder = OneWayTradingLadder(close, want, base_step_pct=0.002, num_levels=4, geometric_factor=1.5)
+                trader.ladder = OneWayTradingLadder(
+                    close, want, base_step_pct=0.002, num_levels=4, geometric_factor=1.5
+                )
 
     trader.last_signal = signal
     return " | ".join(parts)

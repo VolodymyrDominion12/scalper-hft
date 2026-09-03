@@ -14,6 +14,7 @@
     - `allow_short=True` робить «SELL» шортом (дзеркальні рівні), інакше —
       це просто закриття лонга (спотова поведінка оригіналу).
 """
+
 from __future__ import annotations
 
 import numpy as np

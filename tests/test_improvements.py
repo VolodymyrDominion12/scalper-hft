@@ -327,4 +327,3 @@ class TestPaperStoreWALMode:
         mode = cur.fetchone()[0]
         store.close()
         assert mode.upper() == "WAL"
-

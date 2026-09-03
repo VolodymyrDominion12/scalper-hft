@@ -16,7 +16,7 @@
    sig = pd.Series(float("nan"), index=df.index, dtype=float)
    sig[entry_long] = 1.0
    sig[entry_short] = -1.0
-   prev_pos = sig.ffill().shift(1).fillna(0.0)   # стан ПОПЕРЕДНЬОГО бару
+   prev_pos = sig.ffill().shift(1).fillna(0.0)  # стан ПОПЕРЕДНЬОГО бару
    sig[(prev_pos == 1.0) & exit_long_cond] = 0.0  # вихід лише з позиції
    return sig.ffill().fillna(0.0).astype(int)
    ```

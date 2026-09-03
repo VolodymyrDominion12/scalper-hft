@@ -120,11 +120,7 @@ def _render_bt_chart(view: dict) -> None:
         if sel_state:
             # шукаємо угоду серед усіх вибраних точок (клік може зачепити
             # лінію індикатора на тому ж барі — ts все одно співпаде)
-            points = (
-                sel_state.get("points")
-                if isinstance(sel_state, dict)
-                else getattr(sel_state, "points", None)
-            )
+            points = sel_state.get("points") if isinstance(sel_state, dict) else getattr(sel_state, "points", None)
             for p in points or []:
                 if isinstance(p, dict) and p.get("x") is not None and find_trade_by_ts(res.trades, p["x"]) is not None:
                     st.session_state["bt_sel_ts"] = p["x"]
@@ -201,7 +197,9 @@ if run_bt:
                 c2.metric("Sharpe (год.)", f"{m.sharpe_hourly:.2f}")
                 c3.metric("Угоди", f"{m.n_trades}")
                 c4.metric("Max DD", f"{m.max_drawdown:.2%}")
-                fig = go.Figure(go.Scatter(x=pairs_res.equity.index, y=pairs_res.equity.values, mode="lines", name="Equity"))
+                fig = go.Figure(
+                    go.Scatter(x=pairs_res.equity.index, y=pairs_res.equity.values, mode="lines", name="Equity")
+                )
                 fig.update_layout(title=f"pairs_arb · {leg1}/{leg2} {interval} maker", height=350)
                 st.plotly_chart(fig, width="stretch")
                 with st.expander("Повні метрики"):

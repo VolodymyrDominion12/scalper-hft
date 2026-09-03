@@ -128,7 +128,12 @@ def _extract_pair_trades(pos: pd.Series, strat_ret: pd.Series) -> pd.DataFrame:
             if cur != 0 and entry_ts is not None:
                 exit_extra = strat_ret.get(ts, 0.0) if p == 0 else 0.0
                 rows.append(
-                    {"entry_ts": entry_ts, "exit_ts": ts, "side": int(cur / abs(cur)) if cur else 0, "ret": cum + exit_extra}
+                    {
+                        "entry_ts": entry_ts,
+                        "exit_ts": ts,
+                        "side": int(cur / abs(cur)) if cur else 0,
+                        "ret": cum + exit_extra,
+                    }
                 )
             entry_ts = ts if p != 0 else None
             cum = 0.0

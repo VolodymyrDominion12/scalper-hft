@@ -14,6 +14,7 @@
     - SL/TP — ATR від ціни входу; вихід за рівнем — на дотику бару;
     - `volume_filter=True` — входити лише коли volume > SMA20 (як в оригіналі).
 """
+
 from __future__ import annotations
 
 import numpy as np

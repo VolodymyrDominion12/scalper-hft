@@ -164,7 +164,11 @@ class TestFundingCoarseBars:
         from scalper_hft.backtest.execution import CostModel
 
         res = run_backtest(
-            df, AlwaysLong(), funding=funding, position_pct=0.1, cost=CostModel(maker_fee=0, taker_fee=0, slippage_frac=0)
+            df,
+            AlwaysLong(),
+            funding=funding,
+            position_pct=0.1,
+            cost=CostModel(maker_fee=0, taker_fee=0, slippage_frac=0),
         )
         # позиція завжди +0.1 (з бару 1, бо сигнал shift(1)): funding = −0.1 × Σrate
         # ставка зараховується бару, що покриває fts (searchsorted side='right' − 1);
@@ -290,7 +294,9 @@ class _FakeLiveClient:
         self.cancelled: list[str] = []
         self.n_fetch = 0
 
-    def create_order(self, symbol, order_type, side, amount, price=None, params=None, post_only=False, client_order_id=None):
+    def create_order(
+        self, symbol, order_type, side, amount, price=None, params=None, post_only=False, client_order_id=None
+    ):
         coid = client_order_id or f"id-{len(self.created)}"
         rec = {
             "id": f"ex-{coid}",
@@ -336,7 +342,10 @@ def _live_trader(fake: _FakeLiveClient, strategy=None):
             return pd.Series(1, index=df.index)
 
     trader = LiveTrader(
-        strategy or _AlwaysLongStrat(), "BTCUSDT", "1m", account=PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0),
+        strategy or _AlwaysLongStrat(),
+        "BTCUSDT",
+        "1m",
+        account=PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0),
         client=fake,
     )
     trader.settings = SimpleNamespace(
@@ -361,9 +370,7 @@ class TestLiveMakerLifecycle:
         fake = _FakeLiveClient()
         trader = _live_trader(fake)
         idx = pd.date_range("2026-09-01", periods=60, freq="1min")
-        df = pd.DataFrame(
-            {"open": 100.0, "high": 100.001, "low": 99.999, "close": 100.0, "volume": 1.0}, index=idx
-        )
+        df = pd.DataFrame({"open": 100.0, "high": 100.001, "low": 99.999, "close": 100.0, "volume": 1.0}, index=idx)
         res = execute_signal(trader, 1, df, now=idx[-1] + pd.Timedelta(seconds=30))
         assert "open_pending" in res, res
         assert "BTCUSDT" not in trader.account.positions, "позиція забронювалась до філа"
@@ -378,9 +385,7 @@ class TestLiveMakerLifecycle:
         fake = _FakeLiveClient()
         trader = _live_trader(fake)
         idx = pd.date_range("2026-09-01", periods=60, freq="1min")
-        df = pd.DataFrame(
-            {"open": 100.0, "high": 100.001, "low": 99.999, "close": 100.0, "volume": 1.0}, index=idx
-        )
+        df = pd.DataFrame({"open": 100.0, "high": 100.001, "low": 99.999, "close": 100.0, "volume": 1.0}, index=idx)
         execute_signal(trader, 1, df, now=idx[-1] + pd.Timedelta(seconds=30))
         coid = next(iter(trader.pending_orders))
         oid = trader.pending_orders[coid].order_id
@@ -399,9 +404,7 @@ class TestLiveMakerLifecycle:
         fake = _FakeLiveClient()
         trader = _live_trader(fake)
         idx = pd.date_range("2026-09-01", periods=60, freq="1min")
-        df = pd.DataFrame(
-            {"open": 100.0, "high": 100.001, "low": 99.999, "close": 100.0, "volume": 1.0}, index=idx
-        )
+        df = pd.DataFrame({"open": 100.0, "high": 100.001, "low": 99.999, "close": 100.0, "volume": 1.0}, index=idx)
         execute_signal(trader, 1, df, now=idx[-1] + pd.Timedelta(seconds=30))
         coid = next(iter(trader.pending_orders))
         oid = trader.pending_orders[coid].order_id
@@ -420,9 +423,7 @@ class TestLiveMakerLifecycle:
         fake = _FakeLiveClient()
         trader = _live_trader(fake)
         idx = pd.date_range("2026-09-01", periods=60, freq="1min")
-        df = pd.DataFrame(
-            {"open": 100.0, "high": 100.001, "low": 99.999, "close": 100.0, "volume": 1.0}, index=idx
-        )
+        df = pd.DataFrame({"open": 100.0, "high": 100.001, "low": 99.999, "close": 100.0, "volume": 1.0}, index=idx)
         execute_signal(trader, 1, df, now=idx[-1] + pd.Timedelta(seconds=30))
         assert len(trader.pending_orders) == 1
         # новий сигнал 0: pending open скасовується, позиції не з'являється
@@ -438,9 +439,7 @@ class TestLiveMakerLifecycle:
         fake = _FakeLiveClient()
         trader = _live_trader(fake)
         idx = pd.date_range("2026-09-01", periods=60, freq="1min")
-        df = pd.DataFrame(
-            {"open": 100.0, "high": 100.001, "low": 99.999, "close": 100.0, "volume": 1.0}, index=idx
-        )
+        df = pd.DataFrame({"open": 100.0, "high": 100.001, "low": 99.999, "close": 100.0, "volume": 1.0}, index=idx)
         # відкриваємось і чекаємо філа
         execute_signal(trader, 1, df, now=idx[-1] + pd.Timedelta(seconds=30))
         coid = next(iter(trader.pending_orders))
@@ -477,13 +476,13 @@ class TestRouterParamFlow:
         idx = pd.date_range("2024-01-01", periods=150, freq="5s")
         rng = np.random.default_rng(3)
         px = 100.0 * np.cumprod(1 + rng.normal(0, 0.0004, 150))
-        df = pd.DataFrame(
-            {"open": px, "high": px * 1.0002, "low": px * 0.9998, "close": px, "volume": 1.0}, index=idx
-        )
+        df = pd.DataFrame({"open": px, "high": px * 1.0002, "low": px * 0.9998, "close": px, "volume": 1.0}, index=idx)
         res_a = run_strategy_backtest(df, PassiveMarketMaker(quote_size_pct=0.01, inventory_cap=0.5))
         res_b = run_strategy_backtest(df, PassiveMarketMaker(quote_size_pct=0.05, inventory_cap=2.0))
         assert res_a.params["quote_size_pct"] != res_b.params["quote_size_pct"]
-        assert abs(res_a.metrics.n_trades - res_b.metrics.n_trades) >= 0 or res_a.equity.iloc[-1] != res_b.equity.iloc[-1]
+        assert (
+            abs(res_a.metrics.n_trades - res_b.metrics.n_trades) >= 0 or res_a.equity.iloc[-1] != res_b.equity.iloc[-1]
+        )
 
     def test_ob_imbalance_routed_to_vector_engine(self):
         """ob_imbalance — напрямкова стратегія: йде у векторний рушій, а не в event."""
@@ -584,9 +583,7 @@ class TestLiveEquitySync:
                 return pd.Series(1, index=df.index)
 
         acc = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
-        trader = LiveTrader(
-            _AlwaysLongStrat(), "BTCUSDT", "1m", account=acc, client=_EquityClient(equity=25_000.0)
-        )
+        trader = LiveTrader(_AlwaysLongStrat(), "BTCUSDT", "1m", account=acc, client=_EquityClient(equity=25_000.0))
         trader.settings = SimpleNamespace(
             dry_run=False,
             maker_execution=True,
@@ -654,9 +651,7 @@ class TestOrderSanitize:
 
         fake = _FilterClient()
         acc = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
-        trader = LiveTrader(
-            _AlwaysLongStrat(), "BTCUSDT", "1m", account=acc, client=fake
-        )
+        trader = LiveTrader(_AlwaysLongStrat(), "BTCUSDT", "1m", account=acc, client=fake)
         trader.settings = SimpleNamespace(
             dry_run=False,
             maker_execution=True,
@@ -669,9 +664,7 @@ class TestOrderSanitize:
             binance_api_secret="test-secret",
         )
         idx = pd.date_range("2026-09-01", periods=60, freq="1min")
-        df = pd.DataFrame(
-            {"open": 100.0, "high": 100.001, "low": 99.999, "close": 100.0, "volume": 1.0}, index=idx
-        )
+        df = pd.DataFrame({"open": 100.0, "high": 100.001, "low": 99.999, "close": 100.0, "volume": 1.0}, index=idx)
         res = execute_signal(trader, 1, df, now=idx[-1] + pd.Timedelta(seconds=30))
         assert "submit_failed" in res
         assert len(fake.created) == 0, "ордер не мав дійти до create_order"
@@ -781,9 +774,7 @@ class TestErcDeadAsset:
 
         rng = np.random.default_rng(0)
         n = 300
-        r = np.column_stack(
-            [rng.normal(0.001, 0.01, n), rng.normal(0.0005, 0.008, n), np.full(n, 0.002)]
-        )
+        r = np.column_stack([rng.normal(0.001, 0.01, n), rng.normal(0.0005, 0.008, n), np.full(n, 0.002)])
         w = erc_weights(r)
         assert abs(w.sum() - 1.0) < 1e-6
         assert w[2] == pytest.approx(0.0, abs=1e-12)
