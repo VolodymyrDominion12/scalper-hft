@@ -8,11 +8,11 @@
         "/home/volodymyr/PycharmProjects/scalper-hft"
       ]
     },
-    "python-scalper": {
+    "scalper-hft": {
       "command": "/home/volodymyr/PycharmProjects/scalper-hft/.venv/bin/python",
       "args": [
         "-m",
-        "scalper_hft.cli"
+        "scalper_hft.mcp_trading"
       ],
       "env": {}
     },
