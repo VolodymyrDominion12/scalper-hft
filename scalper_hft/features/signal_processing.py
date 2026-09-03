@@ -72,3 +72,115 @@ def apply_wavelet_denoising(series: pd.Series, wavelet: str = "db4", level: int 
         reconstructed = reconstructed[: len(series)]
 
     return pd.Series(reconstructed, index=series.index, name=f"wavelet_{wavelet}")
+
+
+# ── 2D Kalman Filter для динамічного hedge ratio пар ─────────────────────────
+
+
+class KalmanHedgeRatio:
+    """2D State-Space Фільтр Калмана для динамічного трекінгу коефіцієнта хеджування.
+
+    Модель спостереження:
+        y_t = beta_t * x_t + alpha_t + e_t
+        де y_t = ln(P1_t), x_t = ln(P2_t), e_t ~ N(0, R)
+    Модель переходу стану:
+        theta_t = [beta_t, alpha_t]^T = theta_{t-1} + w_t, w_t ~ N(0, Q)
+    """
+
+    def __init__(
+        self,
+        q_beta: float = 1e-5,
+        q_alpha: float = 1e-5,
+        r: float = 1e-3,
+        initial_beta: float = 1.0,
+        initial_alpha: float = 0.0,
+    ) -> None:
+        self.q = np.array([[q_beta, 0.0], [0.0, q_alpha]], dtype=float)
+        self.r = float(r)
+        self.theta = np.array([initial_beta, initial_alpha], dtype=float)  # [beta, alpha]
+        self.p = np.eye(2, dtype=float) * 1.0
+
+    def update(self, y: float, x: float) -> tuple[float, float, float]:
+        """Оновлює стан для спостереження (y, x).
+
+        Повертає (beta, alpha, spread), де spread = y - (beta * x + alpha).
+        """
+        # Time update (Prediction)
+        theta_pred = self.theta
+        p_pred = self.p + self.q
+
+        # Measurement matrix H = [x, 1.0]
+        h = np.array([x, 1.0], dtype=float)
+
+        # Innovation / residual
+        y_hat = float(np.dot(h, theta_pred))
+        error = float(y - y_hat)
+
+        # Innovation covariance
+        s = float(np.dot(h, np.dot(p_pred, h)) + self.r)
+
+        # Kalman gain
+        k = np.dot(p_pred, h) / s
+
+        # Measurement update (Correction)
+        self.theta = theta_pred + k * error
+        self.p = (np.eye(2, dtype=float) - np.outer(k, h)) @ p_pred
+
+        beta, alpha = float(self.theta[0]), float(self.theta[1])
+        spread = float(y - (beta * x + alpha))
+        return beta, alpha, spread
+
+
+def dynamic_hedge_ratio(
+    y: pd.Series,
+    x: pd.Series,
+    q_beta: float = 1e-5,
+    q_alpha: float = 1e-5,
+    r: float = 1e-3,
+) -> pd.DataFrame:
+    """Обчислює динамічні бета, альфа та спред за 2D фільтром Калмана для двох рядів.
+
+    Повертає DataFrame з колонками: beta, alpha, spread.
+    Сигнали не мають lookahead (кожна точка використовує лише дані до t).
+    """
+    common = pd.concat({"y": y, "x": x}, axis=1).dropna()
+    if common.empty:
+        return pd.DataFrame(columns=["beta", "alpha", "spread"], index=y.index)
+
+    kf = KalmanHedgeRatio(q_beta=q_beta, q_alpha=q_alpha, r=r)
+    n = len(common)
+    betas = np.empty(n, dtype=float)
+    alphas = np.empty(n, dtype=float)
+    spreads = np.empty(n, dtype=float)
+
+    y_vals = common["y"].values
+    x_vals = common["x"].values
+
+    for i in range(n):
+        b, a, s = kf.update(float(y_vals[i]), float(x_vals[i]))
+        betas[i] = b
+        alphas[i] = a
+        spreads[i] = s
+
+    res = pd.DataFrame({"beta": betas, "alpha": alphas, "spread": spreads}, index=common.index)
+    return res.reindex(y.index).ffill()
+
+
+def estimate_half_life(spread: pd.Series, min_obs: int = 20) -> float:
+    """Оцінює Ornstein-Uhlenbeck Half-Life: tau = -ln(2) / theta.
+
+    theta отримується з OLS: Delta(spread_t) = theta * spread_{t-1} + const.
+    Повертає inf, якщо процес не демонструє повернення до середнього (theta >= 0).
+    """
+    s = spread.dropna()
+    if len(s) < min_obs:
+        return float("inf")
+    x = s.shift(1).iloc[1:].values
+    y = s.diff().iloc[1:].values
+    if np.std(x) < 1e-12:
+        return float("inf")
+    b = float(np.polyfit(x, y, 1)[0])
+    if b >= 0:
+        return float("inf")
+    return float(-np.log(2) / b)
+

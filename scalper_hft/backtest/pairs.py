@@ -133,17 +133,27 @@ def run_pairs_backtest(
     else:
         pos = signals.astype(float).shift(1).fillna(0.0).clip(-1, 1) * position_pct
 
-    # спред PnL: pos=+1 (шорт leg1/лонг leg2) → −Δratio
-    d_ratio = ratio.diff().fillna(0.0)
-    spread_pnl = -pos * d_ratio
+    # спред PnL: pos=+1 (шорт leg1/лонг leg2)
+    # Якщо стратегія повертає динамічну бету (Kalman), спред = d(ln(P1)) - beta * d(ln(P2))
+    betas = getattr(strategy, "betas", None)
+    if betas is not None and isinstance(betas, pd.Series) and not betas.empty:
+        beta_series = betas.reindex(common.index).fillna(1.0)
+        d_p1 = np.log(common["leg1"]).diff().fillna(0.0)
+        d_p2 = np.log(common["leg2"]).diff().fillna(0.0)
+        d_spread = d_p1 - beta_series * d_p2
+        spread_pnl = -pos * d_spread
+    else:
+        beta_series = pd.Series(1.0, index=common.index)
+        d_ratio = ratio.diff().fillna(0.0)
+        spread_pnl = -pos * d_ratio
 
     # funding обох ніг (кожна ставка своєї ноги, 1 раз/8h)
-    # pos=+1 → leg1 коротка (−pos), leg2 довга (+pos)
+    # pos=+1 → leg1 коротка (−pos), leg2 довга (+pos * beta)
     funding_impact = pd.Series(0.0, index=common.index)
     if funding1 is not None and not funding1.empty:
         funding_impact = funding_impact + _leg_funding(-pos, funding1, common)
     if funding2 is not None and not funding2.empty:
-        funding_impact = funding_impact + _leg_funding(pos, funding2, common)
+        funding_impact = funding_impact + _leg_funding(pos * beta_series, funding2, common)
 
     # комісії: turnover × 2 ноги з vol-aware slippage
     # обчислюємо поточну волатильність для masштабування slippage

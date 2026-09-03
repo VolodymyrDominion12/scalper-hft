@@ -19,6 +19,8 @@ from scalper_hft.config import get_settings
 from scalper_hft.data.access import klines_from_store
 from scalper_hft.data.storage import load_funding, load_trades
 from scalper_hft.features.indicators import add_standard_features
+from scalper_hft.research.dashboard_brief import dsr_verdict, hurdle_note
+from scalper_hft.research.strategy_book import select_label
 from scalper_hft.strategies import REGISTRY, get_strategy
 from scalper_hft.validation.deflated_sharpe import deflated_sharpe_ratio, estimate_n_trials
 from scalper_hft.visualization import (
@@ -32,19 +34,6 @@ from scalper_hft.visualization import (
 settings = get_settings()
 data_dir = settings.data_dir_abs
 
-STRATEGY_LABELS: dict[str, str] = {
-    "pairs_arb": "pairs_arb (✅ Валідована)",
-    "sparse_basket": "sparse_basket (🧪 Дослідження)",
-    "ensemble": "ensemble (🧪 Дослідження)",
-    "ml_strategy": "ml_strategy (🧪 Дослідження)",
-    "mean_reversion": "mean_reversion (❌ Відхилена / DSR=0)",
-    "cvd_momentum": "cvd_momentum (❌ Відхилена / fee-drag)",
-    "funding_carry": "funding_carry (❌ Відхилена / тертя > фандінг)",
-    "funding_arb": "funding_arb (❌ Відхилена / низький фандінг)",
-    "basis_reversion": "basis_reversion (❌ Відхилена / вузький базис)",
-    "hmm_reversion": "hmm_reversion (❌ Відхилена / OOS SR < 0)",
-}
-
 st.title("Бектест")
 
 st.sidebar.header("Параметри", divider=False)
@@ -52,7 +41,7 @@ strategy_name = st.sidebar.selectbox(
     "Стратегія",
     sorted(REGISTRY),
     index=sorted(REGISTRY).index("pairs_arb") if "pairs_arb" in REGISTRY else 0,
-    format_func=lambda s: STRATEGY_LABELS.get(s, s),
+    format_func=select_label,
 )
 is_pairs = strategy_name == "pairs_arb"
 if is_pairs:
@@ -135,13 +124,13 @@ def _render_bt_chart(view: dict) -> None:
             st.subheader(f"Деталі угоди · {t0:%d.%m.%Y %H:%M}")
             sl = trade["sl_price"] if "sl_price" in trade.index else float("nan")
             tp = trade["tp_price"] if "tp_price" in trade.index else float("nan")
-            
+
             with st.container(horizontal=True):
                 st.metric("Сторона", "Лонг" if trade["side"] == 1 else "Шорт", border=True)
                 st.metric("Вхід → Вихід", f"{trade['entry_price']:.2f} → {trade['exit_price']:.2f}", border=True)
                 st.metric("PnL", f"{trade['ret']:.3%}", border=True)
                 st.metric("SL / TP", f"{sl:.2f} / {tp:.2f}" if pd.notna(sl) and pd.notna(tp) else "—", border=True)
-                
+
             st.plotly_chart(trade_detail_figure(fdf, res, trade["entry_ts"]), width="stretch", key="bt_detail_fig")
             if st.button("✕ Закрити деталі", key="bt_clear_sel", on_click=_clear_trade_selection):
                 st.rerun(scope="fragment")
@@ -199,8 +188,11 @@ if run_bt:
                     st.metric("Дохідність", f"{m.total_return:.2%}", border=True)
                     st.metric("Sharpe (год.)", f"{m.sharpe_hourly:.2f}", border=True)
                     st.metric("Угоди", f"{m.n_trades}", border=True)
-                    st.metric("Max DD", f"{m.max_drawdown:.2%}", border=True)
-                    
+                    st.metric("Max DD", f"{m.max_drawdown:.2%}", border=True, delta_color="inverse")
+                    st.metric("Profit factor", f"{m.profit_factor:.2f}", border=True)
+                if m.n_trades:
+                    st.caption(hurdle_note(m.avg_trade_return, cost.round_trip_maker(), n_legs=2))
+
                 fig = go.Figure(
                     go.Scatter(x=pairs_res.equity.index, y=pairs_res.equity.values, mode="lines", name="Equity")
                 )
@@ -229,16 +221,27 @@ if run_bt:
                 st.session_state["bt_view"] = {"df": df, "res": res, "title": f"{strategy_name} · {symbol} {interval}"}
                 st.session_state.pop("bt_sel_ts", None)
                 m = res.metrics
+                ret = res.equity.pct_change().dropna()
+                n_trials = estimate_n_trials(max(len(strategy.param_space), 1), 40)
+                dsr = deflated_sharpe_ratio(ret.values, n_trials=n_trials)
+                verdict = dsr_verdict(dsr)
+                dsr_label = {"significant": "значущий", "weak": "слабкий", "none": "немає edge"}[verdict]
                 with st.container(horizontal=True):
                     st.metric("Дохідність", f"{m.total_return:.2%}", border=True)
                     st.metric("Sharpe (год.)", f"{m.sharpe_hourly:.2f}", border=True)
                     st.metric("Угоди", f"{m.n_trades}", border=True)
                     st.metric("Win rate", f"{m.win_rate:.0%}", border=True)
-                    
-                ret = res.equity.pct_change().dropna()
-                n_trials = estimate_n_trials(max(len(strategy.param_space), 1), 40)
-                dsr = deflated_sharpe_ratio(ret.values, n_trials=n_trials)
-                st.caption(f"**Deflated Sharpe: {dsr:.3f}** (trials={n_trials}) — edge значущий якщо > 0.95")
+                    st.metric("Profit factor", f"{m.profit_factor:.2f}", border=True)
+                    st.metric(
+                        "Deflated Sharpe",
+                        f"{dsr:.3f}",
+                        delta=dsr_label,
+                        delta_color="normal" if verdict == "significant" else "inverse",
+                        border=True,
+                        help=f"> 0.95 = значущий edge після поправки на trials={n_trials}",
+                    )
+                if m.n_trades:
+                    st.caption(hurdle_note(m.avg_trade_return, cost.round_trip_maker(), n_legs=1))
                 with st.expander("Повні метрики", icon=":material/analytics:"):
                     st.text(m.summary())
 

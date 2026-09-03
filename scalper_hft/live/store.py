@@ -160,6 +160,9 @@ class PaperStore:
             self._conn,
         )
 
+    def all_months(self) -> pd.DataFrame:
+        return pd.read_sql_query("SELECT pair, month, pnl FROM months ORDER BY month, pair", self._conn)
+
     def fill_stats(self, pair: str | None = None) -> dict[str, int]:
         if pair:
             rows = self._conn.execute(

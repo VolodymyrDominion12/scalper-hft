@@ -44,6 +44,10 @@ class PairsArb(Strategy):
         lookback: int = 480,
         breakeven_gate: bool = False,
         hmm_vol_gate: bool = False,
+        use_kalman: bool = False,
+        kalman_q: float = 1e-5,
+        kalman_r: float = 1e-3,
+        dynamic_half_life: bool = False,
     ) -> None:
         super().__init__(
             entry_z=entry_z,
@@ -51,7 +55,12 @@ class PairsArb(Strategy):
             lookback=int(lookback),
             breakeven_gate=bool(breakeven_gate),
             hmm_vol_gate=bool(hmm_vol_gate),
+            use_kalman=bool(use_kalman),
+            kalman_q=float(kalman_q),
+            kalman_r=float(kalman_r),
+            dynamic_half_life=bool(dynamic_half_life),
         )
+        self.betas: pd.Series | None = None
 
     def generate_signals(
         self, df: pd.DataFrame, trades: pd.DataFrame | None = None, funding: pd.DataFrame | None = None
@@ -64,16 +73,39 @@ class PairsArb(Strategy):
         if "leg1" not in df.columns or "leg2" not in df.columns:
             return pd.Series(0, index=df.index, dtype=int)
 
-        ratio = np.log(df["leg1"] / df["leg2"])
+        use_kalman = bool(self.get("use_kalman", False))
+        dynamic_half_life = bool(self.get("dynamic_half_life", False))
+
+        if use_kalman:
+            from scalper_hft.features.signal_processing import dynamic_hedge_ratio
+
+            kq = float(self.get("kalman_q", 1e-5))
+            kr = float(self.get("kalman_r", 1e-3))
+            kf_res = dynamic_hedge_ratio(
+                np.log(df["leg1"]), np.log(df["leg2"]), q_beta=kq, q_alpha=kq, r=kr
+            )
+            spread_series = kf_res["spread"]
+            self.betas = kf_res["beta"]
+        else:
+            spread_series = np.log(df["leg1"] / df["leg2"])
+            self.betas = pd.Series(1.0, index=df.index)
+
         lookback = int(self.get("lookback", 480))
+        if dynamic_half_life:
+            from scalper_hft.features.signal_processing import estimate_half_life
+
+            hl = estimate_half_life(spread_series.tail(min(lookback, len(spread_series))))
+            if np.isfinite(hl) and hl > 5:
+                lookback = int(np.clip(hl * 2.0, 30.0, 1440.0))
+
         entry_z = float(self.get("entry_z", 2.0))
         exit_z = float(self.get("exit_z", 0.3))
         use_breakeven_gate = bool(self.get("breakeven_gate", False))
         use_hmm_vol_gate = bool(self.get("hmm_vol_gate", False))
 
-        mean = ratio.rolling(lookback, min_periods=lookback // 2).mean()
-        std = ratio.rolling(lookback, min_periods=lookback // 2).std(ddof=0).replace(0, np.nan)
-        z = ((ratio - mean) / std).fillna(0.0)
+        mean = spread_series.rolling(lookback, min_periods=lookback // 2).mean()
+        std = spread_series.rolling(lookback, min_periods=lookback // 2).std(ddof=0).replace(0, np.nan)
+        z = ((spread_series - mean) / std).fillna(0.0)
 
         sig = pd.Series(float("nan"), index=df.index, dtype=float)
         sig[z > entry_z] = 1.0
@@ -87,7 +119,7 @@ class PairsArb(Strategy):
 
         # ── Breakeven gate: відключаємо сигнали де ATR спреду < 2-leg round-trip ──
         if use_breakeven_gate:
-            sig = self._apply_breakeven_gate(sig, ratio, df)
+            sig = self._apply_breakeven_gate(sig, spread_series, df)
 
         # ── HMM-фільтр: відключаємо входи у стані максимальної волатильності ──
         if use_hmm_vol_gate:

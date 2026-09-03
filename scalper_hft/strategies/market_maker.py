@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from scalper_hft.strategies.base import Strategy
@@ -30,6 +31,9 @@ class PassiveMarketMaker(Strategy):
         "inventory_cap": (0.0, 2.0, 0.25),
         "quote_size_pct": (0.005, 0.05, 0.005),
         "adverse_sel_haircut": (0.3, 1.0, 0.1),
+        "gamma": (0.01, 1.0, 0.05),
+        "kappa": (0.5, 5.0, 0.5),
+        "vpin_threshold": (0.5, 0.95, 0.05),
     }
 
     def __init__(
@@ -38,13 +42,94 @@ class PassiveMarketMaker(Strategy):
         inventory_cap: float = 1.0,
         quote_size_pct: float = 0.02,
         adverse_sel_haircut: float = 0.5,
+        gamma: float = 0.1,
+        kappa: float = 1.5,
+        use_vpin_shield: bool = False,
+        vpin_threshold: float = 0.75,
     ) -> None:
         super().__init__(
             spread_offset_mult=spread_offset_mult,
             inventory_cap=inventory_cap,
             quote_size_pct=quote_size_pct,
             adverse_sel_haircut=adverse_sel_haircut,
+            gamma=float(gamma),
+            kappa=float(kappa),
+            use_vpin_shield=bool(use_vpin_shield),
+            vpin_threshold=float(vpin_threshold),
         )
+
+    def reservation_price(
+        self,
+        mid_or_micro: float,
+        inventory: float,
+        vol: float,
+        time_horizon: float = 1.0,
+    ) -> float:
+        """Ціна бронювання (Avellaneda-Stoikov):
+
+        r(s, q) = s - q * gamma * sigma^2 * (T - t)
+        де s — mid або micro-price, q — поточний інвентар, gamma — несприйняття ризику,
+        sigma — миттєва волатильність.
+        """
+        gamma = float(self.get("gamma", 0.1))
+        # q * gamma * vol^2 * horizon
+        skew = inventory * gamma * (vol**2) * time_horizon
+        return float(mid_or_micro - skew)
+
+    def optimal_half_spread(
+        self,
+        vol: float,
+        time_horizon: float = 1.0,
+    ) -> float:
+        """Оптимальний напівспред (Avellaneda-Stoikov):
+
+        delta = 0.5 * gamma * sigma^2 * (T - t) + (1 / gamma) * ln(1 + gamma / kappa)
+        """
+        gamma = float(self.get("gamma", 0.1))
+        kappa = float(self.get("kappa", 1.5))
+        if gamma <= 0 or kappa <= 0:
+            return 0.0
+        part1 = 0.5 * gamma * (vol**2) * time_horizon
+        part2 = (1.0 / gamma) * float(np.log1p(gamma / kappa))
+        return float(part1 + part2)
+
+    def compute_quotes(
+        self,
+        mid_or_micro: float,
+        inventory: float,
+        vol: float,
+        vpin: float | None = None,
+        base_spread: float | None = None,
+    ) -> tuple[float, float, bool]:
+        """Обчислює рівні котирування (bid, ask, active).
+
+        Якщо увімкнено VPIN-щит і токсичність > vpin_threshold, котирування
+        призупиняються або спред подвоюється для захисту від adverse selection.
+        """
+        use_vpin = bool(self.get("use_vpin_shield", False))
+        vpin_thresh = float(self.get("vpin_threshold", 0.75))
+        inv_cap = float(self.get("inventory_cap", 1.0))
+
+        # Захист від токсичного потоку (VPIN circuit breaker)
+        if use_vpin and vpin is not None and vpin > vpin_thresh:
+            return 0.0, float("inf"), False
+
+        r = self.reservation_price(mid_or_micro, inventory, vol)
+        if base_spread is not None and base_spread > 0:
+            delta = base_spread * float(self.get("spread_offset_mult", 0.5))
+        else:
+            delta = self.optimal_half_spread(vol)
+
+        bid = r - delta
+        ask = r + delta
+
+        # Обмеження інвентарю
+        if inventory >= inv_cap:
+            bid = 0.0  # не купуємо далі
+        if inventory <= -inv_cap:
+            ask = float("inf")  # не продаємо далі
+
+        return float(bid), float(ask), True
 
     def generate_signals(
         self,

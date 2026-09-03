@@ -77,3 +77,57 @@ def both_or_neither(d1: FillDecision, d2: FillDecision) -> tuple[FillDecision, F
         FillDecision(False, d1.fill_price, reason),
         FillDecision(False, d2.fill_price, reason),
     )
+
+
+@dataclass(frozen=True)
+class LeggingResolution:
+    """Результат аналізу розсинхронізації виконання двох ніг."""
+
+    action: str  # both_filled | neither | chase_leg2 | chase_leg1 | unwind_leg1 | unwind_leg2
+    d1: FillDecision
+    d2: FillDecision
+    drift_bps: float = 0.0
+    reason: str = ""
+
+
+def resolve_legging(
+    d1: FillDecision,
+    d2: FillDecision,
+    side1: str,
+    side2: str,
+    limit1: float,
+    limit2: float,
+    mid1: float,
+    mid2: float,
+    max_drift_bps: float = 10.0,
+    mode: str = "chase",
+) -> LeggingResolution:
+    """Вирішує розсинхронізацію ніг при частковому виконанні лімітних ордерів.
+
+    Якщо одна нога виконалась як maker, а інша зависла:
+        - mode="chase": якщо відхилення ринку <= max_drift_bps, доганяємо другу ногу
+          ринковим ордером (taker/IOC) по поточній mid-ціні;
+        - mode="unwind" або drift > max_drift_bps: негайно закриваємо першу ногу.
+    """
+    if d1.filled and d2.filled:
+        return LeggingResolution("both_filled", d1, d2, reason="both_filled")
+    if (not d1.filled) and (not d2.filled):
+        return LeggingResolution("neither", d1, d2, reason="neither_filled")
+
+    # Leg 1 виконалась, Leg 2 — ні
+    if d1.filled and not d2.filled:
+        drift = (mid2 - limit2) / limit2 * 10_000.0 if side2 == "buy" else (limit2 - mid2) / limit2 * 10_000.0
+        drift = float(max(drift, 0.0))
+        if mode == "chase" and drift <= max_drift_bps:
+            chased_d2 = FillDecision(True, mid2, f"chase_taker_drift_{drift:.1f}bps")
+            return LeggingResolution("chase_leg2", d1, chased_d2, drift_bps=drift, reason="chased_leg2")
+        return LeggingResolution("unwind_leg1", d1, d2, drift_bps=drift, reason="drift_exceeded_or_unwind")
+
+    # Leg 2 виконалась, Leg 1 — ні
+    drift = (mid1 - limit1) / limit1 * 10_000.0 if side1 == "buy" else (limit1 - mid1) / limit1 * 10_000.0
+    drift = float(max(drift, 0.0))
+    if mode == "chase" and drift <= max_drift_bps:
+        chased_d1 = FillDecision(True, mid1, f"chase_taker_drift_{drift:.1f}bps")
+        return LeggingResolution("chase_leg1", chased_d1, d2, drift_bps=drift, reason="chased_leg1")
+    return LeggingResolution("unwind_leg2", d1, d2, drift_bps=drift, reason="drift_exceeded_or_unwind")
+

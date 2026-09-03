@@ -116,6 +116,8 @@ class PairsEngine:
         n_pairs: int = 1,
         wait_bars: int | None = None,
         is_maker: bool = True,
+        legging_mode: str = "strict_both",
+        max_drift_bps: float = 10.0,
     ) -> None:
         settings = get_settings()
         self.leg1 = leg1
@@ -125,6 +127,8 @@ class PairsEngine:
         self.account = account
         self.store = store
         self.is_maker = is_maker
+        self.legging_mode = legging_mode
+        self.max_drift_bps = max_drift_bps
         self.wait_bars = wait_bars if wait_bars is not None else settings.maker_fill_wait_bars
         self.size_pct = pair_size_pct(n_pairs, settings.pair_notional_pct, settings.portfolio_notional_pct)
         self.max_losing_months = settings.max_losing_months
@@ -210,16 +214,52 @@ class PairsEngine:
         if self.pending is None:
             return "no_pending"
         o1, o2 = self.pending
+        mid1 = 0.5 * (high1 + low1)
+        mid2 = 0.5 * (high2 + low2)
         d1 = decide_fill(o1.side, o1.limit_price, high1, low1)
         d2 = decide_fill(o2.side, o2.limit_price, high2, low2)
-        d1, d2 = both_or_neither(d1, d2)
-        if d1.filled and d2.filled:
-            self._apply_fills(ts, o1, o2, d1.fill_price, d2.fill_price)
-            self._log_order(ts, o1, "filled", "filled")
-            self._log_order(ts, o2, "filled", "filled")
-            self.pending = None
-            self.n_filled += 1
-            return "filled"
+
+        if self.legging_mode == "strict_both":
+            d1, d2 = both_or_neither(d1, d2)
+            if d1.filled and d2.filled:
+                self._apply_fills(ts, o1, o2, d1.fill_price, d2.fill_price)
+                self._log_order(ts, o1, "filled", "filled")
+                self._log_order(ts, o2, "filled", "filled")
+                self.pending = None
+                self.n_filled += 1
+                return "filled"
+        else:
+            from scalper_hft.live.fills import resolve_legging
+
+            res = resolve_legging(
+                d1,
+                d2,
+                o1.side,
+                o2.side,
+                o1.limit_price,
+                o2.limit_price,
+                mid1,
+                mid2,
+                max_drift_bps=self.max_drift_bps,
+                mode=self.legging_mode,
+            )
+            if res.action in ("both_filled", "chase_leg1", "chase_leg2"):
+                self._apply_fills(ts, o1, o2, res.d1.fill_price, res.d2.fill_price)
+                self._log_order(ts, o1, "filled", res.d1.reason)
+                self._log_order(ts, o2, "filled", res.d2.reason)
+                self.pending = None
+                self.n_filled += 1
+                return f"filled:{res.action}"
+            elif res.action in ("unwind_leg1", "unwind_leg2"):
+                self._log_order(ts, o1, "unfilled", f"legging_unwound_{res.action}")
+                self._log_order(ts, o2, "unfilled", f"legging_unwound_{res.action}")
+                self.pending = None
+                self.n_unfilled += 1
+                logger.warning(
+                    "%s legging risk triggered %s, drift=%.1f bps", self.pid, res.action, res.drift_bps
+                )
+                return f"unfilled:{res.action}"
+
         o1.bars_waited += 1
         o2.bars_waited += 1
         if o1.bars_waited >= self.wait_bars:
