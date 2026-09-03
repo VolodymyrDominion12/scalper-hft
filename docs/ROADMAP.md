@@ -98,8 +98,8 @@ paper-replay реверсує і рахує daily-loss на mark-to-market. Те
 
 | ID | Що | Статус |
 |---|---|---|
-| 0 | Persist `PaperAccount` + `--daemon` + `control.json` + SIGTERM | план |
-| 1 | systemd `scalper-paper-pairs` + тег `paper-v0.1.0` | план |
+| 0 | Persist `PaperAccount` + `--daemon` + `control.json` + SIGTERM | код |
+| 1 | systemd `scalper-paper-pairs` + тег `paper-v0.1.0` | код юніта; тег — реліз |
 | 2 | 8 тижнів paper на VPS (операції; Paper-Gate) | план |
 | 3 | Live-адаптер ніг pairs (код, `DRY_RUN=true` за замовчуванням) | план |
 | 4 | Тег `live-v*` + ключі IP-whitelist | лише після Gate і явного запиту |

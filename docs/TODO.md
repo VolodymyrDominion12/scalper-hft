@@ -54,8 +54,9 @@
 
 ### 1b. Research локально / робот на VPS
 План з фазами, файлами і протоколом hotfix: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
-- [ ] **Фаза 0:** знімок `PaperAccount` у SQLite, `--daemon`, `control.json`, SIGTERM save.
-- [ ] **Фаза 1:** systemd `scalper-paper-pairs.service`, тег `paper-v0.1.0` (не `git pull` на VPS).
+- [x] **Фаза 0:** знімок `PaperAccount` у SQLite, `--daemon`, `control.json`, SIGTERM save.
+- [x] **Фаза 1 (код):** systemd `scalper-paper-pairs.service`, `scripts/deploy_paper.sh` (не `git pull` на VPS).
+- [ ] **Фаза 1 (реліз):** тег `paper-v0.1.0` на VPS.
 - [ ] **Фаза 2:** 8 тижнів paper на VPS.
 - [ ] **Фаза 3:** live-адаптер ніг pairs під моком; дефолт `DRY_RUN=true`.
 - [ ] **Фаза 4:** `live-v*` лише після Gate і явного запиту.

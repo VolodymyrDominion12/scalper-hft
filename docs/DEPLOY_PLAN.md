@@ -239,15 +239,17 @@ live-vX.Y.Z       — той самий SHA після Paper-Gate (фаза 3)
 
 ## Критерій «план виконано»
 
-- [ ] Фаза 0: snapshot/restore; `--daemon`; control flags; SIGTERM save
-- [ ] Фаза 1: `deploy/scalper-paper-pairs.service`; тег `paper-v0.1.0`; SHA в Telegram
+- [x] Фаза 0: snapshot/restore; `--daemon`; control flags; SIGTERM save
+- [x] Фаза 1 (код): `deploy/scalper-paper-pairs.service`; SHA в Telegram на старті; `.env` не в релізі
+- [ ] Фаза 1 (реліз): тег `paper-v0.1.0` і checkout на VPS
 - [ ] Фаза 2: 8 тижнів paper на VPS; `paper-audit` зелений
 - [ ] Фаза 3: live-адаптер ніг під моком; paper як і раніше без реальних ордерів
 - [ ] Фаза 4: не стартує без явного запиту і закритої фази 2
 - [ ] `uv run pytest tests/ -q` зелений після кожної кодової фази
 - [ ] На VPS немає `git pull origin main`; `.env` не в релізі
 
-## Що робити наступним комітом (фаза 0)
+## Стан коду (2026-09-03)
 
-Почати з persist + daemon + `control.json`. Без цього ставити юніт на VPS
-немає сенсу: кожен restart зітре paper-книгу і зламає Gate.
+Фази 0–1 у репозиторії: persist `PaperAccount`, `--daemon`, `control.json`,
+systemd-юніт і `scripts/deploy_paper.sh`. Наступне — тег `paper-v0.1.0` і
+paper-gate на VPS (фаза 2). Не вмикати live.
