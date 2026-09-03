@@ -56,10 +56,24 @@ def rolling_vwap(df: pd.DataFrame, window: int) -> pd.Series:
     return pv.rolling(window, min_periods=window).sum() / df["volume"].rolling(window, min_periods=window).sum()
 
 
-def realized_vol(close: pd.Series, window: int = 30) -> pd.Series:
-    """Річна волатильність лог-прибутковостей у вікні."""
+def realized_vol(close: pd.Series, window: int = 30, bars_per_year: float | None = None) -> pd.Series:
+    """Річна волатильність лог-прибутковостей у вікні.
+
+    bars_per_year: кількість барів у році для ануалізації. Якщо None,
+    визначається автоматично з частоти DatetimeIndex, або fallback на 525 600 (1m).
+    """
     log_ret = np.log(close / close.shift(1))
-    return log_ret.rolling(window, min_periods=window).std() * np.sqrt(365 * 24 * 60)
+    if bars_per_year is None:
+        if isinstance(close.index, pd.DatetimeIndex) and len(close) > 1:
+            diffs = close.index.to_series().diff().dropna()
+            if len(diffs) and diffs.gt(pd.Timedelta(0)).all():
+                delta_s = diffs.median().total_seconds()
+                bars_per_year = (365.0 * 24.0 * 3600.0) / max(delta_s, 1.0)
+            else:
+                bars_per_year = 365.0 * 24.0 * 60.0
+        else:
+            bars_per_year = 365.0 * 24.0 * 60.0
+    return log_ret.rolling(window, min_periods=window).std() * np.sqrt(bars_per_year)
 
 
 # ── Мікроструктурні фічі ─────────────────────────────────────────────────────

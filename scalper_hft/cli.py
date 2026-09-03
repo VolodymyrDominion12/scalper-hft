@@ -1073,7 +1073,7 @@ def cmd_cfi(args: argparse.Namespace) -> None:
 
     print("— Важливість кластерів ознак (Clustered MDA) —")
     for cl_id, imp in cfi_res.clustered_mda.items():
-        feats = cfi_res.clusters_dict.get(cl_id, [])
+        feats = cfi_res.clusters_dict.get(int(cl_id), [])
         print(f"Кластер {cl_id:2d} (важливість: {imp:+.4f}) -> {', '.join(feats)}")
 
     print("\n— Топ ознак за скоригованою важливістю —")

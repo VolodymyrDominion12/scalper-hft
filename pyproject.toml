@@ -16,7 +16,6 @@ dependencies = [
     "plotly>=5.20",
     "tabulate>=0.9",
     "psycopg[binary]>=3.2",
-    "pandas-stubs~=3.0.5",
 ]
 
 [project.optional-dependencies]

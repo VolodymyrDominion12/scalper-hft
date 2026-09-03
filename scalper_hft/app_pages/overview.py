@@ -22,7 +22,7 @@ rows = []
 for sym in SYMBOLS:
     k = load_klines(klines_path(data_dir, sym, "1m"))
     t = load_trades(data_dir / f"{sym}_aggTrades.parquet")
-    f = load_funding(data_dir / f"{sym}_funding.parquet")
+    funding_df = load_funding(data_dir / f"{sym}_funding.parquet")
     bt = data_dir / f"{sym}_bookTicker.parquet"
     bt_df = pd.read_parquet(bt) if bt.exists() else None
     rows.append(
@@ -30,7 +30,7 @@ for sym in SYMBOLS:
             "symbol": sym,
             "klines": len(k) if k is not None else 0,
             "aggTrades": len(t) if t is not None else 0,
-            "funding": len(f) if f is not None else 0,
+            "funding": len(funding_df) if funding_df is not None else 0,
             "bookTicker": len(bt_df) if bt_df is not None else 0,
         }
     )
@@ -64,9 +64,9 @@ results_dir = Path("results")
 if results_dir.exists():
     eq_files = sorted(results_dir.glob("paper_equity_*.csv"))
     if eq_files:
-        for f in eq_files:
-            eq = pd.read_csv(f, parse_dates=["ts"]).set_index("ts")
-            fig = go.Figure(go.Scatter(x=eq.index, y=eq["equity"], mode="lines", name=f.stem))
+        for eq_file in eq_files:
+            eq = pd.read_csv(eq_file, parse_dates=["ts"]).set_index("ts")
+            fig = go.Figure(go.Scatter(x=eq.index, y=eq["equity"], mode="lines", name=eq_file.stem))
             st.plotly_chart(fig, width="stretch")
     else:
         st.info("Немає CSV paper-run.")

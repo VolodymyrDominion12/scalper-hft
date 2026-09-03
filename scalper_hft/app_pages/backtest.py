@@ -32,11 +32,27 @@ from scalper_hft.visualization import (
 settings = get_settings()
 data_dir = settings.data_dir_abs
 
+STRATEGY_LABELS: dict[str, str] = {
+    "pairs_arb": "pairs_arb (✅ Валідована)",
+    "sparse_basket": "sparse_basket (🧪 Дослідження)",
+    "ensemble": "ensemble (🧪 Дослідження)",
+    "ml_strategy": "ml_strategy (🧪 Дослідження)",
+    "mean_reversion": "mean_reversion (❌ Відхилена / DSR=0)",
+    "cvd_momentum": "cvd_momentum (❌ Відхилена / fee-drag)",
+    "funding_carry": "funding_carry (❌ Відхилена / тертя > фандінг)",
+    "funding_arb": "funding_arb (❌ Відхилена / низький фандінг)",
+    "basis_reversion": "basis_reversion (❌ Відхилена / вузький базис)",
+    "hmm_reversion": "hmm_reversion (❌ Відхилена / OOS SR < 0)",
+}
+
 st.title("Бектест")
 
 st.sidebar.header("Параметри")
 strategy_name = st.sidebar.selectbox(
-    "Стратегія", sorted(REGISTRY), index=sorted(REGISTRY).index("pairs_arb") if "pairs_arb" in REGISTRY else 0
+    "Стратегія",
+    sorted(REGISTRY),
+    index=sorted(REGISTRY).index("pairs_arb") if "pairs_arb" in REGISTRY else 0,
+    format_func=lambda s: STRATEGY_LABELS.get(s, s),
 )
 is_pairs = strategy_name == "pairs_arb"
 if is_pairs:

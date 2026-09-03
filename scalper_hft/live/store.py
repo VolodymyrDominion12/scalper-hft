@@ -14,12 +14,13 @@ class PaperStore:
     def __init__(self, path: Path | None = None) -> None:
         self.path = Path(path) if path is not None else Path("results") / "paper_pairs.sqlite"
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.path)
+        self._conn = sqlite3.connect(self.path, timeout=15.0)
         self._conn.row_factory = sqlite3.Row
         self._init()
 
     def _init(self) -> None:
         cur = self._conn.cursor()
+        cur.execute("PRAGMA journal_mode=WAL;")
         cur.executescript(
             """
             CREATE TABLE IF NOT EXISTS equity (

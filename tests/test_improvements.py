@@ -286,3 +286,45 @@ class TestUnifiedBacktestResults:
         assert "side" in res.trades.columns
         assert "ret" in res.trades.columns
         assert len(res.trades) > 0
+
+
+class TestRealizedVolScaling:
+    def test_realized_vol_autodetects_hourly(self):
+        """1h бари масштабуються з bars_per_year ≈ 8760, а 1m — з 525600."""
+        from scalper_hft.features.indicators import realized_vol
+
+        idx_1h = pd.date_range("2025-01-01", periods=100, freq="1h")
+        idx_1m = pd.date_range("2025-01-01", periods=100, freq="1min")
+
+        close_1h = pd.Series(100.0 + np.arange(100) * 0.1, index=idx_1h)
+        close_1m = pd.Series(100.0 + np.arange(100) * 0.1, index=idx_1m)
+
+        vol_1h = realized_vol(close_1h, window=30).dropna()
+        vol_1m = realized_vol(close_1m, window=30).dropna()
+
+        # Оскільки log_ret однаковий, відношення має бути sqrt(525600 / 8760) = sqrt(60) ≈ 7.746
+        ratio = vol_1m.iloc[0] / vol_1h.iloc[0]
+        assert np.isclose(ratio, np.sqrt(60.0), rtol=1e-2)
+
+    def test_realized_vol_explicit_bars_per_year(self):
+        from scalper_hft.features.indicators import realized_vol
+
+        idx = pd.date_range("2025-01-01", periods=50, freq="1h")
+        close = pd.Series(100.0 + np.arange(50) * 0.1, index=idx)
+        v1 = realized_vol(close, window=10, bars_per_year=1000.0).dropna()
+        v2 = realized_vol(close, window=10, bars_per_year=4000.0).dropna()
+        assert np.isclose(v2.iloc[0] / v1.iloc[0], 2.0, rtol=1e-3)
+
+
+class TestPaperStoreWALMode:
+    def test_wal_mode_enabled(self, tmp_path):
+        from scalper_hft.live.store import PaperStore
+
+        db_path = tmp_path / "test_paper.sqlite"
+        store = PaperStore(db_path)
+        cur = store._conn.cursor()
+        cur.execute("PRAGMA journal_mode;")
+        mode = cur.fetchone()[0]
+        store.close()
+        assert mode.upper() == "WAL"
+

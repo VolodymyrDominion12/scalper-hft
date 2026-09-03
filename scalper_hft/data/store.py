@@ -215,8 +215,8 @@ class PostgresStore:
         self.ensure_schema()
         cols = ["symbol", "interval", "ts", *self._KLINES_COLS]
         rows = [
-            (symbol, interval, ts.to_pydatetime(), *vals)
-            for ts, vals in ((i, tuple(r)) for i, r in df[self._KLINES_COLS].iterrows())
+            (symbol, interval, row[0].to_pydatetime(), *row[1:])
+            for row in df[self._KLINES_COLS].itertuples(index=True, name=None)
         ]
         with self._connect() as conn:
             with conn.cursor() as cur:
