@@ -271,19 +271,20 @@ with tabs[1]:
                             "напрямок. Якщо shadow_mean_ret > 0 → фільтр відкидає прибуткові угоди."
                         )
                         for _, row in pnl_df.iterrows():
-                            color = "🟢" if row["shadow_mean_ret"] > 0 else "🔴"
-                            verdict = (
-                                "⚠️ фільтр може шкодити (відкидає прибуткові угоди)"
+                            verdict_msg = (
+                                "⚠️ фільтр відкидає прибуткові угоди"
                                 if row["shadow_mean_ret"] > 0 and row["shadow_win_rate"] > 0.5
-                                else "✅ фільтр корисний (відкидає збиткові угоди)"
+                                else "✅ фільтр відкидає збиткові угоди"
                             )
+                            verdict_badge = ":red-badge[Шкідливий]" if "⚠️" in verdict_msg else ":green-badge[Корисний]"
+                            
                             with st.container(border=True):
-                                c1, c2, c3, c4 = st.columns(4)
-                                c1.metric(f"{color} {row['filter_name']}", f"{int(row['n_blocked'])} угод")
-                                c2.metric("Shadow win rate", f"{row['shadow_win_rate']:.0%}")
-                                c3.metric("Shadow avg PnL", f"{row['shadow_mean_ret']:+.4%}")
-                                c4.metric("Shadow total PnL", f"{row['shadow_total_pnl']:+.4%}")
-                            st.caption(verdict)
+                                st.markdown(f"**{row['filter_name']}** {verdict_badge} — {verdict_msg}")
+                                with st.container(horizontal=True):
+                                    st.metric("Заблоковано", f"{int(row['n_blocked'])}", border=True)
+                                    st.metric("Shadow win rate", f"{row['shadow_win_rate']:.0%}", border=True)
+                                    st.metric("Shadow avg PnL", f"{row['shadow_mean_ret']:+.4%}", border=True)
+                                    st.metric("Shadow total PnL", f"{row['shadow_total_pnl']:+.4%}", border=True)
 
                         # Зберегти у session_state для Tab 5
                         st.session_state["fa_result"] = {
@@ -475,11 +476,11 @@ with tabs[3]:
 
                     # Метрики
                     m = res.metrics
-                    c1, c2, c3, c4 = st.columns(4)
-                    c1.metric("Угод", m.n_trades)
-                    c2.metric("Win rate", f"{m.win_rate:.0%}")
-                    c3.metric("Avg PnL/угода", f"{m.avg_trade_return:.4%}")
-                    c4.metric("Угод/день", f"{m.trades_per_day:.2f}")
+                    with st.container(horizontal=True):
+                        st.metric("Угод", m.n_trades, border=True)
+                        st.metric("Win rate", f"{m.win_rate:.0%}", border=True)
+                        st.metric("Avg PnL/угода", f"{m.avg_trade_return:.4%}", border=True)
+                        st.metric("Угод/день", f"{m.trades_per_day:.2f}", border=True)
 
                     sub_tabs = st.tabs(["📉 MAE/MFE", "🕐 Hourly Heatmap", "📊 Розподіл PnL"])
 

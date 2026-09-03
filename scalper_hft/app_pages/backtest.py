@@ -47,7 +47,7 @@ STRATEGY_LABELS: dict[str, str] = {
 
 st.title("Бектест")
 
-st.sidebar.header("Параметри")
+st.sidebar.header("Параметри", divider=False)
 strategy_name = st.sidebar.selectbox(
     "Стратегія",
     sorted(REGISTRY),
@@ -63,8 +63,8 @@ else:
     symbol = st.sidebar.selectbox("Символ", SYMBOLS)
     interval = st.sidebar.selectbox("Таймфрейм", ["1m", "5m", "15m", "1h"], index=1)
 days = st.sidebar.slider("Глибина даних, днів", 7, 365, 90 if is_pairs else 30)
-run_bt = st.sidebar.button("Запустити бектест")
-run_diag = st.sidebar.button("Запустити діагностику (cohort+stress+capacity)")
+run_bt = st.sidebar.button("▶ Запустити бектест")
+run_diag = st.sidebar.button("🩺 Діагностика (cohort/stress)")
 
 
 def _clear_trade_selection() -> None:
@@ -131,17 +131,20 @@ def _render_bt_chart(view: dict) -> None:
     trade = find_trade_by_ts(res.trades, sel_ts) if sel_ts is not None else None
     if trade is not None:
         t0 = pd.Timestamp(trade["entry_ts"])
-        st.subheader(f"Деталі угоди · {t0:%d.%m.%Y %H:%M}")
-        sl = trade["sl_price"] if "sl_price" in trade.index else float("nan")
-        tp = trade["tp_price"] if "tp_price" in trade.index else float("nan")
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Сторона", "Лонг" if trade["side"] == 1 else "Шорт")
-        c2.metric("Вхід → Вихід", f"{trade['entry_price']:.2f} → {trade['exit_price']:.2f}")
-        c3.metric("PnL", f"{trade['ret']:.3%}")
-        c4.metric("SL / TP", f"{sl:.2f} / {tp:.2f}" if pd.notna(sl) and pd.notna(tp) else "—")
-        st.plotly_chart(trade_detail_figure(fdf, res, trade["entry_ts"]), width="stretch", key="bt_detail_fig")
-        if st.button("✕ Закрити деталі", key="bt_clear_sel", on_click=_clear_trade_selection):
-            st.rerun(scope="fragment")
+        with st.container(border=True):
+            st.subheader(f"Деталі угоди · {t0:%d.%m.%Y %H:%M}")
+            sl = trade["sl_price"] if "sl_price" in trade.index else float("nan")
+            tp = trade["tp_price"] if "tp_price" in trade.index else float("nan")
+            
+            with st.container(horizontal=True):
+                st.metric("Сторона", "Лонг" if trade["side"] == 1 else "Шорт", border=True)
+                st.metric("Вхід → Вихід", f"{trade['entry_price']:.2f} → {trade['exit_price']:.2f}", border=True)
+                st.metric("PnL", f"{trade['ret']:.3%}", border=True)
+                st.metric("SL / TP", f"{sl:.2f} / {tp:.2f}" if pd.notna(sl) and pd.notna(tp) else "—", border=True)
+                
+            st.plotly_chart(trade_detail_figure(fdf, res, trade["entry_ts"]), width="stretch", key="bt_detail_fig")
+            if st.button("✕ Закрити деталі", key="bt_clear_sel", on_click=_clear_trade_selection):
+                st.rerun(scope="fragment")
 
     st.subheader("Угоди")
     if res.trades is not None and not res.trades.empty:
@@ -192,11 +195,12 @@ if run_bt:
                     maker_execution=True,
                 )
                 m = pairs_res.metrics
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Дохідність", f"{m.total_return:.2%}")
-                c2.metric("Sharpe (год.)", f"{m.sharpe_hourly:.2f}")
-                c3.metric("Угоди", f"{m.n_trades}")
-                c4.metric("Max DD", f"{m.max_drawdown:.2%}")
+                with st.container(horizontal=True):
+                    st.metric("Дохідність", f"{m.total_return:.2%}", border=True)
+                    st.metric("Sharpe (год.)", f"{m.sharpe_hourly:.2f}", border=True)
+                    st.metric("Угоди", f"{m.n_trades}", border=True)
+                    st.metric("Max DD", f"{m.max_drawdown:.2%}", border=True)
+                    
                 fig = go.Figure(
                     go.Scatter(x=pairs_res.equity.index, y=pairs_res.equity.values, mode="lines", name="Equity")
                 )
@@ -225,16 +229,17 @@ if run_bt:
                 st.session_state["bt_view"] = {"df": df, "res": res, "title": f"{strategy_name} · {symbol} {interval}"}
                 st.session_state.pop("bt_sel_ts", None)
                 m = res.metrics
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Дохідність", f"{m.total_return:.2%}")
-                c2.metric("Sharpe (год.)", f"{m.sharpe_hourly:.2f}")
-                c3.metric("Угоди", f"{m.n_trades}")
-                c4.metric("Win rate", f"{m.win_rate:.0%}")
+                with st.container(horizontal=True):
+                    st.metric("Дохідність", f"{m.total_return:.2%}", border=True)
+                    st.metric("Sharpe (год.)", f"{m.sharpe_hourly:.2f}", border=True)
+                    st.metric("Угоди", f"{m.n_trades}", border=True)
+                    st.metric("Win rate", f"{m.win_rate:.0%}", border=True)
+                    
                 ret = res.equity.pct_change().dropna()
                 n_trials = estimate_n_trials(max(len(strategy.param_space), 1), 40)
                 dsr = deflated_sharpe_ratio(ret.values, n_trials=n_trials)
-                st.info(f"Deflated Sharpe: **{dsr:.3f}** (trials={n_trials}) — edge значущий якщо > 0.95")
-                with st.expander("Повні метрики"):
+                st.caption(f"**Deflated Sharpe: {dsr:.3f}** (trials={n_trials}) — edge значущий якщо > 0.95")
+                with st.expander("Повні метрики", icon=":material/analytics:"):
                     st.text(m.summary())
 
 if st.session_state.get("bt_view") is not None:
@@ -249,13 +254,13 @@ if st.session_state.get("bt_view") is not None:
 
         with anal_tabs[0]:
             m = bt_res.metrics
-            c1, c2, c3, c4, c5, c6 = st.columns(6)
-            c1.metric("Sharpe (річн.)", f"{m.sharpe:.3f}")
-            c2.metric("Sortino", f"{m.sortino:.3f}")
-            c3.metric("Calmar", f"{m.calmar:.3f}")
-            c4.metric("Max DD", f"{m.max_drawdown:.1%}")
-            c5.metric("Угод/день", f"{m.trades_per_day:.2f}")
-            c6.metric("P(розорення)", f"{m.risk_of_ruin:.4f}")
+            with st.container(horizontal=True):
+                st.metric("Sharpe (річн.)", f"{m.sharpe:.3f}", border=True)
+                st.metric("Sortino", f"{m.sortino:.3f}", border=True)
+                st.metric("Calmar", f"{m.calmar:.3f}", border=True)
+                st.metric("Max DD", f"{m.max_drawdown:.1%}", border=True)
+                st.metric("Угод/день", f"{m.trades_per_day:.2f}", border=True)
+                st.metric("P(розорення)", f"{m.risk_of_ruin:.4f}", border=True)
 
             # Rolling Sharpe
             if bt_res.equity is not None and len(bt_res.equity) > 30:
