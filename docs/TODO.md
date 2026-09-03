@@ -46,14 +46,23 @@
 
 ## ⏳ Відкриті задачі (актуальний backlog)
 
+Детальний план з файлами, тестами і порядком PR: [CHANGE_PLAN.md](CHANGE_PLAN.md).
+
 ### 1. Paper-валідація та моніторинг (Phase 1 Gate)
 - [ ] Безперервний моніторинг paper pairs портфеля (`results/paper_pairs.sqlite`) протягом **≥8 тижнів** без розходження з бектестом.
 - [x] Щотижневий звіт tracking error: CLI `paper-audit` (`validation/paper_audit.py`) — fill-rate, maxDD vs BT×1.5, MAE/MFE forensics.
 
-### 2. Накопичення даних глибини стакана (L2 / Depth)
+### 2. План змін 2026-09 (практики vs код)
+- [ ] **A (P0)** Міграція USDT-M WS на `/public` і `/private` + listenKey keepalive (`ws_user_stream.py`, `bookticker_recorder.py`).
+- [ ] **B (P1)** Chase-нога = taker; unwind flatten вже виконаної ноги; дефолт лишається `strict_both`.
+- [ ] **C (P1)** Kalman vs OLS bake-off (WF/DSR) на 4 валідованих парах; дефолт `use_kalman=False` до прийняття.
+- [ ] **D (P1)** Калібровка CostModel з IsJournal; daily/weekly halt у `PairsPortfolioRunner`.
+- [ ] **E (P2)** Session-розбивка в `paper-audit`; попередження pairs на 1m/5m.
+
+### 3. Накопичення даних глибини стакана (L2 / Depth) — Phase 4, не цей цикл
 - [ ] Накопичення архіву depth5 снапшотів для повноцінної перевірки `ob_imbalance` на мікроструктурних рівнях.
 - [ ] Інтеграція Tardis.dev / L2 historical feeds для бектесту HFT маркет-мейкінгу (`market_maker`).
 
-### 3. Production Hardening & Live (Phase 2)
+### 4. Production Hardening & Live (після paper-gate)
 - [ ] Оновлення Binance API ключів у `.env` (після успішного проходження 8-тижневого paper-гейту).
 - [ ] Фінальна верифікація WebSocket потоків через `ccxt.pro` під високим навантаженням.

@@ -72,6 +72,21 @@ paper-replay реверсує і рахує daily-loss на mark-to-market. Те
 
 ---
 
+## Phase 1.5 — Чесне виконання і live-інфра (план 2026-09-03)
+
+Деталі: [CHANGE_PLAN.md](CHANGE_PLAN.md). Не нові альфи; дроти того, що вже є.
+
+| ID | Що | Статус |
+|---|---|---|
+| A | USDT-M WS `/public` `/private` + listenKey keepalive | 🔜 P0 |
+| B | Chase = taker; unwind = flatten; дефолт `strict_both` | 🔜 P1 |
+| C | Kalman vs OLS OOS bake-off; дефолт Kalman off до прийняття | 🔜 P1 |
+| D | IS → CostModel; daily/weekly halt у portfolio runner | 🔜 P1 |
+
+**Головне правило розгортання** не змінюється: жоден live з реальними коштами,
+поки paper pairs не пройде ≥8 тижнів. Після фази B — перезапуск paper, бо
+комісії chase змінять tracking error.
+
 ## Phase 4 — HFT та L2 Order Book інфраструктура (наступний етап)
 
 1. **Глибина стакана**: тривале накопичення depth5 снапшотів через активний рекордер.
@@ -97,6 +112,7 @@ paper-replay реверсує і рахує daily-loss на mark-to-market. Те
 |---|---|---|
 | 0 | Усі P0 закриті тестами; `cli pairs` і weekly-audit зелені | ✅ Закрито |
 | 1 | Paper vs backtest tracking error; % unfilled post-only; 8 тижнів без розриву | ⏳ В процесі моніторингу |
+| 1.5 | WS `/public`/`private`; chase=taker; Kalman OOS; IS→cost + portfolio halt | 🔜 [CHANGE_PLAN.md](CHANGE_PLAN.md) |
 | 2 | Hardening: reconcile в циклі; kill-switch; OLS/Johansen. Ladders/risk budget — модулі | ✅ Код + тести |
 | 3 | ML meta-labeling, CFI, micro-price, sparse basket, stress/cohort валідація | ✅ Реалізовано в коді |
 | 4 | L2 Tardis дані, черга лімітних ордерів, live під реальний капітал | 🔜 Наступний етап |
