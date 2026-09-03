@@ -11,8 +11,13 @@
 from __future__ import annotations
 
 import logging
+import signal
+import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -20,6 +25,8 @@ import pandas as pd
 from scalper_hft.config import get_settings
 from scalper_hft.data.binance_client import BinanceClient
 from scalper_hft.live.account import PaperAccount
+from scalper_hft.live.bar_clock import daemon_sleep_sec
+from scalper_hft.live.control import DEFAULT_CONTROL_PATH, ControlState, load_control
 from scalper_hft.live.fills import both_or_neither, decide_fill
 from scalper_hft.live.reconcile import reconcile_exchange_state
 from scalper_hft.live.risk_gate import CooldownState, correlated_size_mult, decide_entry, open_pair_size_pcts
@@ -710,7 +717,7 @@ def _paper_loop(
             logger.warning("Крок %d: %s", i, exc)
             action = f"error:{exc}"
         actions.append(action)
-        pts.append((pd.Timestamp.utcnow().tz_localize(None), account.equity))
+        pts.append((pd.Timestamp.now(tz="UTC").tz_convert(None), account.equity))
         i += 1
         if daemon:
             if halt.wait(timeout=daemon_sleep_sec(interval, action)):

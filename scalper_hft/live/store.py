@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -181,7 +183,7 @@ class PaperStore:
     def save_runtime(self, payload: dict[str, Any], snapshot_id: str = "runtime") -> None:
         """Атомарно замінити runtime-знімок (рахунок + engine)."""
         body = json.dumps(payload, default=str)
-        saved_at = str(pd.Timestamp.utcnow().tz_localize(None))
+        saved_at = str(pd.Timestamp.now(tz="UTC").tz_convert(None))
         self._conn.execute(
             "INSERT OR REPLACE INTO snapshots (id, payload, saved_at) VALUES (?, ?, ?)",
             (snapshot_id, body, saved_at),
