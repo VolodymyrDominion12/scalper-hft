@@ -27,3 +27,5 @@ docs/plots/
 .vscode/
 *.code-workspace
 .DS_Store
+
+*.dump

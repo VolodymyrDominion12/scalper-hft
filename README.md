@@ -41,6 +41,7 @@ cp .env.example .env
 Схема створюється автоматично: `klines(symbol, interval, ts, ohlcv)`,
 `agg_trades(symbol, trade_id, ts, price, amount, side)`, `funding(symbol, ts, funding_rate)`.
 Дані переживають перезапуск контейнера (docker volume `postgres_data`).
+Перенесення кешу на інший комп: [docs/postgres_cache_transfer.md](docs/postgres_cache_transfer.md).
 
 ## Ресемплінг: 1m → 5m / 15m / 30m / 1h / 4h / 1d (без повторних запитів до API)
 
