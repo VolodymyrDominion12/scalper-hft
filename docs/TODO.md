@@ -52,6 +52,14 @@
 - [ ] Безперервний моніторинг paper pairs портфеля (`results/paper_pairs.sqlite`) протягом **≥8 тижнів** без розходження з бектестом.
 - [x] Щотижневий звіт tracking error: CLI `paper-audit` (`validation/paper_audit.py`) — fill-rate, maxDD vs BT×1.5, MAE/MFE forensics.
 
+### 1b. Research локально / робот на VPS
+План з фазами, файлами і протоколом hotfix: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
+- [ ] **Фаза 0:** знімок `PaperAccount` у SQLite, `--daemon`, `control.json`, SIGTERM save.
+- [ ] **Фаза 1:** systemd `scalper-paper-pairs.service`, тег `paper-v0.1.0` (не `git pull` на VPS).
+- [ ] **Фаза 2:** 8 тижнів paper на VPS.
+- [ ] **Фаза 3:** live-адаптер ніг pairs під моком; дефолт `DRY_RUN=true`.
+- [ ] **Фаза 4:** `live-v*` лише після Gate і явного запиту.
+
 ### 2. План змін 2026-09 (практики vs код)
 - [x] **A (P0)** Міграція USDT-M WS на `/public` і `/private` + PUT listenKey keepalive.
 - [x] **B (P1)** Chase-нога = taker; unwind flatten вже виконаної ноги; дефолт `strict_both`.

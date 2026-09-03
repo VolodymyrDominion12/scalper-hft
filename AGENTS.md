@@ -24,7 +24,7 @@
 - `scalper_hft/live/` — paper/live трейдер, pairs runner, reconciliation.
 - `scalper_hft/ml/` — triple-barrier, LightGBM, bet sizing, feature importance.
 - `scalper_hft/portfolio/` — ERC; risk budget (модуль, не в live-циклі).
-- `docs/` — RESEARCH.md (web-дослідження), book_notes.md (книга), reports/ (звіти).
+- `docs/` — RESEARCH.md (web-дослідження), book_notes.md (книга), reports/ (звіти), DEPLOY_PLAN.md (research локально / робот на VPS).
 - `skills/` — процедури для агентів.
 - `.mcp/mcp-config.md` — MCP-сервери.
 

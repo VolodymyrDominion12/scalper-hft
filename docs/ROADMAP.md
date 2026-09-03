@@ -13,6 +13,8 @@ funding/basis сплять у низькому режимі 2025–26. Phase 0 �
 
 **Головне правило розгортання:** жоден live з реальними коштами, доки paper pairs не пройде **≥8 тижнів безперервного моніторингу** без розходження з бектестом.
 
+Розділення research (локально) і робота (VPS, git-тег): [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
+
 ---
 
 ## Phase 0 — P0 баги (закрито 2026-08-28) ✅
@@ -89,6 +91,19 @@ paper-replay реверсує і рахує daily-loss на mark-to-market. Те
 поки paper pairs не пройде ≥8 тижнів. Після фази B — перезапуск paper, бо
 комісії chase змінять tracking error.
 
+## Phase 1.6 — Research локально / paper на VPS (план 2026-09-03)
+
+Деталі: [DEPLOY_PLAN.md](DEPLOY_PLAN.md). Не нові альфи; демон, persist стану,
+реліз тегом.
+
+| ID | Що | Статус |
+|---|---|---|
+| 0 | Persist `PaperAccount` + `--daemon` + `control.json` + SIGTERM | план |
+| 1 | systemd `scalper-paper-pairs` + тег `paper-v0.1.0` | план |
+| 2 | 8 тижнів paper на VPS (операції; Paper-Gate) | план |
+| 3 | Live-адаптер ніг pairs (код, `DRY_RUN=true` за замовчуванням) | план |
+| 4 | Тег `live-v*` + ключі IP-whitelist | лише після Gate і явного запиту |
+
 ## Phase 4 — HFT та L2 Order Book інфраструктура (наступний етап)
 
 1. **Глибина стакана**: тривале накопичення depth5 снапшотів через активний рекордер.
@@ -115,6 +130,7 @@ paper-replay реверсує і рахує daily-loss на mark-to-market. Те
 | 0 | Усі P0 закриті тестами; `cli pairs` і weekly-audit зелені | ✅ Закрито |
 | 1 | Paper vs backtest tracking error; % unfilled post-only; 8 тижнів без розриву | ⏳ В процесі моніторингу |
 | 1.5 | WS `/public`/`private` + keepalive; chase=taker; ADF-kill; Kalman OOS; IS→cost + halt; session/markout | код у циклі 2026-09-03; paper-gate ще відкритий |
+| 1.6 | Persist+daemon; VPS paper з git-тегу; live-адаптер ніг лише після Gate | 📋 [DEPLOY_PLAN.md](DEPLOY_PLAN.md) |
 | 2 | Hardening: reconcile в циклі; kill-switch; OLS/Johansen. Ladders/risk budget — модулі | ✅ Код + тести |
 | 3 | ML meta-labeling, CFI, micro-price, sparse basket, stress/cohort валідація | ✅ Реалізовано в коді |
 | 4 | L2 Tardis дані, черга лімітних ордерів, live під реальний капітал | 🔜 Наступний етап |
