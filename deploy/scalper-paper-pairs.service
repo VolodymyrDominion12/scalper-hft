@@ -1,0 +1,34 @@
+# systemd user-юніт: paper pairs портфель (демон)
+
+# Встановлення (на машині, де крутиться бот):
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/scalper-paper-pairs.service ~/.config/systemd/user/
+#   # за потреби відредагуй WorkingDirectory / EnvironmentFile
+#   loginctl enable-linger "$USER"
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now scalper-paper-pairs
+#
+# Реліз: scripts/deploy_paper.sh paper-v0.1.0
+#   (checkout тегу, НЕ git pull main, НЕ чіпає .env)
+#
+# Зупинка входів без рестарту: results/control.json
+#   {"no_new_entries": true}
+
+[Unit]
+Description=scalper-hft paper pairs portfolio (daemon)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/PycharmProjects/scalper-hft
+EnvironmentFile=%h/PycharmProjects/scalper-hft/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/PycharmProjects/scalper-hft/.venv/bin/python -m scalper_hft.cli paper-run-pairs --portfolio --daemon --notify
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
