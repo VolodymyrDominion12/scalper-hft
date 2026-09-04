@@ -8,6 +8,17 @@ import pandas as pd
 import streamlit as st
 from scalper_hft.app_pages._common import SYMBOLS
 from scalper_hft.config import get_settings
+from scalper_hft.data.cache_ops import (
+    action_from_row_label,
+    clamp_cache_days,
+    delete_symbol_cache,
+    download_symbol_cache,
+    list_symbol_cache_files,
+    max_span_days,
+    row_cache_actions,
+    suggested_cache_days,
+    validate_symbol,
+)
 from scalper_hft.live.store import PaperStore
 from scalper_hft.research.dashboard_brief import (
     cache_inventory,
@@ -22,6 +33,19 @@ settings = get_settings()
 data_dir = settings.data_dir_abs
 _SWEEP_DB = Path("results") / "sweep.db"
 _PAPER_DB = Path("results") / "paper_pairs.sqlite"
+_FRESH_BADGE = {
+    "fresh": ":green-badge[свіжий]",
+    "aging": ":orange-badge[старіє]",
+    "stale": ":red-badge[застарілий]",
+    "missing": ":gray-badge[немає]",
+    "future": ":blue-badge[майбутнє]",
+}
+_FRESH_FILTERS = {
+    "усі": None,
+    "застарілі": ("stale", "aging"),
+    "немає": ("missing",),
+    "свіжі": ("fresh",),
+}
 
 st.title("Моніторинг")
 st.caption(
@@ -48,6 +72,256 @@ st.caption(
 @st.cache_data(ttl="5m", max_entries=8)
 def _cached_inventory(data_dir_s: str, symbols: tuple[str, ...]) -> pd.DataFrame:
     return cache_inventory(Path(data_dir_s), symbols)
+
+
+def _clear_cache_pending() -> None:
+    st.session_state.cache_pending = None
+
+
+def _invalidate_inventory() -> None:
+    _cached_inventory.clear()
+    _clear_cache_pending()
+
+
+def _safe_symbols(raw: list[str]) -> list[str]:
+    out: list[str] = []
+    for item in raw:
+        try:
+            sym = validate_symbol(item)
+        except ValueError:
+            continue
+        if sym not in out:
+            out.append(sym)
+    return out
+
+
+def _set_cache_pending(action: str, symbols: list[str]) -> None:
+    chosen = _safe_symbols(symbols)
+    if not chosen:
+        st.toast("Немає коректних символів", icon=":material/warning:")
+        return
+    st.session_state.cache_pending = {"action": action, "symbols": chosen}
+
+
+def _on_cache_row_action() -> None:
+    click = st.session_state.get("cache_row_action")
+    if click is None:
+        return
+    symbols = st.session_state.get("cache_table_symbols") or []
+    row = int(click.row)
+    if row < 0 or row >= len(symbols):
+        return
+    _set_cache_pending(action_from_row_label(str(click.label)), [symbols[row]])
+
+
+def _render_download_form(symbols: list[str], *, action: str) -> None:
+    inv = _cached_inventory(str(data_dir), tuple(SYMBOLS))
+    span = max_span_days(inv, symbols)
+    default_days = suggested_cache_days(span, action=action)
+    names = ", ".join(symbols)
+    if action == "expand":
+        st.caption(
+            f"Докачати **префікс** історії для {len(symbols)} симв.: {names}. "
+            "Старі бари не стираються; 5m/15m/1h далі ресемпляться з 1m."
+        )
+    else:
+        st.caption(
+            f"Докачати **хвіст** 1m для {len(symbols)} симв.: {names}. "
+            "Застарілий кеш = lookahead-ризик на «сьогоднішніх» висновках."
+        )
+    if span is not None and span == span:
+        st.caption(f"Поточний span (макс. серед вибраних): {span:.1f} дн")
+    days = st.number_input(
+        "Глибина, днів",
+        min_value=1,
+        max_value=1095,
+        value=default_days,
+        step=30,
+        help="Вікно від зараз назад. Оновлення з force докачує хвіст; розширення заповнює дірки на початку.",
+    )
+    funding = st.toggle("Також funding", value=True)
+    trades = st.toggle("Також aggTrades (REST ≈ 2 доби)", value=False)
+    force = action != "expand"
+    submit = "Розширити" if action == "expand" else "Оновити"
+    if st.button(submit, type="primary", icon=":material/download:"):
+        try:
+            depth = clamp_cache_days(days)
+        except ValueError as exc:
+            st.error(str(exc))
+            return
+        errors: list[str] = []
+        with st.status(f"Завантаження {len(symbols)} симв.…", expanded=True) as status:
+            for i, sym in enumerate(symbols, start=1):
+                st.write(f"{i}/{len(symbols)} `{sym}`")
+                try:
+                    result = download_symbol_cache(
+                        sym, depth, force=force, funding=funding, trades=trades
+                    )
+                    extra = []
+                    if result.funding_rows is not None:
+                        extra.append(f"funding {result.funding_rows}")
+                    if result.trades_rows is not None:
+                        extra.append(f"trades {result.trades_rows}")
+                    tail = f" · {', '.join(extra)}" if extra else ""
+                    st.write(f"  {result.klines_rows} барів 1m{tail}")
+                except Exception as exc:  # noqa: BLE001 — мережа/біржа не валить діалог
+                    errors.append(f"{sym}: {exc}")
+                    st.write(f"  помилка: {exc}")
+            if errors:
+                status.update(label="Завершено з помилками", state="error")
+            else:
+                status.update(label="Кеш оновлено", state="complete")
+        if errors:
+            st.error("\n".join(errors))
+            return
+        st.toast(f"Оновлено {len(symbols)} симв.", icon=":material/check:")
+        _invalidate_inventory()
+        st.rerun()
+
+
+@st.dialog("Оновити кеш", icon=":material/download:", on_dismiss=_clear_cache_pending)
+def _refresh_cache_dialog(symbols: list[str]) -> None:
+    _render_download_form(symbols, action="refresh")
+
+
+@st.dialog("Розширити діапазон", icon=":material/calendar_month:", on_dismiss=_clear_cache_pending)
+def _expand_cache_dialog(symbols: list[str]) -> None:
+    _render_download_form(symbols, action="expand")
+
+
+@st.dialog("Видалити кеш", icon=":material/delete:", on_dismiss=_clear_cache_pending)
+def _delete_cache_dialog(symbols: list[str]) -> None:
+    st.warning(f"Видалити parquet-кеш для {len(symbols)} симв.: {', '.join(symbols)}")
+    files: list[str] = []
+    for sym in symbols:
+        files.extend(p.name for p in list_symbol_cache_files(data_dir, sym))
+    if files:
+        st.caption("Файли, які буде стерто:")
+        st.code("\n".join(files), language="text")
+    else:
+        st.caption("Файлів у data/ немає — нічого видаляти.")
+    with st.container(horizontal=True):
+        if st.button("Скасувати", icon=":material/close:"):
+            _clear_cache_pending()
+            st.rerun()
+        if st.button("Видалити", type="primary", icon=":material/delete:", disabled=not files):
+            deleted: list[str] = []
+            for sym in symbols:
+                deleted.extend(delete_symbol_cache(data_dir, sym))
+            st.toast(f"Видалено файлів: {len(deleted)}", icon=":material/delete:")
+            _invalidate_inventory()
+            st.rerun()
+
+
+def _open_cache_dialog() -> None:
+    pending = st.session_state.get("cache_pending")
+    if not pending:
+        return
+    symbols = _safe_symbols(list(pending.get("symbols") or []))
+    action = str(pending.get("action") or "refresh")
+    if not symbols:
+        _clear_cache_pending()
+        return
+    if action == "delete":
+        _delete_cache_dialog(symbols)
+    elif action == "expand":
+        _expand_cache_dialog(symbols)
+    else:
+        _refresh_cache_dialog(symbols)
+
+
+@st.fragment
+def _cache_manager(inv_df: pd.DataFrame) -> None:
+    stale_or_aging: list[str] = []
+    missing: list[str] = []
+    if not inv_df.empty:
+        fresh = inv_df["freshness"].astype(str)
+        stale_or_aging = inv_df.loc[fresh.isin(["stale", "aging"]), "symbol"].astype(str).tolist()
+        missing = inv_df.loc[fresh.eq("missing"), "symbol"].astype(str).tolist()
+
+    with st.container(horizontal=True, vertical_alignment="bottom"):
+        fresh_filter = st.pills(
+            "Показати",
+            list(_FRESH_FILTERS),
+            default="усі",
+            required=True,
+            key="cache_fresh_filter",
+        )
+        if st.button(
+            "Оновити застарілі",
+            icon=":material/sync:",
+            disabled=not stale_or_aging,
+            help="Докачати хвіст 1m для символів зі свіжістю «старіє» або «застарілий».",
+        ):
+            _set_cache_pending("refresh", stale_or_aging)
+        if st.button(
+            "Завантажити відсутні",
+            icon=":material/download:",
+            disabled=not missing,
+            help="Початкове завантаження 1m для символів без кешу.",
+        ):
+            _set_cache_pending("refresh", missing)
+
+    shown = inv_df.copy()
+    wanted = _FRESH_FILTERS.get(fresh_filter or "усі")
+    if wanted and not shown.empty:
+        shown = shown[shown["freshness"].astype(str).isin(wanted)]
+    if shown.empty:
+        st.caption("Немає рядків за цим фільтром.")
+        _open_cache_dialog()
+        return
+
+    shown = shown.reset_index(drop=True)
+    shown["freshness"] = shown["freshness"].map(lambda s: _FRESH_BADGE.get(str(s), str(s)))
+    shown["actions"] = [row_cache_actions(int(n)) for n in shown["klines_1m"]]
+    st.session_state.cache_table_symbols = shown["symbol"].astype(str).tolist()
+
+    event = st.dataframe(
+        shown,
+        hide_index=True,
+        height="content",
+        on_select="rerun",
+        selection_mode="multi-row",
+        key="cache_inv_table",
+        column_config={
+            "symbol": st.column_config.TextColumn("Символ", pinned=True),
+            "klines_1m": st.column_config.NumberColumn("Klines 1m", format="%d"),
+            "last_1m": st.column_config.DatetimeColumn("Останній 1m", format="YYYY-MM-DD HH:mm"),
+            "span_days": st.column_config.NumberColumn("Span, дні", format="%.1f"),
+            "age_hours": None,
+            "age_label": st.column_config.TextColumn("Вік"),
+            "freshness": st.column_config.MarkdownColumn("Свіжість"),
+            "intervals": st.column_config.TextColumn("Інтервали"),
+            "n_intervals": st.column_config.NumberColumn("TF", format="%d"),
+            "funding": st.column_config.NumberColumn("Funding", format="%d"),
+            "funding_last": st.column_config.DatetimeColumn("Funding last", format="YYYY-MM-DD HH:mm"),
+            "agg_trades": st.column_config.NumberColumn("aggTrades", format="%d"),
+            "book_ticker": st.column_config.NumberColumn("Book ticker", format="%d"),
+            "actions": st.column_config.ButtonColumn(
+                "Дії",
+                help="Оновити хвіст, розширити історію або видалити parquet-файли символу.",
+                on_click=_on_cache_row_action,
+                key="cache_row_action",
+            ),
+        },
+    )
+    selection = getattr(event, "selection", None)
+    selected_idx = list(getattr(selection, "rows", []) or [])
+    selected = [str(shown.iloc[i]["symbol"]) for i in selected_idx if 0 <= i < len(shown)]
+
+    if selected:
+        st.caption(f"Вибрано: {', '.join(selected)}")
+        with st.container(horizontal=True):
+            if st.button("Оновити", icon=":material/download:", key="cache_bulk_refresh"):
+                _set_cache_pending("refresh", selected)
+            if st.button("Розширити діапазон", icon=":material/calendar_month:", key="cache_bulk_expand"):
+                _set_cache_pending("expand", selected)
+            if st.button("Видалити", icon=":material/delete:", key="cache_bulk_delete"):
+                _set_cache_pending("delete", selected)
+    else:
+        st.caption("Позначте рядки для масових дій або відкрийте меню в колонці «Дії».")
+
+    _open_cache_dialog()
 
 
 @st.cache_data(ttl="30s", max_entries=4)
@@ -112,30 +386,12 @@ st.dataframe(
 )
 
 st.header(":material/database: Свіжість кешу")
-st.caption("Span і вік останнього 1m бара. Застарілий кеш = lookahead-ризик на «сьогоднішніх» висновках.")
-fresh_map = {"fresh": "свіжий", "aging": "старіє", "stale": "застарілий", "missing": "немає", "future": "майбутнє"}
-inv_view = inv.copy()
-if not inv_view.empty:
-    inv_view["freshness"] = inv_view["freshness"].map(lambda s: fresh_map.get(str(s), str(s)))
-st.dataframe(
-    inv_view,
-    hide_index=True,
-    column_config={
-        "symbol": st.column_config.TextColumn("Символ", pinned=True),
-        "klines_1m": st.column_config.NumberColumn("Klines 1m", format="%d"),
-        "last_1m": st.column_config.DatetimeColumn("Останній 1m", format="YYYY-MM-DD HH:mm"),
-        "span_days": st.column_config.NumberColumn("Span, дні", format="%.1f"),
-        "age_hours": None,
-        "age_label": st.column_config.TextColumn("Вік"),
-        "freshness": st.column_config.TextColumn("Свіжість"),
-        "intervals": st.column_config.TextColumn("Інтервали"),
-        "n_intervals": st.column_config.NumberColumn("TF", format="%d"),
-        "funding": st.column_config.NumberColumn("Funding", format="%d"),
-        "funding_last": st.column_config.DatetimeColumn("Funding last", format="YYYY-MM-DD HH:mm"),
-        "agg_trades": st.column_config.NumberColumn("aggTrades", format="%d"),
-        "book_ticker": st.column_config.NumberColumn("Book ticker", format="%d"),
-    },
+st.caption(
+    "Span і вік останнього 1m бара. Позначте рядки для масових дій або меню «Дії» в рядку. "
+    "Застарілий кеш = lookahead-ризик на «сьогоднішніх» висновках."
 )
+st.session_state.setdefault("cache_pending", None)
+_cache_manager(inv)
 
 st.header(":material/monitoring: Paper pairs")
 if _PAPER_DB.exists():
