@@ -682,7 +682,7 @@ class TestTelegramConfig:
 
         monkeypatch.setattr(tg, "get_settings", lambda: Settings(telegram_bot_token="tok", telegram_chat_id="123"))
         assert tg._creds() == ("tok", "123")
-        monkeypatch.setattr(tg, "get_settings", lambda: Settings())
+        monkeypatch.setattr(tg, "get_settings", lambda: Settings(telegram_bot_token="", telegram_chat_id=""))
         assert tg._creds() is None
 
 

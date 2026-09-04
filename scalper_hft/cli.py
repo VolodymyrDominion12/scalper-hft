@@ -113,6 +113,11 @@ def cmd_download(args: argparse.Namespace) -> None:
 
 
 def cmd_backtest(args: argparse.Namespace) -> None:
+    if getattr(args, "enqueue", False):
+        from scalper_hft.research.job_handlers import payload_from_backtest_cli
+
+        _enqueue_job("backtest", payload_from_backtest_cli(args))
+        return
     from scalper_hft.backtest.execution import CostModel
     from scalper_hft.backtest.router import run_strategy_backtest
     from scalper_hft.config import get_settings
@@ -704,6 +709,11 @@ def cmd_arb(args: argparse.Namespace) -> None:
 
 def cmd_pairs(args: argparse.Namespace) -> None:
     """Статистичний арбітраж пар (BTC/ETH/SOL перпи)."""
+    if getattr(args, "enqueue", False):
+        from scalper_hft.research.job_handlers import payload_from_pairs_cli
+
+        _enqueue_job("pairs", payload_from_pairs_cli(args))
+        return
     from scalper_hft.backtest.execution import CostModel
     from scalper_hft.backtest.pairs import run_pairs_backtest
     from scalper_hft.config import get_settings
@@ -1334,7 +1344,105 @@ def cmd_dashboard(args: argparse.Namespace) -> None:
     cmd = [sys.executable, "-m", "streamlit", "run", str(script)]
     if args.port is not None:
         cmd.extend(["--server.port", str(args.port)])
-    raise SystemExit(subprocess.call(cmd))
+    worker_proc = None
+    if not getattr(args, "no_worker", False):
+        from scalper_hft.research.jobs import JobStore
+
+        with JobStore() as store:
+            alive = store.worker_is_alive()
+        if not alive:
+            repo = Path(__file__).resolve().parent.parent
+            worker_proc = subprocess.Popen(
+                [sys.executable, "-m", "scalper_hft.cli", "job", "worker", "--jobs", "1"],
+                cwd=str(repo),
+            )
+            logger.info("Запущено research worker pid=%s", worker_proc.pid)
+    try:
+        raise SystemExit(subprocess.call(cmd))
+    finally:
+        if worker_proc is not None:
+            worker_proc.terminate()
+            try:
+                worker_proc.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                worker_proc.kill()
+
+
+def _enqueue_job(kind: str, params: dict, *, force: bool = False) -> None:
+    from scalper_hft.research.jobs import JobStore
+
+    with JobStore() as store:
+        job = store.submit(kind, params, force=force)
+        print(f"job id={job.id} kind={job.kind} status={job.status} fp={job.short_fp}")
+        if job.status == "succeeded" and not force:
+            print(f"уже виконано з цими параметрами; повтор — job rerun {job.id}")
+        if not store.worker_is_alive():
+            print("воркер не запущений: uv run python -m scalper_hft.cli job worker --jobs 2")
+
+
+def cmd_job(args: argparse.Namespace) -> None:
+    from scalper_hft.research.jobs import JobStore
+
+    action = args.job_cmd
+    if action == "worker":
+        from scalper_hft.research.job_worker import spawn_workers
+
+        spawn_workers(max(1, int(args.jobs)))
+        return
+    with JobStore() as store:
+        if action == "list":
+            jobs = store.list_jobs(limit=int(args.limit))
+            if not jobs:
+                print("черга порожня")
+                return
+            rows = [
+                {
+                    "id": j.id,
+                    "kind": j.kind,
+                    "status": j.status,
+                    "fp": j.short_fp,
+                    "progress": f"{j.progress_done}/{j.progress_total}" if j.progress_total else "",
+                    "error": (j.error or "")[:60],
+                }
+                for j in jobs
+            ]
+            print(pd.DataFrame(rows).to_markdown(index=False))
+            print("воркер:", "живий" if store.worker_is_alive() else "не запущений")
+            return
+        if action == "submit":
+            import json
+
+            params = json.loads(args.params)
+            if not isinstance(params, dict):
+                logger.error("--params має бути JSON-об'єктом")
+                sys.exit(1)
+            job = store.submit(args.kind, params, force=bool(args.force))
+            print(f"job id={job.id} kind={job.kind} status={job.status} fp={job.short_fp}")
+            return
+        job_id = int(args.id)
+        job = store.get(job_id)
+        if job is None:
+            logger.error("немає job id=%s", job_id)
+            sys.exit(1)
+        if action == "status":
+            print(
+                f"id={job.id} kind={job.kind} status={job.status} fp={job.fingerprint}\n"
+                f"progress={job.progress_done}/{job.progress_total} pid={job.pid}\n"
+                f"created={job.created_at} started={job.started_at} finished={job.finished_at}\n"
+                f"error={job.error}"
+            )
+            tail = store.tail_log(job.id)
+            if tail:
+                print("--- log ---")
+                print(tail)
+            return
+        if action == "cancel":
+            store.request_cancel(job_id)
+            print(f"cancel requested id={job_id}")
+            return
+        if action == "rerun":
+            job = store.submit(job.kind, job.params, force=True)
+            print(f"requeued id={job.id} status={job.status}")
 
 
 def cmd_sweep(args: argparse.Namespace) -> None:
@@ -1343,24 +1451,33 @@ def cmd_sweep(args: argparse.Namespace) -> None:
     База (1m) качається один раз на символ; решта таймфреймів — ресемплінг
     з кешу (parquet або PostgreSQL), без повторних звернень до Binance.
     """
+    if getattr(args, "enqueue", False):
+        from scalper_hft.research.job_handlers import payload_from_sweep_cli
+
+        _enqueue_job("sweep", payload_from_sweep_cli(args))
+        return
+    from scalper_hft.research.sweep_store import SweepStore
     from scalper_hft.validation.sweep import DEFAULT_INTERVALS, run_sweep, save_sweep_report
 
     strategies = [s.strip() for s in args.strategies.split(",") if s.strip()] if args.strategies else None
     symbols = [s.strip() for s in args.symbols.split(",") if s.strip()] if args.symbols else None
     intervals = [s.strip() for s in args.intervals.split(",") if s.strip()] if args.intervals else DEFAULT_INTERVALS
 
-    df = run_sweep(
-        strategies=strategies,
-        symbols=symbols,
-        intervals=intervals,
-        days=args.days,
-        base_interval=args.base or "1m",
-        mode=args.mode,
-        train_bars=args.train,
-        test_bars=args.test,
-        workers=args.workers,
-        include_slow=args.all,
-    )
+    with SweepStore("results/sweep.db") as store:
+        df = run_sweep(
+            strategies=strategies,
+            symbols=symbols,
+            intervals=intervals,
+            days=args.days,
+            base_interval=args.base or "1m",
+            mode=args.mode,
+            train_bars=args.train,
+            test_bars=args.test,
+            workers=args.workers,
+            include_slow=args.all,
+            store=store,
+            resume=bool(getattr(args, "resume", True)),
+        )
 
     out_csv = Path(args.out) if args.out else Path("results/sweep.csv")
     out_md = out_csv.with_suffix(".md")
@@ -1498,6 +1615,7 @@ def main(argv: list[str] | None = None) -> None:
         help="Тип барів для бектесту (time, dollar, volume). Для не-time використовується aggTrades",
     )
     p.add_argument("--bar-threshold", type=float, default=100000.0, help="Поріг для об'ємних або доларових барів")
+    p.add_argument("--enqueue", action="store_true", help="Поставити в чергу jobs.sqlite і вийти (не рахувати тут)")
     p.set_defaults(func=cmd_backtest)
 
     p = sub.add_parser("plot", help="Інтерактивний HTML-графік бектесту (свічки+індикатори+угоди+SL/TP)")
@@ -1580,6 +1698,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument(
         "--use-kalman", action="store_true", help="Динамічний Kalman hedge ratio (дефолт off до OOS bake-off)"
     )
+    p.add_argument("--enqueue", action="store_true", help="Поставити в чергу jobs.sqlite і вийти")
     p.set_defaults(func=cmd_pairs)
 
     p = sub.add_parser("pairs-portfolio", help="Бектест портфеля валідованих пар")
@@ -1769,7 +1888,26 @@ def main(argv: list[str] | None = None) -> None:
 
     p = sub.add_parser("dashboard", help="Запуск Streamlit-дашборду (інтерпретатор цього venv)")
     p.add_argument("--port", type=int, default=None, help="Порт Streamlit (за замовч. 8501)")
+    p.add_argument("--no-worker", action="store_true", help="Не піднімати research worker разом із дашбордом")
     p.set_defaults(func=cmd_dashboard)
+
+    job_p = sub.add_parser("job", help="Черга дослідницьких задач (SQLite + worker-процеси)")
+    job_sub = job_p.add_subparsers(dest="job_cmd", required=True)
+    jw = job_sub.add_parser("worker", help="Довгий процес: claim і виконання job")
+    jw.add_argument("--jobs", type=int, default=1, help="Кількість worker-процесів")
+    jl = job_sub.add_parser("list", help="Список задач")
+    jl.add_argument("--limit", type=int, default=50)
+    js = job_sub.add_parser("submit", help="Поставити job з JSON params")
+    js.add_argument("kind", choices=["backtest", "pairs", "sweep"])
+    js.add_argument("--params", default="{}", help="JSON-об'єкт параметрів")
+    js.add_argument("--force", action="store_true", help="Перезапустити навіть succeeded")
+    jst = job_sub.add_parser("status", help="Статус і хвіст логу")
+    jst.add_argument("id", type=int)
+    jc = job_sub.add_parser("cancel", help="Скасувати queued/running")
+    jc.add_argument("id", type=int)
+    jr = job_sub.add_parser("rerun", help="Інвалідувати артефакти і поставити в чергу знову")
+    jr.add_argument("id", type=int)
+    job_p.set_defaults(func=cmd_job)
 
     p = sub.add_parser(
         "sweep",
@@ -1787,6 +1925,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--all", action="store_true", help="Включити ML-стратегію та ensemble (повільно)")
     p.add_argument("--out", default=None, help="Шлях CSV-результату (за замовч. results/sweep.csv)")
     p.add_argument("--notify", action="store_true", help="Telegram-сповіщення топ-результату")
+    p.add_argument("--resume", dest="resume", action="store_true", default=True, help="Пропускати вже ok клітинки")
+    p.add_argument("--no-resume", dest="resume", action="store_false", help="Перерахувати всі клітинки")
+    p.add_argument("--enqueue", action="store_true", help="Поставити sweep у чергу jobs.sqlite і вийти")
     p.set_defaults(func=cmd_sweep)
 
     args = parser.parse_args(argv)

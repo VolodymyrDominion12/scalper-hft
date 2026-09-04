@@ -19,6 +19,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from scalper_hft.app_pages._common import SYMBOLS
 from scalper_hft.config import get_settings
+from scalper_hft.research.jobs import DEFAULT_JOBS_PATH, JobStore
 from scalper_hft.research.sweep_store import SweepStore
 
 settings = get_settings()
@@ -83,25 +84,27 @@ with tabs[0]:
                 return pd.DataFrame()
 
         if run_sweep_btn and sel_strats and sel_symbols and sel_ivs:
-            from scalper_hft.validation.sweep import run_sweep
-
-            with st.spinner(f"Sweep {total_cells} клітинок..."):
-                store = SweepStore(_SWEEP_DB)
-                df_sw = run_sweep(
-                    strategies=sel_strats,
-                    symbols=sel_symbols,
-                    intervals=sel_ivs,
-                    days=sel_days,
-                    mode=sel_mode,
-                    workers=sel_workers,
-                    enable_trace=sel_trace,
-                    store=store,
-                    resume=sel_resume,
-                )
-                store.close()
-            st.cache_data.clear()
-            ok = df_sw[df_sw.get("status", "ok") == "ok"] if "status" in df_sw.columns else df_sw
-            st.success(f"Готово: {len(ok)} / {len(df_sw)} клітинок успішно")
+            payload = {
+                "strategies": list(sel_strats),
+                "symbols": list(sel_symbols),
+                "intervals": list(sel_ivs),
+                "days": int(sel_days),
+                "mode": sel_mode,
+                "workers": int(sel_workers),
+                "resume": bool(sel_resume),
+                "enable_trace": bool(sel_trace),
+                "include_slow": False,
+                "base_interval": "1m",
+                "train_bars": 2000,
+                "test_bars": 500,
+            }
+            with JobStore(DEFAULT_JOBS_PATH) as js:
+                job = js.submit("sweep", payload)
+                alive = js.worker_is_alive()
+            st.success(f"Sweep у черзі як задача #{job.id} ({job.status})")
+            if not alive:
+                st.warning("Воркер не запущений — `uv run python -m scalper_hft.cli job worker`")
+            st.page_link("app_pages/jobs.py", label="Відкрити чергу задач", icon=":material/pending_actions:")
 
         # Завантажити для відображення
         df_all = _load_sweep_df()

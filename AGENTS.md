@@ -24,6 +24,7 @@
 - `scalper_hft/live/` — paper/live трейдер, pairs runner, reconciliation.
 - `scalper_hft/ml/` — triple-barrier, LightGBM, bet sizing, feature importance.
 - `scalper_hft/portfolio/` — ERC; risk budget (модуль, не в live-циклі).
+- `scalper_hft/research/` — черга задач (`jobs.py`, worker), sweep store, filter trace.
 - `docs/` — RESEARCH.md (web-дослідження), book_notes.md (книга), reports/ (звіти), DEPLOY_PLAN.md (research локально / робот на VPS).
 - `skills/` — процедури для агентів.
 - `.mcp/mcp-config.md` — MCP-сервери.
@@ -35,5 +36,8 @@ uv run python -m scalper_hft.cli pairs --strategy pairs_arb --leg1 XRPUSDT --leg
 uv run python -m scalper_hft.cli overfit --strategy pairs_arb --symbol BTCUSDT --interval 1h --days 90
 uv run python -m scalper_hft.cli cscv --strategy pairs_arb --symbol BTCUSDT --interval 1h --days 90
 uv run python -m scalper_hft.cli report --strategy pairs_arb --symbol BTCUSDT --interval 1h --days 90
+uv run python -m scalper_hft.cli job worker --jobs 2
+uv run python -m scalper_hft.cli backtest --strategy pairs_arb --symbol BTCUSDT --interval 1h --days 90 --enqueue
+uv run python -m scalper_hft.cli job list
 uv run python -m scalper_hft.cli record-bookticker --symbol BTCUSDT --minutes 60
 ```

@@ -7,11 +7,9 @@
 
 Сторінки (app_pages/):
     - «Моніторинг» — кеш даних по символах та paper-результати;
-    - «Бектест» — запуск бектесту, інтерактивний графік угод (свічки +
-      індикатори + точки входу/виходу + SL/TP, клік по маркеру → деталі
-      угоди) та діагностика (cohort / stress / capacity);
-    - «Дослідження» — масовий sweep, filter attribution, порівняння
-      equity кривих, MAE/MFE аналіз, hourly heatmap, топ комбінації.
+    - «Бектест» — постановка бектесту в чергу, інтерактивний графік угод;
+    - «Дослідження» — масовий sweep (enqueue), filter attribution, порівняння;
+    - «Задачі» — черга job, логи, cancel / rerun.
 """
 
 from __future__ import annotations
@@ -34,5 +32,6 @@ pages = [
     st.Page("app_pages/overview.py", title="Моніторинг", icon=":material/monitoring:", default=True),
     st.Page("app_pages/backtest.py", title="Бектест", icon=":material/query_stats:"),
     st.Page("app_pages/research.py", title="Дослідження", icon=":material/science:"),
+    st.Page("app_pages/jobs.py", title="Задачі", icon=":material/pending_actions:"),
 ]
 st.navigation(pages).run()

@@ -157,5 +157,46 @@ def test_save_sweep_report(tmp_path) -> None:
     assert len(from_csv) == len(res)
 
 
+def test_sweep_resume_skips_ok_cells(tmp_path) -> None:
+    from scalper_hft.research.sweep_store import SweepStore
+
+    calls: list[tuple] = []
+    inner = _make_data
+
+    def counting_provider(symbol, interval, days):
+        calls.append((symbol, interval))
+        return inner(symbol, interval, days)
+
+    db = tmp_path / "sweep.db"
+    strategies = ["mean_reversion"]
+    symbols = ["BTCUSDT"]
+    intervals = ["1m", "5m"]
+    with SweepStore(db) as store:
+        first = run_sweep(
+            strategies=strategies,
+            symbols=symbols,
+            intervals=intervals,
+            days=2,
+            data_provider=counting_provider,
+            store=store,
+            resume=True,
+        )
+    n_first = len(calls)
+    assert n_first == 2
+    assert (first["status"] == "ok").all()
+    calls.clear()
+    with SweepStore(db) as store:
+        run_sweep(
+            strategies=strategies,
+            symbols=symbols,
+            intervals=intervals,
+            days=2,
+            data_provider=counting_provider,
+            store=store,
+            resume=True,
+        )
+    assert calls == []
+
+
 def test_default_intervals_include_user_requested() -> None:
     assert {"1m", "5m", "15m", "30m", "1h"} <= set(DEFAULT_INTERVALS)

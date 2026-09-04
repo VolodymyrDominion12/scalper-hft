@@ -35,6 +35,7 @@ Research & Validation:
 | `ml` | LightGBM meta-labeling, bet sizing, sample weights, MDI/MDA/SFI, CFI, LOB models | `labeling.py`, `trainer.py`, `bet_sizing.py`, `features.py`, `feature_importance.py`, `clustered_importance.py`, `sample_weights.py`, `frac_diff.py`, `lob_models.py`, `train_lob.py` |
 | `live` | Paper/testnet/live трейдер, bookTicker/depth recorder, exit ladders, reconciliation & kill-switch, SQLite | `account.py`, `trader.py`, `pairs_runner.py`, `paper_runner.py`, `paper_replay.py`, `reconcile.py`, `bookticker_recorder.py`, `exit_ladders.py`, `fills.py`, `is_log.py`, `store.py`, `telegram.py` |
 | `mcp_trading.py` | MCP (Model Context Protocol) сервер для AI-асистентів | `mcp_trading.py` |
+| `research` | Sweep store, черга дослідницьких задач (SQLite + worker-процеси, без брокера) | `jobs.py`, `job_worker.py`, `job_handlers.py`, `sweep_store.py` |
 | `dashboard.py` | Streamlit аналітичний та моніторинговий дашборд | `dashboard.py` |
 | `cli.py` | Повний CLI-інтерфейс (30+ команд) | `cli.py` |
 

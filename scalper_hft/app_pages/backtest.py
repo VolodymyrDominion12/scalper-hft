@@ -14,12 +14,13 @@ import streamlit as st
 from scalper_hft.app_pages._common import PAIR_CHOICES, SYMBOLS
 from scalper_hft.backtest.engine import run_backtest
 from scalper_hft.backtest.execution import CostModel
-from scalper_hft.backtest.pairs import run_pairs_backtest
 from scalper_hft.config import get_settings
 from scalper_hft.data.access import klines_from_store
 from scalper_hft.data.storage import load_funding, load_trades
 from scalper_hft.features.indicators import add_standard_features
 from scalper_hft.research.dashboard_brief import dsr_verdict, hurdle_note
+from scalper_hft.research.job_artifacts import load_backtest_result, load_pairs_result
+from scalper_hft.research.jobs import DEFAULT_JOBS_PATH, JobStore, artifacts_dir, fingerprint
 from scalper_hft.research.strategy_book import select_label
 from scalper_hft.strategies import REGISTRY, get_strategy
 from scalper_hft.validation.deflated_sharpe import deflated_sharpe_ratio, estimate_n_trials
@@ -53,6 +54,7 @@ else:
     interval = st.sidebar.selectbox("Таймфрейм", ["1m", "5m", "15m", "1h"], index=1)
 days = st.sidebar.slider("Глибина даних, днів", 7, 365, 90 if is_pairs else 30)
 run_bt = st.sidebar.button("▶ Запустити бектест")
+run_rerun = st.sidebar.button("Перезапустити задачу")
 run_diag = st.sidebar.button("🩺 Діагностика (cohort/stress)")
 
 
@@ -158,67 +160,100 @@ def _render_bt_chart(view: dict) -> None:
 
 
 st.header("Запуск бектесту")
-if run_bt:
-    with st.spinner("Бектест..."):
-        cost = CostModel(
-            maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac
-        )
-        strategy = get_strategy(strategy_name)
-        if is_pairs:
-            st.session_state.pop("bt_view", None)
-            d1 = klines_from_store(leg1, interval, days)
-            d2 = klines_from_store(leg2, interval, days)
-            if d1 is None or d2 is None or len(d1) < 100 or len(d2) < 100:
-                st.warning(f"Немає даних {leg1}/{leg2} {interval} — download спершу")
-            else:
-                f1 = load_funding(data_dir / f"{leg1}_funding.parquet")
-                f2 = load_funding(data_dir / f"{leg2}_funding.parquet")
-                pairs_res = run_pairs_backtest(
-                    d1,
-                    d2,
-                    strategy,
-                    f1,
-                    f2,
-                    position_pct=settings.pair_notional_pct,
-                    cost=cost,
-                    maker_execution=True,
-                )
-                m = pairs_res.metrics
-                with st.container(horizontal=True):
-                    st.metric("Дохідність", f"{m.total_return:.2%}", border=True)
-                    st.metric("Sharpe (год.)", f"{m.sharpe_hourly:.2f}", border=True)
-                    st.metric("Угоди", f"{m.n_trades}", border=True)
-                    st.metric("Max DD", f"{m.max_drawdown:.2%}", border=True, delta_color="inverse")
-                    st.metric("Profit factor", f"{m.profit_factor:.2f}", border=True)
-                if m.n_trades:
-                    st.caption(hurdle_note(m.avg_trade_return, cost.round_trip_maker(), n_legs=2))
+if is_pairs:
+    _kind = "pairs"
+    _payload = {
+        "strategy": strategy_name,
+        "leg1": leg1,
+        "leg2": leg2,
+        "interval": interval,
+        "days": days,
+        "params": {},
+        "maker": True,
+        "position_pct": settings.pair_notional_pct,
+        "base_interval": "1m",
+    }
+    _title = f"pairs_arb · {leg1}/{leg2} {interval} maker"
+else:
+    _kind = "backtest"
+    _payload = {
+        "strategy": strategy_name,
+        "symbol": symbol,
+        "interval": interval,
+        "days": days,
+        "params": {},
+        "maker": False,
+        "trace": False,
+        "base_interval": "1m",
+        "breakeven_gate": False,
+    }
+    _title = f"{strategy_name} · {symbol} {interval}"
 
-                fig = go.Figure(
-                    go.Scatter(x=pairs_res.equity.index, y=pairs_res.equity.values, mode="lines", name="Equity")
-                )
-                fig.update_layout(title=f"pairs_arb · {leg1}/{leg2} {interval} maker", height=350)
-                st.plotly_chart(fig, width="stretch")
-                with st.expander("Повні метрики"):
-                    st.text(m.summary())
+_fp = fingerprint(_kind, _payload)
+with JobStore(DEFAULT_JOBS_PATH) as _js:
+    _job = _js.get_by_fingerprint(_fp)
+    _alive = _js.worker_is_alive()
+
+if run_bt:
+    with JobStore(DEFAULT_JOBS_PATH) as _js:
+        _job = _js.submit(_kind, _payload)
+    st.rerun()
+if run_rerun:
+    with JobStore(DEFAULT_JOBS_PATH) as _js:
+        _job = _js.submit(_kind, _payload, force=True)
+    st.rerun()
+
+if not _alive:
+    st.warning("Research worker не запущений. `uv run python -m scalper_hft.cli job worker`")
+st.page_link("app_pages/jobs.py", label="Черга задач", icon=":material/pending_actions:")
+
+if _job is None:
+    st.caption("Ще немає задачі з цими параметрами.")
+elif _job.status in {"queued", "running"}:
+    prog = f"{_job.progress_done}/{_job.progress_total}" if _job.progress_total else _job.status
+    st.info(f"Задача #{_job.id} · {_job.status} · {prog}")
+elif _job.status == "failed":
+    st.error(f"Задача #{_job.id} провалилась: {_job.error}")
+elif _job.status == "cancelled":
+    st.warning(f"Задача #{_job.id} скасована.")
+elif _job.status == "succeeded":
+    _job_dir = artifacts_dir(DEFAULT_JOBS_PATH, _job.id)
+    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    if is_pairs:
+        st.session_state.pop("bt_view", None)
+        try:
+            pairs_res = load_pairs_result(_job_dir)
+        except FileNotFoundError:
+            st.warning("Артефакти ще не записані.")
         else:
-            df = klines_from_store(symbol, interval, days)
-            if df is None or len(df) < 100:
-                st.warning(f"Немає даних {symbol} {interval} — запустіть download спершу")
+            m = pairs_res.metrics
+            with st.container(horizontal=True):
+                st.metric("Дохідність", f"{m.total_return:.2%}", border=True)
+                st.metric("Sharpe (год.)", f"{m.sharpe_hourly:.2f}", border=True)
+                st.metric("Угоди", f"{m.n_trades}", border=True)
+                st.metric("Max DD", f"{m.max_drawdown:.2%}", border=True, delta_color="inverse")
+                st.metric("Profit factor", f"{m.profit_factor:.2f}", border=True)
+            if m.n_trades:
+                st.caption(hurdle_note(m.avg_trade_return, cost.round_trip_maker(), n_legs=2))
+            fig = go.Figure(
+                go.Scatter(x=pairs_res.equity.index, y=pairs_res.equity.values, mode="lines", name="Equity")
+            )
+            fig.update_layout(title=_title, height=350)
+            st.plotly_chart(fig, width="stretch")
+            with st.expander("Повні метрики"):
+                st.text(m.summary())
+    else:
+        strategy = get_strategy(strategy_name)
+        df = klines_from_store(symbol, interval, days)
+        try:
+            res = load_backtest_result(_job_dir)
+        except FileNotFoundError:
+            st.warning("Артефакти ще не записані.")
+        else:
+            if df is None or len(df) < 2:
+                st.warning(f"Немає даних {symbol} {interval} для графіка — download спершу")
             else:
-                trades = (
-                    load_trades(data_dir / f"{symbol}_aggTrades.parquet")
-                    if getattr(strategy, "needs_trades", False)
-                    else None
-                )
-                funding = (
-                    load_funding(data_dir / f"{symbol}_funding.parquet")
-                    if getattr(strategy, "needs_funding", False)
-                    else None
-                )
-                res = run_backtest(
-                    df, strategy, cost=cost, trades=trades, funding=funding, position_pct=settings.position_pct
-                )
-                st.session_state["bt_view"] = {"df": df, "res": res, "title": f"{strategy_name} · {symbol} {interval}"}
+                st.session_state["bt_view"] = {"df": df, "res": res, "title": _title}
                 st.session_state.pop("bt_sel_ts", None)
                 m = res.metrics
                 ret = res.equity.pct_change().dropna()
@@ -244,6 +279,11 @@ if run_bt:
                     st.caption(hurdle_note(m.avg_trade_return, cost.round_trip_maker(), n_legs=1))
                 with st.expander("Повні метрики", icon=":material/analytics:"):
                     st.text(m.summary())
+
+if st.session_state.get("bt_fp") != _fp:
+    if not (_job and _job.status == "succeeded" and not is_pairs):
+        st.session_state.pop("bt_view", None)
+st.session_state["bt_fp"] = _fp
 
 if st.session_state.get("bt_view") is not None:
     _render_bt_chart(st.session_state["bt_view"])
@@ -318,30 +358,13 @@ if st.session_state.get("bt_view") is not None:
                     "Трейсинг фільтрів не активовано. Запустіть бектест з параметром `trace=True` "
                     "або перейдіть на сторінку **🔬 Дослідження → Filter Attribution**."
                 )
-                if st.button("🔬 Запустити з трейсингом", key="bt_run_trace"):
-                    from scalper_hft.backtest.engine import run_backtest
-                    from scalper_hft.backtest.execution import CostModel
-
-                    strat_name = st.session_state["bt_view"].get("title", "").split(" ")[0]
-                    try:
-                        from scalper_hft.strategies import get_strategy
-
-                        strat2 = get_strategy(strat_name)
-                        cost2 = CostModel(
-                            maker_fee=settings.maker_fee,
-                            taker_fee=settings.taker_fee,
-                            slippage_frac=settings.slippage_frac,
-                        )
-                        with st.spinner("Бектест з трейсингом..."):
-                            res2 = run_backtest(
-                                bt_df, strat2, cost=cost2, position_pct=settings.position_pct, trace=True
-                            )
-                        view2 = dict(st.session_state["bt_view"])
-                        view2["res"] = res2
-                        st.session_state["bt_view"] = view2
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Помилка: {e}")
+                if st.button("🔬 Поставити бектест з трейсингом у чергу", key="bt_run_trace"):
+                    trace_payload = dict(_payload)
+                    trace_payload["trace"] = True
+                    with JobStore(DEFAULT_JOBS_PATH) as _js:
+                        _js.submit("backtest", trace_payload)
+                    st.info("Задачу з трейсингом поставлено в чергу (інший fingerprint).")
+                    st.rerun()
 
         with anal_tabs[2]:
             if bt_res.trades is not None and not bt_res.trades.empty:

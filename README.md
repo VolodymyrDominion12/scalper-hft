@@ -117,9 +117,10 @@ uv venv .venv && uv pip install -e ".[optim,ml,dev]"
 | Команда | Призначення |
 |---|---|
 | `download` | klines / aggTrades / funding у кеш (`--trades-days` для aggTrades; `--vision` — data.binance.vision) |
-| `backtest` | бектест стратегії з комісіями та slippage; старші ТФ ресемпляться з 1m (`--no-derive` — нативний інтервал з біржі) |
+| `backtest` | бектест стратегії з комісіями та slippage; `--enqueue` — у чергу jobs.sqlite |
 | `plot` | **інтерактивний HTML-графік бектесту**: свічки + індикатори + точки входу/виходу + рівні SL/TP (Plotly, standalone, `--bars/--start/--end/--out`) |
-| `sweep` | **матричний прогон: всі стратегії × символи × таймфрейми** → `results/sweep.csv` (+`--mode walkforward`, `--workers`) |
+| `sweep` | **матричний прогон** → `results/sweep.db` (resume за замовч., `--no-resume`, `--enqueue`, `--workers`) |
+| `job` | черга research-задач: `worker` / `list` / `status` / `cancel` / `rerun` / `submit` |
 | `walkforward` | ковзні IS/OOS вікна — середній OOS Sharpe |
 | `optimize` | Optuna-пошук параметрів з purged CV цільовою функцією |
 | `overfit` | аудит: WF + sensitivity (плато vs пік) + Deflated Sharpe |
@@ -160,10 +161,9 @@ uv run python -m scalper_hft.cli dashboard
 Не запускайте системний / Anaconda `streamlit` з PATH — пакет `scalper_hft` там немає.
 Мультисторінка (`st.navigation`, сторінки у `scalper_hft/app_pages/`):
 - **Моніторинг** — кеш даних по символах, paper pairs (SQLite), paper-run CSV;
-- **Бектест** — запуск бектесту, інтерактивний графік угод (свічки +
-  індикатори + точки входу/виходу + SL/TP, **клік по маркеру → деталі
-  угоди**), таблиця угод, Deflated Sharpe, діагностика (cohort/stress/capacity);
-- **Дослідження** — sweep, filter attribution, порівняння equity, MAE/MFE, heatmap.
+- **Бектест** — постановка в чергу (не рахує в UI), графік з артефактів, діагностика;
+- **Дослідження** — enqueue sweep, filter attribution, порівняння equity, MAE/MFE, heatmap;
+- **Задачі** — черга job (`results/jobs.sqlite`), логи, cancel / rerun.
 
 ## Візуалізація бектестів (`scalper_hft/visualization/`)
 

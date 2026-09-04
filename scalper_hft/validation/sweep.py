@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from typing import Any
 
 import pandas as pd
@@ -216,6 +216,49 @@ def _build_cell_runner(
     return cell
 
 
+def execute_sweep_cell(
+    name: str,
+    symbol: str,
+    interval: str,
+    days: int,
+    base_interval: str,
+    mode: str,
+    train_bars: int,
+    test_bars: int,
+    cost: CostModel,
+    position_pct: float,
+    enable_trace: bool,
+    store_path: str | None,
+    data_provider: Callable[..., Any] | None,
+) -> SweepRow:
+    """Top-level клітинка для ProcessPool (picklable args)."""
+    cell = _build_cell_runner(
+        days=days,
+        base_interval=base_interval,
+        mode=mode,
+        train_bars=train_bars,
+        test_bars=test_bars,
+        cost=cost,
+        position_pct=position_pct,
+        data_provider=data_provider,
+        enable_trace=enable_trace,
+    )
+    try:
+        row = cell(name, symbol, interval)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Клітинка %s %s %s: %s", name, symbol, interval, exc)
+        row = SweepRow(
+            strategy=name, symbol=symbol, interval=interval, days=days, mode=mode, status="error", error=str(exc)
+        )
+    else:
+        row.days = days
+        row.mode = mode
+    if store_path:
+        with SweepStore(store_path) as store:
+            store.upsert(row)
+    return row
+
+
 def run_sweep(
     strategies: list[str] | None = None,
     symbols: list[str] | None = None,
@@ -232,12 +275,14 @@ def run_sweep(
     store: SweepStore | None = None,
     resume: bool = False,
     enable_trace: bool = False,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> pd.DataFrame:
     """Прогнати матрицю стратегій × символів × таймфреймів.
 
     store: SweepStore для persistence (upsert кожної клітинки).
     resume: якщо True і store задано — пропускати вже виконані комбінації.
     enable_trace: якщо True — збирати filter attribution для кожної клітинки.
+    on_progress: колбек (done, total) після кожної клітинки.
 
     Returns:
         DataFrame з рядками SweepRow (одна клітинка = один рядок).
@@ -274,17 +319,8 @@ def run_sweep(
                 download_funding(sym, days)
 
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
-    cell = _build_cell_runner(
-        days=days,
-        base_interval=base_interval,
-        mode=mode,
-        train_bars=train_bars,
-        test_bars=test_bars,
-        cost=cost,
-        position_pct=settings.position_pct,
-        data_provider=data_provider,
-        enable_trace=enable_trace,
-    )
+    store_path = str(store.path) if store is not None else None
+    position_pct = settings.position_pct
 
     all_cells = [(name, sym, iv) for sym in symbols for iv in intervals for name in strategies]
 
@@ -307,7 +343,6 @@ def run_sweep(
         len(all_cells),
     )
 
-    # -- tqdm progress bar (якщо встановлений) --------------------------------
     try:
         from tqdm import tqdm
 
@@ -315,37 +350,54 @@ def run_sweep(
     except ImportError:
         progress_iter = None
 
-    def _run_and_store(c: tuple) -> SweepRow:
-        """Виконати клітинку, зберегти у store, оновити прогрес."""
-        try:
-            row = cell(*c)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Клітинка %s %s %s: %s", *c, exc)
-            row = SweepRow(
-                strategy=c[0], symbol=c[1], interval=c[2], days=days, mode=mode, status="error", error=str(exc)
-            )
-        else:
-            row.days = days
-            row.mode = mode
-        if store is not None:
-            store.upsert(row)
+    def _after(_row: SweepRow, done: int) -> None:
         if progress_iter is not None:
             progress_iter.update(1)
-        return row
+        if on_progress is not None:
+            on_progress(done, total)
+
+    cell_kwargs: dict[str, Any] = {
+        "days": days,
+        "base_interval": base_interval,
+        "mode": mode,
+        "train_bars": train_bars,
+        "test_bars": test_bars,
+        "cost": cost,
+        "position_pct": position_pct,
+        "enable_trace": enable_trace,
+        "store_path": store_path,
+        "data_provider": data_provider,
+    }
 
     rows: list[SweepRow] = []
-    if workers and workers > 1:
-        with ThreadPoolExecutor(max_workers=workers) as ex:
-            futs = {ex.submit(_run_and_store, c): c for c in cells}
+    if workers and workers > 1 and cells:
+        # ProcessPool — CPU-bound pandas; ThreadPool лише коли data_provider
+        # не picklable / тести з інжектом даних.
+        pool_cls = ThreadPoolExecutor if data_provider is not None else ProcessPoolExecutor
+        with pool_cls(max_workers=workers) as ex:
+            futs = {ex.submit(execute_sweep_cell, c[0], c[1], c[2], **cell_kwargs): c for c in cells}
             for fut in as_completed(futs):
                 try:
                     rows.append(fut.result())
                 except Exception as exc:  # noqa: BLE001
                     c = futs[fut]
                     logger.warning("Future %s %s %s: %s", *c, exc)
+                    rows.append(
+                        SweepRow(
+                            strategy=c[0],
+                            symbol=c[1],
+                            interval=c[2],
+                            days=days,
+                            mode=mode,
+                            status="error",
+                            error=str(exc),
+                        )
+                    )
+                _after(rows[-1], len(rows))
     else:
         for c in cells:
-            rows.append(_run_and_store(c))
+            rows.append(execute_sweep_cell(c[0], c[1], c[2], **cell_kwargs))
+            _after(rows[-1], len(rows))
 
     if progress_iter is not None:
         progress_iter.close()
@@ -409,4 +461,12 @@ def save_sweep_report(df: pd.DataFrame, out_csv: str | None = None, out_md: str 
         logger.info("Sweep звіт: %s", out_md)
 
 
-__all__ = ["SweepRow", "SweepStore", "run_sweep", "save_sweep_report", "default_strategies", "DEFAULT_INTERVALS"]
+__all__ = [
+    "SweepRow",
+    "SweepStore",
+    "run_sweep",
+    "save_sweep_report",
+    "default_strategies",
+    "DEFAULT_INTERVALS",
+    "execute_sweep_cell",
+]

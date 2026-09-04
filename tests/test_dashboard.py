@@ -11,12 +11,30 @@ import pytest
 _REPO = Path(__file__).resolve().parents[1]
 
 
-def test_cli_dashboard_help() -> None:
+def test_cli_job_help() -> None:
     from scalper_hft.cli import main
 
     with pytest.raises(SystemExit) as ei:
-        main(["dashboard", "--help"])
+        main(["job", "--help"])
     assert ei.value.code == 0
+
+
+def test_sidebar_payload_fingerprint_stable() -> None:
+    from scalper_hft.research.jobs import fingerprint
+
+    payload = {
+        "strategy": "pairs_arb",
+        "leg1": "XRPUSDT",
+        "leg2": "BTCUSDT",
+        "interval": "1h",
+        "days": 90,
+        "params": {},
+        "maker": True,
+        "position_pct": 0.3,
+        "base_interval": "1m",
+    }
+    assert fingerprint("pairs", payload) == fingerprint("pairs", dict(payload))
+    assert fingerprint("pairs", payload) != fingerprint("pairs", {**payload, "days": 30})
 
 
 def test_streamlit_style_path_can_import_package() -> None:

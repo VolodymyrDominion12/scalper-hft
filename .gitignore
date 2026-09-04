@@ -29,3 +29,6 @@ docs/plots/
 .DS_Store
 
 *.dump
+
+.agents/skills/developing-with-streamlit
+.claude/skills/developing-with-streamlit
