@@ -232,3 +232,50 @@ def test_pairs_walk_forward_preserves_range():
     res = run_pairs_walk_forward(d1, d2, strat, train_bars=1500, test_bars=500, maker_execution=True)
     assert res["n_windows"] == 2
     assert "avg_oos_sharpe" in res
+
+
+def test_live_trader_cancel_all_pending_and_shutdown():
+    from unittest.mock import MagicMock
+
+    from scalper_hft.live.trader import PendingOrder
+
+    strat = _AlwaysLong()
+    trader = LiveTrader(strat, "BTCUSDT", "5m")
+    mock_client = MagicMock()
+    trader.client = mock_client
+
+    po1 = PendingOrder(
+        client_order_id="cid_1",
+        order_id="oid_1",
+        symbol="BTCUSDT",
+        side="buy",
+        size=0.01,
+        price=50000.0,
+        reduce_only=False,
+        kind="open",
+    )
+    po2 = PendingOrder(
+        client_order_id="cid_2",
+        order_id="oid_2",
+        symbol="BTCUSDT",
+        side="sell",
+        size=0.01,
+        price=51000.0,
+        reduce_only=True,
+        kind="close",
+    )
+    trader.pending_orders["cid_1"] = po1
+    trader.pending_orders["cid_2"] = po2
+
+    canceled = trader.cancel_all_pending(reason="shutdown_test")
+    assert canceled == 2
+    assert len(trader.pending_orders) == 0
+    assert mock_client.cancel_order.call_count == 2
+
+    # Тест shutdown в dry_run=False
+    import dataclasses
+
+    trader.settings = dataclasses.replace(trader.settings, dry_run=False)
+    trader.shutdown(reason="unit_test")
+    mock_client.cancel_all_orders.assert_called_once_with("BTCUSDT")
+

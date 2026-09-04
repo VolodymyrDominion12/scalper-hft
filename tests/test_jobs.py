@@ -221,3 +221,96 @@ def test_payload_from_cli_namespace() -> None:
     assert p["strategy"] == "mean_reversion"
     assert p["params"]["rsi_period"] == 7
     assert fingerprint("backtest", p) == fingerprint("backtest", dict(p))
+
+
+def test_prune_jobs_age_and_active_protection(tmp_path: Path) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from scalper_hft.research.jobs import artifacts_dir
+
+    store = _store(tmp_path)
+    # 1. Завершена стара задача (30 днів тому)
+    j1 = store.submit("backtest", {"strategy": "old_strat", "days": 1})
+    store.claim()
+    store.finish(j1.id, "succeeded")
+    old_ts = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+    store._conn.execute("UPDATE jobs SET finished_at=? WHERE id=?", (old_ts, j1.id))
+    art1 = artifacts_dir(store.path, j1.id)
+    art1.mkdir(parents=True)
+    (art1 / "equity.parquet").write_text("data", encoding="utf-8")
+
+    # 2. Завершена свіжа задача (1 день тому)
+    j2 = store.submit("backtest", {"strategy": "fresh_strat", "days": 1})
+    store.claim()
+    store.finish(j2.id, "succeeded")
+    fresh_ts = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    store._conn.execute("UPDATE jobs SET finished_at=? WHERE id=?", (fresh_ts, j2.id))
+    art2 = artifacts_dir(store.path, j2.id)
+    art2.mkdir(parents=True)
+    (art2 / "equity.parquet").write_text("data", encoding="utf-8")
+
+    # 3. Активна задача (running/queued), навіть якщо створена давно
+    j3 = store.submit("backtest", {"strategy": "running_strat", "days": 1})
+    store.claim()
+    store._conn.execute("UPDATE jobs SET created_at=? WHERE id=?", (old_ts, j3.id))
+
+    # Виконуємо prune з порогом 14 днів
+    stats = store.prune_jobs(days=14, status="all", dry_run=False)
+    assert stats.pruned_jobs == 1
+    assert stats.deleted_dirs == 1
+    assert stats.freed_bytes > 0
+
+    # j1 має бути видалена
+    assert store.get(j1.id) is None
+    assert not art1.exists()
+
+    # j2 має залишитись
+    assert store.get(j2.id) is not None
+    assert art2.exists()
+
+    # j3 (running) має залишитись
+    assert store.get(j3.id) is not None
+    store.close()
+
+
+def test_prune_jobs_dry_run_and_keep_records(tmp_path: Path) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from scalper_hft.research.jobs import artifacts_dir
+
+    store = _store(tmp_path)
+    j1 = store.submit("backtest", {"strategy": "test_strat", "days": 1})
+    store.claim()
+    store.finish(j1.id, "failed")
+    old_ts = (datetime.now(UTC) - timedelta(days=20)).isoformat()
+    store._conn.execute("UPDATE jobs SET finished_at=? WHERE id=?", (old_ts, j1.id))
+    art = artifacts_dir(store.path, j1.id)
+    art.mkdir(parents=True)
+    (art / "metrics.json").write_text("{}", encoding="utf-8")
+
+    # 1. Dry run не змінює нічого
+    dry_stats = store.prune_jobs(days=10, dry_run=True)
+    assert dry_stats.pruned_jobs == 1
+    assert store.get(j1.id) is not None
+    assert art.exists()
+
+    # 2. keep_records видаляє папку артефактів, але залишає запис у SQLite
+    keep_stats = store.prune_jobs(days=10, keep_records=True, dry_run=False)
+    assert keep_stats.pruned_jobs == 1
+    assert keep_stats.deleted_dirs == 1
+    assert not art.exists()
+    assert store.get(j1.id) is not None
+    store.close()
+
+
+def test_prune_jobs_cleans_orphaned_directories(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    orphan_dir = tmp_path / "jobs" / "99999"
+    orphan_dir.mkdir(parents=True)
+    (orphan_dir / "garbage.log").write_text("hello", encoding="utf-8")
+
+    stats = store.prune_jobs(days=0, dry_run=False)
+    assert stats.orphaned_dirs == 1
+    assert not orphan_dir.exists()
+    store.close()
+

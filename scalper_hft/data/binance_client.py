@@ -158,6 +158,15 @@ class BinanceClient:
     def cancel_order(self, order_id: str, symbol: str) -> dict[str, Any]:
         return self.exchange.cancel_order(order_id, symbol)
 
+    def cancel_all_orders(self, symbol: str | None = None) -> list[dict[str, Any]]:
+        """Скасувати всі робочі ордери на біржі (за символом або всі)."""
+        res = self.exchange.cancel_all_orders(symbol)
+        if isinstance(res, list):
+            return res
+        if isinstance(res, dict):
+            return [res]
+        return []
+
     def fetch_order(self, order_id: str, symbol: str) -> dict[str, Any]:
         """Статус ордера за id (для live maker-філів: заповнений/скасований)."""
         return self.exchange.fetch_order(order_id, symbol)

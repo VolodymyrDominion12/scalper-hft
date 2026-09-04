@@ -4,9 +4,57 @@ import json
 
 from scalper_hft.live.ws_user_stream import (
     BinanceUserDataStream,
+    ExponentialBackoff,
     OrderTradeEvent,
     parse_order_trade_update,
 )
+
+
+def test_exponential_backoff_progression():
+    eb = ExponentialBackoff(base_delay=1.0, max_delay=10.0, factor=2.0, jitter_ratio=0.1)
+    assert eb.attempts == 0
+    # First attempt: nominal 1.0, jitter [0.9, 1.1]
+    d1 = eb.next_delay()
+    assert 0.9 <= d1 <= 1.1
+    assert eb.attempts == 1
+
+    # Second attempt: nominal 2.0, jitter [1.8, 2.2]
+    d2 = eb.next_delay()
+    assert 1.8 <= d2 <= 2.2
+    assert eb.attempts == 2
+
+    # Third attempt: nominal 4.0, jitter [3.6, 4.4]
+    d3 = eb.next_delay()
+    assert 3.6 <= d3 <= 4.4
+
+    # Fourth attempt: nominal 8.0, jitter [7.2, 8.8]
+    d4 = eb.next_delay()
+    assert 7.2 <= d4 <= 8.8
+
+    # Fifth attempt: nominal capped at max_delay=10.0, jitter [9.0, 11.0]
+    d5 = eb.next_delay()
+    assert 9.0 <= d5 <= 11.0
+    assert eb.attempts == 5
+
+
+def test_exponential_backoff_reset():
+    eb = ExponentialBackoff(base_delay=2.0, max_delay=30.0, factor=2.0, jitter_ratio=0.0)
+    eb.next_delay()  # 2.0 -> next nominal 4.0
+    eb.next_delay()  # 4.0 -> next nominal 8.0
+    assert eb.attempts == 2
+    assert eb.current_delay == 8.0
+
+    eb.reset()
+    assert eb.attempts == 0
+    assert eb.current_delay == 2.0
+    assert eb.next_delay() == 2.0
+
+
+def test_user_data_stream_custom_backoff():
+    custom_backoff = ExponentialBackoff(base_delay=0.5, max_delay=5.0)
+    stream = BinanceUserDataStream(listen_key="test_key", backoff=custom_backoff)
+    assert stream.backoff is custom_backoff
+
 
 
 def test_parse_order_trade_update():
@@ -131,3 +179,19 @@ def test_listen_key_expired_regenerates() -> None:
     event = stream.handle_raw_message({"e": "listenKeyExpired", "E": 1})
     assert event is None
     assert stream.listen_key == "new_key"
+
+
+def test_user_data_stream_handles_bytes_and_non_dict() -> None:
+    stream = BinanceUserDataStream(listen_key="test_key")
+    # Bytes payload
+    payload_bytes = b'{"e": "listenKeyExpired", "E": 2}'
+    ev = stream.handle_raw_message(payload_bytes)
+    assert ev is None
+
+    # Non-dict JSON payload (e.g. primitive string or array)
+    ev_str = stream.handle_raw_message('"pong"')
+    assert ev_str is None
+
+    ev_bytes_num = stream.handle_raw_message(b'123')
+    assert ev_bytes_num is None
+

@@ -10,6 +10,7 @@ from typing import Any
 import pandas as pd
 
 from scalper_hft.backtest.engine import BacktestResult
+from scalper_hft.backtest.event_engine import EventBacktestResult
 from scalper_hft.backtest.metrics import BacktestMetrics
 from scalper_hft.backtest.pairs import PairsResult
 
@@ -41,7 +42,7 @@ def _metrics_from_dict(raw: dict[str, Any]) -> BacktestMetrics:
 
 def save_backtest_result(
     job_dir: Path,
-    res: BacktestResult | PairsResult,
+    res: BacktestResult | PairsResult | EventBacktestResult,
     *,
     extra: dict[str, Any] | None = None,
 ) -> None:
@@ -110,3 +111,18 @@ def artifact_kind(job_dir: Path) -> str | None:
         return None
     meta = json.loads(path.read_text(encoding="utf-8"))
     return str(meta.get("kind") or "backtest")
+
+
+def calculate_job_artifacts_size(job_dir: Path) -> int:
+    """Обчислює загальний розмір файлів артефактів у каталозі задачі (у байтах)."""
+    if not job_dir.exists() or not job_dir.is_dir():
+        return 0
+    total = 0
+    for p in job_dir.rglob("*"):
+        if p.is_file():
+            try:
+                total += p.stat().st_size
+            except OSError:
+                pass
+    return total
+

@@ -173,3 +173,47 @@ def test_portfolio_should_halt_on_daily_loss() -> None:
     assert PairsPortfolioRunner._should_halt_entries(r) is True
     acc.cash = 10_000.0
     assert PairsPortfolioRunner._should_halt_entries(r) is False
+
+
+def test_pairs_engine_cancel_pending():
+    acc = PaperAccount(10_000.0)
+    eng = PairsEngine("AAA", "BBB", PairsArb(lookback=20), acc, wait_bars=1, coint_kill=False)
+    ts0 = pd.Timestamp("2025-01-01 00:00")
+    eng.on_bar(ts0, 101, 99, 100, 51, 49, 50, signal=1)
+    assert eng.pending is not None
+    assert eng.cancel_pending(reason="test") is True
+    assert eng.pending is None
+    assert eng.cancel_pending(reason="test") is False
+
+
+def test_paper_loop_cleanup_on_stop():
+    import threading
+
+    from scalper_hft.live.pairs_runner import _paper_loop
+
+    acc = PaperAccount(10_000.0)
+    stop_event = threading.Event()
+    on_stop_called = []
+
+    def mock_step():
+        stop_event.set()
+        return "step_action"
+
+    res = _paper_loop(
+        step=mock_step,
+        save=None,
+        interval="1m",
+        account=acc,
+        pair="AAA/BBB",
+        n_filled=lambda: 0,
+        n_unfilled=lambda: 0,
+        daemon=True,
+        iterations=1,
+        sleep_sec=1,
+        stop=stop_event,
+        install_signals=False,
+        on_stop=lambda: on_stop_called.append(True),
+    )
+    assert len(on_stop_called) == 1
+    assert "step_action" in res.actions
+

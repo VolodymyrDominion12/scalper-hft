@@ -536,6 +536,28 @@ class LiveTrader:
         self.pending_orders.pop(po.client_order_id, None)
         logger.info("Скасовано pending %s (%s)", po.client_order_id, reason or "n/a")
 
+    def cancel_all_pending(self, reason: str = "shutdown") -> int:
+        """Скасувати всі робочі resting-ордери (при shutdown або аварії)."""
+        count = 0
+        for po in list(self.pending_orders.values()):
+            self._cancel_pending(po, reason=reason)
+            count += 1
+        return count
+
+    def shutdown(self, reason: str = "shutdown") -> None:
+        """Безпечне завершення роботи трейдера: скасування всіх pending-ордерів
+        та страхувальне скасування ордерів на біржі."""
+        logger.info("Ініціалізація shutdown для %s (%s)...", self.symbol, reason)
+        canceled = self.cancel_all_pending(reason=reason)
+        if not self.settings.dry_run:
+            cancel_all = getattr(self.client, "cancel_all_orders", None)
+            if cancel_all is not None:
+                try:
+                    cancel_all(self.symbol)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Помилка cancel_all_orders на біржі для %s: %s", self.symbol, exc)
+        logger.info("Shutdown завершено: скасовано %d локальних pending-ордерів", canceled)
+
     def poll_pending_orders(self, now: pd.Timestamp | None = None) -> list[str]:
         """Live maker: опитати resting-ордери → забронити філи, скасувати таймаути.
 
@@ -706,7 +728,7 @@ def execute_signal(
         else:
             parts.append(trader.execute(TradeDecision("hold", trader.symbol, 0.0, ""), close, ts))
     elif want == have:
-        if ladder_exit > 0:
+        if ladder_exit > 0 and pos is not None and trader.ladder is not None:
             parts.append(
                 trader.execute(TradeDecision("close", trader.symbol, pos.size * ladder_exit, "ladder_exit"), close, ts)
             )

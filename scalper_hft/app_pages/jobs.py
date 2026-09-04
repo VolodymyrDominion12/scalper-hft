@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 import pandas as pd
 import streamlit as st
 from scalper_hft.research.jobs import DEFAULT_JOBS_PATH, JobStore
@@ -23,14 +25,17 @@ if not alive:
     st.info("Поставте job і запустіть воркер, або відкрийте дашборд без `--no-worker`.")
 
 
-def _status_color(status: str) -> str:
-    return {
+def _status_color(
+    status: str,
+) -> Literal["red", "orange", "yellow", "blue", "green", "violet", "gray", "grey", "primary"]:
+    colors: dict[str, Literal["red", "orange", "yellow", "blue", "green", "violet", "gray", "grey", "primary"]] = {
         "queued": "blue",
         "running": "violet",
         "succeeded": "green",
         "failed": "red",
         "cancelled": "gray",
-    }.get(status, "gray")
+    }
+    return colors.get(status, "gray")
 
 
 @st.fragment(run_every=2)

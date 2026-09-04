@@ -116,6 +116,19 @@ class Job:
         return self.fingerprint[:12]
 
 
+@dataclass(frozen=True, slots=True)
+class PruneStats:
+    scanned_jobs: int
+    pruned_jobs: int
+    deleted_dirs: int
+    freed_bytes: int
+    orphaned_dirs: int
+
+    @property
+    def freed_mb(self) -> float:
+        return self.freed_bytes / (1024 * 1024)
+
+
 def artifacts_dir(store_path: Path, job_id: int) -> Path:
     """Каталог артефактів: <parent>/jobs/<id>/ поруч із jobs.sqlite."""
     return Path(store_path).parent / "jobs" / str(job_id)
@@ -203,6 +216,8 @@ class JobStore:
                            VALUES (?, ?, ?, 'queued', ?, 0)""",
                         (fp, kind, blob, now),
                     )
+                    if cur.lastrowid is None:
+                        raise RuntimeError("Не вдалося отримати lastrowid для нового job")
                     job_id = int(cur.lastrowid)
                     self._conn.execute("COMMIT")
                     job = self.get(job_id)
@@ -394,3 +409,91 @@ class JobStore:
             return ""
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
         return "\n".join(lines[-n:])
+
+    def prune_jobs(
+        self,
+        days: int = 14,
+        status: str = "all",
+        keep_records: bool = False,
+        dry_run: bool = False,
+    ) -> PruneStats:
+        """Очистити застарілі завершені задачі та їхні артефакти на диску.
+
+        Ніколи не видаляє задачі зі статусом queued або running.
+        """
+        from scalper_hft.research.job_artifacts import calculate_job_artifacts_size
+
+        terminal_statuses = {"succeeded", "failed", "cancelled"}
+        if status == "all":
+            allowed_statuses = tuple(terminal_statuses)
+        elif status in terminal_statuses:
+            allowed_statuses = (status,)
+        else:
+            raise ValueError(
+                f"Неприпустимий статус для prune: {status}. Дозволені: all, {', '.join(sorted(terminal_statuses))}"
+            )
+
+        cutoff = datetime.now(UTC) - timedelta(days=max(0, int(days)))
+
+        placeholders = ",".join("?" * len(allowed_statuses))
+        rows = self._conn.execute(
+            f"SELECT id, status, created_at, finished_at FROM jobs WHERE status IN ({placeholders})",
+            allowed_statuses,
+        ).fetchall()
+
+        scanned = len(rows)
+        pruned_jobs = 0
+        deleted_dirs = 0
+        freed_bytes = 0
+        orphaned_dirs = 0
+        deleted_ids: list[int] = []
+
+        for row in rows:
+            job_id = int(row["id"])
+            ts = parse_iso(str(row["finished_at"] or "")) or parse_iso(str(row["created_at"] or ""))
+            if ts is not None and ts < cutoff:
+                pruned_jobs += 1
+                art_dir = artifacts_dir(self.path, job_id)
+                if art_dir.exists() and art_dir.is_dir():
+                    size = calculate_job_artifacts_size(art_dir)
+                    freed_bytes += size
+                    deleted_dirs += 1
+                    if not dry_run:
+                        shutil.rmtree(art_dir, ignore_errors=True)
+                if not keep_records:
+                    deleted_ids.append(job_id)
+
+        if deleted_ids and not dry_run:
+            with self._lock:
+                self._conn.execute("BEGIN IMMEDIATE")
+                try:
+                    for jid in deleted_ids:
+                        self._conn.execute("DELETE FROM jobs WHERE id=?", (jid,))
+                    self._conn.execute("COMMIT")
+                except Exception:
+                    self._conn.execute("ROLLBACK")
+                    raise
+
+        # Пошук та очищення orphaned-каталогів у <parent>/jobs/
+        base_jobs_dir = Path(self.path).parent / "jobs"
+        if base_jobs_dir.exists() and base_jobs_dir.is_dir():
+            existing_ids = {int(r["id"]) for r in self._conn.execute("SELECT id FROM jobs").fetchall()}
+            for child in base_jobs_dir.iterdir():
+                if child.is_dir() and child.name.isdigit():
+                    cid = int(child.name)
+                    if cid not in existing_ids:
+                        size = calculate_job_artifacts_size(child)
+                        freed_bytes += size
+                        deleted_dirs += 1
+                        orphaned_dirs += 1
+                        if not dry_run:
+                            shutil.rmtree(child, ignore_errors=True)
+
+        return PruneStats(
+            scanned_jobs=scanned,
+            pruned_jobs=pruned_jobs,
+            deleted_dirs=deleted_dirs,
+            freed_bytes=freed_bytes,
+            orphaned_dirs=orphaned_dirs,
+        )
+

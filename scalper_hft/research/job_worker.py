@@ -9,6 +9,7 @@ import sys
 import time
 from multiprocessing import Process, get_context
 from pathlib import Path
+from typing import Any, cast
 
 from scalper_hft.research.jobs import (
     DEFAULT_JOBS_PATH,
@@ -66,7 +67,7 @@ def run_claimed_job(store: JobStore, job: Job, *, mp_context: str | None = None)
     """Запустити вже claimed job у дочірньому процесі і дочекатися фіналу."""
     job_dir = artifacts_dir(store.path, job.id)
     job_dir.mkdir(parents=True, exist_ok=True)
-    ctx = get_context(mp_context) if mp_context else get_context()
+    ctx = cast(Any, get_context(mp_context) if mp_context else get_context())
     proc = ctx.Process(
         target=_job_child_main,
         args=(job.id, job.kind, job.params, str(job_dir), str(store.path)),

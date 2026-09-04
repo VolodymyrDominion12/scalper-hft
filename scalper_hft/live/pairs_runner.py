@@ -519,6 +519,14 @@ class PairsEngine:
         self.last_bar_ts = ts
         return " | ".join(parts)
 
+    def cancel_pending(self, reason: str = "shutdown") -> bool:
+        """Скасувати pending maker-ордери пари (при зупинці або скиданні)."""
+        if self.pending is None:
+            return False
+        logger.info("Скасовано pending-ордери пари %s (%s)", self.pid, reason)
+        self.pending = None
+        return True
+
     def seed_spread_from_ohlc(self, common: pd.DataFrame) -> None:
         """Відновити ADF-вікно після рестарту з уже завантажених klines."""
         if common is None or common.empty:
@@ -701,6 +709,7 @@ def _paper_loop(
     sleep_sec: int,
     stop: threading.Event | None = None,
     install_signals: bool = True,
+    on_stop: Callable[[], Any] | None = None,
 ) -> PairsPaperResult:
     halt = stop or threading.Event()
     if daemon and install_signals:
@@ -708,24 +717,33 @@ def _paper_loop(
     actions: list[str] = []
     pts: list[tuple[pd.Timestamp, float]] = []
     i = 0
-    while not halt.is_set():
-        if not daemon and i >= iterations:
-            break
-        try:
-            action = step()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Крок %d: %s", i, exc)
-            action = f"error:{exc}"
-        actions.append(action)
-        pts.append((pd.Timestamp.now(tz="UTC").tz_convert(None), account.equity))
-        i += 1
-        if daemon:
-            if halt.wait(timeout=daemon_sleep_sec(interval, action)):
+    try:
+        while not halt.is_set():
+            if not daemon and i >= iterations:
                 break
-        elif i < iterations:
-            time.sleep(sleep_sec)
-    if save is not None:
-        save()
+            try:
+                action = step()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Крок %d: %s", i, exc)
+                action = f"error:{exc}"
+            actions.append(action)
+            pts.append((pd.Timestamp.now(tz="UTC").tz_convert(None), account.equity))
+            i += 1
+            if daemon:
+                if halt.wait(timeout=daemon_sleep_sec(interval, action)):
+                    break
+            elif i < iterations:
+                time.sleep(sleep_sec)
+    except KeyboardInterrupt:
+        logger.info("Paper loop перервано користувачем (Ctrl+C)")
+    finally:
+        if on_stop is not None:
+            try:
+                on_stop()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Помилка on_stop cleanup: %s", exc)
+        if save is not None:
+            save()
     eq = pd.Series({t: v for t, v in pts}).sort_index() if pts else pd.Series(dtype=float)
     return PairsPaperResult(
         equity=eq,
@@ -887,6 +905,7 @@ class PairsPaperRunner:
             sleep_sec=sleep_sec,
             stop=stop,
             install_signals=install_signals,
+            on_stop=lambda: self.engine.cancel_pending(reason="shutdown"),
         )
 
 
@@ -1020,6 +1039,13 @@ class PairsPortfolioRunner:
         self._persist_if_needed(action)
         return action
 
+    def cancel_all_pending(self, reason: str = "shutdown") -> int:
+        count = 0
+        for r in self.runners:
+            if r.engine.cancel_pending(reason=reason):
+                count += 1
+        return count
+
     def run(
         self,
         iterations: int = 10,
@@ -1042,4 +1068,5 @@ class PairsPortfolioRunner:
             sleep_sec=sleep_sec,
             stop=stop,
             install_signals=install_signals,
+            on_stop=lambda: self.cancel_all_pending(reason="shutdown"),
         )

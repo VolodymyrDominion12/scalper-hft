@@ -1419,19 +1419,33 @@ def cmd_job(args: argparse.Namespace) -> None:
             job = store.submit(args.kind, params, force=bool(args.force))
             print(f"job id={job.id} kind={job.kind} status={job.status} fp={job.short_fp}")
             return
+        if action == "prune":
+            stats = store.prune_jobs(
+                days=int(args.days),
+                status=str(args.status),
+                keep_records=bool(args.keep_records),
+                dry_run=bool(args.dry_run),
+            )
+            mode_label = "[DRY-RUN] " if args.dry_run else ""
+            print(f"{mode_label}Очищення черги задач (вік >= {args.days} дн., статус: {args.status}):")
+            print(f"  Скановано завершених задач:    {stats.scanned_jobs}")
+            print(f"  Задач видалено з бази:         {0 if args.keep_records else stats.pruned_jobs}")
+            print(f"  Каталогів артефактів видалено: {stats.deleted_dirs} (з них orphaned: {stats.orphaned_dirs})")
+            print(f"  Звільнено дискового простору: {stats.freed_mb:.2f} MB ({stats.freed_bytes:,} bytes)")
+            return
         job_id = int(args.id)
-        job = store.get(job_id)
-        if job is None:
+        entry = store.get(job_id)
+        if entry is None:
             logger.error("немає job id=%s", job_id)
             sys.exit(1)
         if action == "status":
             print(
-                f"id={job.id} kind={job.kind} status={job.status} fp={job.fingerprint}\n"
-                f"progress={job.progress_done}/{job.progress_total} pid={job.pid}\n"
-                f"created={job.created_at} started={job.started_at} finished={job.finished_at}\n"
-                f"error={job.error}"
+                f"id={entry.id} kind={entry.kind} status={entry.status} fp={entry.fingerprint}\n"
+                f"progress={entry.progress_done}/{entry.progress_total} pid={entry.pid}\n"
+                f"created={entry.created_at} started={entry.started_at} finished={entry.finished_at}\n"
+                f"error={entry.error}"
             )
-            tail = store.tail_log(job.id)
+            tail = store.tail_log(entry.id)
             if tail:
                 print("--- log ---")
                 print(tail)
@@ -1441,8 +1455,9 @@ def cmd_job(args: argparse.Namespace) -> None:
             print(f"cancel requested id={job_id}")
             return
         if action == "rerun":
-            job = store.submit(job.kind, job.params, force=True)
-            print(f"requeued id={job.id} status={job.status}")
+            new_job = store.submit(entry.kind, entry.params, force=True)
+            print(f"requeued id={new_job.id} status={new_job.status}")
+            return
 
 
 def cmd_sweep(args: argparse.Namespace) -> None:
@@ -1907,6 +1922,24 @@ def main(argv: list[str] | None = None) -> None:
     jc.add_argument("id", type=int)
     jr = job_sub.add_parser("rerun", help="Інвалідувати артефакти і поставити в чергу знову")
     jr.add_argument("id", type=int)
+    jp = job_sub.add_parser("prune", help="Видалити застарілі завершені jobs та їхні артефакти на диску")
+    jp.add_argument("--days", type=int, default=14, help="Вік задач у днях (за замовчуванням: 14)")
+    jp.add_argument(
+        "--status",
+        choices=["all", "succeeded", "failed", "cancelled"],
+        default="all",
+        help="Фільтр статусів для видалення (за замовчуванням: all)",
+    )
+    jp.add_argument(
+        "--keep-records",
+        action="store_true",
+        help="Зберегти записи в SQLite, видалити лише важкі артефакти з диска",
+    )
+    jp.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Показати, що буде видалено, без фактичного видалення",
+    )
     job_p.set_defaults(func=cmd_job)
 
     p = sub.add_parser(

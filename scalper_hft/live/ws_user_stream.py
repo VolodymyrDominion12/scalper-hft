@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -20,6 +21,39 @@ from typing import Any
 from scalper_hft.live.ws_urls import KEEPALIVE_INTERVAL_SEC, private_user_stream_url
 
 logger = logging.getLogger(__name__)
+
+
+class ExponentialBackoff:
+    """Експоненційний backoff з jitter для стійкого перепідключення до WebSocket."""
+
+    def __init__(
+        self,
+        base_delay: float = 1.0,
+        max_delay: float = 60.0,
+        factor: float = 2.0,
+        jitter_ratio: float = 0.2,
+    ) -> None:
+        self.base_delay = float(base_delay)
+        self.max_delay = float(max_delay)
+        self.factor = float(factor)
+        self.jitter_ratio = float(jitter_ratio)
+        self.current_delay = self.base_delay
+        self.attempts = 0
+
+    def next_delay(self) -> float:
+        """Обчислює затримку з джиттером та експоненційно збільшує наступну затримку."""
+        nominal = min(self.max_delay, self.current_delay)
+        low = nominal * max(0.0, 1.0 - self.jitter_ratio)
+        high = nominal * (1.0 + self.jitter_ratio)
+        delay = random.uniform(low, high)
+        self.attempts += 1
+        self.current_delay = min(self.max_delay, self.current_delay * self.factor)
+        return delay
+
+    def reset(self) -> None:
+        """Скидає затримку до base_delay при успішному з'єднанні/повідомленні."""
+        self.current_delay = self.base_delay
+        self.attempts = 0
 
 
 @dataclass(frozen=True)
@@ -84,6 +118,7 @@ class BinanceUserDataStream:
         keepalive: Callable[[str], None] | None = None,
         refresh_listen_key: Callable[[], str] | None = None,
         keepalive_interval_sec: float = KEEPALIVE_INTERVAL_SEC,
+        backoff: ExponentialBackoff | None = None,
     ) -> None:
         self.listen_key = listen_key
         self.testnet = testnet
@@ -91,6 +126,7 @@ class BinanceUserDataStream:
         self.keepalive = keepalive
         self.refresh_listen_key = refresh_listen_key
         self.keepalive_interval_sec = float(keepalive_interval_sec)
+        self.backoff = backoff or ExponentialBackoff()
         self._running = False
         self._last_keepalive_mono: float | None = None
 
@@ -124,9 +160,11 @@ class BinanceUserDataStream:
         logger.info("listenKey регенеровано")
         return True
 
-    def handle_raw_message(self, raw_msg: str | dict) -> OrderTradeEvent | None:
+    def handle_raw_message(self, raw_msg: str | bytes | dict[str, Any]) -> OrderTradeEvent | None:
         """Обробляє сире повідомлення з вебсокета і викликає колбек."""
-        data = json.loads(raw_msg) if isinstance(raw_msg, str) else raw_msg
+        data = json.loads(raw_msg) if isinstance(raw_msg, (str, bytes)) else raw_msg
+        if not isinstance(data, dict):
+            return None
         if is_listen_key_expired(data):
             logger.warning("listenKeyExpired — регенерація ключа")
             self.regenerate_listen_key()
@@ -158,15 +196,22 @@ class BinanceUserDataStream:
                         try:
                             msg = await asyncio.wait_for(ws.recv(), timeout=30.0)
                             self.handle_raw_message(msg)
+                            self.backoff.reset()
                         except TimeoutError:
                             self.maybe_keepalive()
                             continue
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning("Розрив WebSocket зв'язку (%s), перепідключення за 5 сек...", e)
+                delay = self.backoff.next_delay()
+                logger.warning(
+                    "Розрив WebSocket зв'язку (%s), перепідключення за %.2f сек (спроба %d)...",
+                    e,
+                    delay,
+                    self.backoff.attempts,
+                )
                 self.regenerate_listen_key()
-                await asyncio.sleep(5.0)
+                await asyncio.sleep(delay)
 
     def stop(self) -> None:
         self._running = False

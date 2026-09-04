@@ -91,26 +91,30 @@ class PaperRunner:
         out_dir = out_dir or Path("results")
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        for i in range(iterations):
-            try:
-                action = self.step()
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Крок %d помилка: %s", i, exc)
-                action = f"error:{exc}"
-            result.actions.append(action)
-            result.equity_points.append((pd.Timestamp.utcnow().tz_localize(None), self.account.equity))
-            logger.info(
-                "[%d/%d] %s | equity=%.2f | positions=%d",
-                i + 1,
-                iterations,
-                action,
-                self.account.equity,
-                len(self.account.positions),
-            )
-            if i < iterations - 1:
-                time.sleep(sleep_sec)
-
-        self._save(out_dir, result)
+        try:
+            for i in range(iterations):
+                try:
+                    action = self.step()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Крок %d помилка: %s", i, exc)
+                    action = f"error:{exc}"
+                result.actions.append(action)
+                result.equity_points.append((pd.Timestamp.utcnow().tz_localize(None), self.account.equity))
+                logger.info(
+                    "[%d/%d] %s | equity=%.2f | positions=%d",
+                    i + 1,
+                    iterations,
+                    action,
+                    self.account.equity,
+                    len(self.account.positions),
+                )
+                if i < iterations - 1:
+                    time.sleep(sleep_sec)
+        except KeyboardInterrupt:
+            logger.info("Paper-прогін перервано користувачем (Ctrl+C)")
+        finally:
+            self.trader.shutdown(reason="runner_stop")
+            self._save(out_dir, result)
         return result
 
     def _save(self, out_dir: Path, result: PaperRunResult) -> None:
