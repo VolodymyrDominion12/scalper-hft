@@ -127,3 +127,85 @@ def hedge_blend_signals(
     w = hedge_weights(r, eta=eta)
     combined = (signal_matrix * w).sum(axis=1)
     return combined.clip(-1.0, 1.0)
+
+
+class ContextualHedgeBlend:
+    """Окремий HedgeBlend для кожного режиму ринку.
+
+    Проблема класичного Hedge: якщо стратегія A добре працює в trend і погано
+    в range — її вага в Hedge усереднюється і обидва режими страждають.
+
+    Рішення: n_regimes окремих HedgeBlend-ів. Оновлення ваг відбувається ЛИШЕ
+    в тому режимі, де зараз знаходиться ринок. Таким чином кожен «регіональний
+    блендер» спеціалізується на своєму режимі.
+
+    Використання в live:
+        blend = ContextualHedgeBlend(n_experts=3, regimes=["range", "trend_up", "trend_down"])
+        # кожен бар:
+        signal = blend.blend(signals, regime="range")
+        # після спостереження результату:
+        blend.step(returns, regime="range")
+
+    Якщо режим незнайомий (не в списку) — використовується глобальний блендер
+    (fallback), який навчається на всіх барах незалежно від режиму.
+    """
+
+    def __init__(
+        self,
+        n_experts: int,
+        regimes: list[str],
+        eta: float | None = None,
+    ) -> None:
+        if n_experts < 2:
+            raise ValueError("Потрібно щонайменше 2 експерти")
+        self.n = n_experts
+        self.regimes = list(regimes)
+        self._blenders: dict[str, HedgeBlend] = {
+            r: HedgeBlend(n_experts=n_experts, eta=eta) for r in regimes
+        }
+        # глобальний fallback (не прив'язаний до режиму)
+        self._global = HedgeBlend(n_experts=n_experts, eta=eta)
+        self._bar_counts: dict[str, int] = {r: 0 for r in regimes}
+
+    def weights(self, regime: str) -> np.ndarray:
+        """Поточні ваги стратегій для заданого режиму."""
+        blender = self._blenders.get(regime, self._global)
+        return blender.weights()
+
+    def blend(self, signals: np.ndarray, regime: str) -> float:
+        """Зважена сума сигналів для поточного режиму.
+
+        Args:
+            signals: вектор сигналів стратегій (n_experts,).
+            regime: поточний режим ринку (рядок).
+
+        Returns:
+            Scalar float — комбінований сигнал.
+        """
+        blender = self._blenders.get(regime, self._global)
+        return blender.blend(np.asarray(signals, dtype=float))
+
+    def step(self, returns: np.ndarray, regime: str) -> None:
+        """Оновити ваги після спостереження результатів бару.
+
+        Оновлюється ТІЛЬКИ блендер відповідного режиму + глобальний fallback.
+
+        Args:
+            returns: вектор прибутковостей стратегій (n_experts,).
+            regime: режим ринку на барі, що щойно закрився.
+        """
+        r = np.asarray(returns, dtype=float)
+        if regime in self._blenders:
+            self._blenders[regime].step(r)
+            self._bar_counts[regime] += 1
+        self._global.step(r)
+
+    def regime_weights_summary(self) -> dict[str, np.ndarray]:
+        """Ваги стратегій по режимах (для логування / Telegram)."""
+        return {r: b.weights() for r, b in self._blenders.items()}
+
+    @property
+    def bar_counts(self) -> dict[str, int]:
+        """Кількість барів накопичена per-regime (корисна для діагностики)."""
+        return dict(self._bar_counts)
+

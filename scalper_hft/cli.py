@@ -606,6 +606,127 @@ def cmd_cscv(args: argparse.Namespace) -> None:
     print("\n" + res.summary())
 
 
+def cmd_regime_backtest(args: argparse.Namespace) -> None:
+    """Порівняльний бектест: базові стратегії vs RegimeSupervisor.
+
+    Виводить таблицю Sharpe/PF/WinRate/MaxDD для кожної стратегії та
+    всіх трьох режимів supervisor-а, плюс attribution по ринкових режимах.
+
+    Приклад:
+        uv run python -m scalper_hft.cli regime-backtest \\
+            --strategies "mean_reversion,supertrend,hmm_reversion" \\
+            --symbol BTCUSDT --interval 1h --days 180
+    """
+    from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.config import get_settings
+    from scalper_hft.research.regime_analysis import (
+        compare_strategies_by_regime,
+        regime_transition_matrix,
+        supervisor_vs_baseline,
+    )
+    from scalper_hft.strategies import get_strategy
+
+    settings = get_settings()
+    df = _load_klines(
+        args.symbol,
+        args.interval,
+        args.days,
+        base=getattr(args, "base", None),
+        derive=getattr(args, "derive", True),
+    )
+
+    cost = CostModel(
+        maker_fee=settings.maker_fee,
+        taker_fee=settings.taker_fee,
+        slippage=settings.slippage,
+    )
+
+    strat_names = [s.strip() for s in args.strategies.split(",") if s.strip()]
+    if not strat_names:
+        logger.error("--strategies не вказано або порожнє")
+        return
+
+    # ── Бектест базових стратегій ────────────────────────────────────────
+    from scalper_hft.backtest.engine import BacktestEngine
+
+    baseline_returns: dict[str, pd.Series] = {}
+    for name in strat_names:
+        try:
+            strat = get_strategy(name)
+            engine = BacktestEngine(df, strat, cost_model=cost)
+            result = engine.run()
+            baseline_returns[name] = result.bar_returns
+            print(f"  ✓ {name}: Sharpe={result.sharpe:.2f}  PF={result.profit_factor:.2f}")
+        except Exception as exc:
+            logger.warning("Стратегія %s: помилка бектесту: %s", name, exc)
+
+    if not baseline_returns:
+        logger.error("Жодна базова стратегія не виконалась успішно")
+        return
+
+    # ── Бектест RegimeSupervisor ─────────────────────────────────────────
+    blend_modes = [args.blend_mode] if args.blend_mode != "all" else [
+        "regime_soft", "contextual_hedge", "exp3"
+    ]
+    supervisor_results: dict[str, pd.Series] = {}
+    for mode in blend_modes:
+        try:
+            sup = get_strategy(
+                "regime_supervisor",
+                strategies=args.strategies,
+                blend_mode=mode,
+                n_hmm_states=int(args.n_hmm_states),
+                hmm_fit_bars=int(args.hmm_fit_bars),
+            )
+            engine = BacktestEngine(df, sup, cost_model=cost)
+            result = engine.run()
+            key = f"supervisor_{mode}"
+            supervisor_results[key] = result.bar_returns
+            print(f"  ✓ supervisor[{mode}]: Sharpe={result.sharpe:.2f}  PF={result.profit_factor:.2f}")
+        except Exception as exc:
+            logger.warning("RegimeSupervisor[%s]: помилка: %s", mode, exc)
+
+    # ── Зведена таблиця ─────────────────────────────────────────────────
+    all_returns = {**baseline_returns, **supervisor_results}
+    summary = supervisor_vs_baseline(df["close"], baseline_returns, list(supervisor_results.values())[0] if supervisor_results else pd.Series(0.0, index=df.index))
+    print("\n" + "=" * 70)
+    print("SUPERVISOR vs BASELINE — Загальна таблиця")
+    print("=" * 70)
+    print(summary.to_string())
+
+    # ── По режимах ──────────────────────────────────────────────────────
+    if not args.no_regime_table:
+        regime_table = compare_strategies_by_regime(
+            df["close"],
+            all_returns,
+            n_hmm_states=int(args.n_hmm_states),
+            hmm_fit_bars=int(args.hmm_fit_bars),
+        )
+        print("\n" + "=" * 70)
+        print("SHARPE PO РЕЖИМАХ")
+        print("=" * 70)
+        sharpe_pivot = regime_table["sharpe"].unstack(level="regime")
+        print(sharpe_pivot.to_string())
+
+        trans = regime_transition_matrix(
+            df["close"],
+            n_hmm_states=int(args.n_hmm_states),
+            hmm_fit_bars=int(args.hmm_fit_bars),
+        )
+        print("\n" + "=" * 70)
+        print("МАТРИЦЯ ПЕРЕХОДІВ МІЖ РЕЖИМАМИ (рядки нормовані)")
+        print("=" * 70)
+        print(trans.round(3).to_string())
+
+    # ── Збереження ──────────────────────────────────────────────────────
+    if args.save:
+        out_dir = Path("results")
+        out_dir.mkdir(exist_ok=True)
+        out_path = out_dir / f"regime_backtest_{args.symbol}_{args.interval}.csv"
+        summary.to_csv(out_path)
+        print(f"\nЗбережено: {out_path}")
+
+
 def cmd_record_bookticker(args: argparse.Namespace) -> None:
     """Запис bookTicker у реальному часі (для OB-стратегій)."""
     from scalper_hft.live.bookticker_recorder import record_bookticker, record_depth
@@ -1685,6 +1806,32 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--blocks", type=int, default=8, help="Кількість блоків для розбиття")
     p.add_argument("--max-combos", type=int, default=200, help="Обмеження комбінацій")
     p.set_defaults(func=cmd_cscv)
+
+    p = sub.add_parser(
+        "regime-backtest",
+        help="Порівняльний бектест: базові стратегії vs RegimeSupervisor",
+    )
+    p.add_argument(
+        "--strategies",
+        default="mean_reversion,supertrend,hmm_reversion",
+        help="Стратегії через кому (default: mean_reversion,supertrend,hmm_reversion)",
+    )
+    p.add_argument("--symbol", default="BTCUSDT", help="Символ")
+    p.add_argument("--interval", default="1h", help="Таймфрейм")
+    p.add_argument("--days", type=int, default=180, help="Кількість днів")
+    p.add_argument(
+        "--blend-mode",
+        default="all",
+        choices=["all", "regime_soft", "contextual_hedge", "exp3"],
+        help="Режим зважування supervisor-а (default: all — запускає всі три)",
+    )
+    p.add_argument("--n-hmm-states", type=int, default=3, help="Кількість HMM-станів")
+    p.add_argument("--hmm-fit-bars", type=int, default=2000, help="Бари для навчання HMM")
+    p.add_argument("--no-regime-table", action="store_true", help="Не виводити таблицю по режимах")
+    p.add_argument("--save", action="store_true", help="Зберегти результати у results/")
+    p.add_argument("--base", default=None, help="Базовий інтервал для деривації (напр. 1m)")
+    p.add_argument("--no-derive", dest="derive", action="store_false", help="Не деривувати ТФ")
+    p.set_defaults(func=cmd_regime_backtest, derive=True)
 
     p = sub.add_parser("record-bookticker", help="Запис bookTicker/depth5 (WS) у parquet")
     p.add_argument("--symbol", default="BTCUSDT", help="Символ(и) через кому")
