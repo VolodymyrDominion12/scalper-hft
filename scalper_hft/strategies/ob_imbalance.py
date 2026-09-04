@@ -21,6 +21,8 @@ from scalper_hft.strategies.base import Strategy
 
 class ObImbalanceScalper(Strategy):
     name = "ob_imbalance"
+    family = "flow"
+    preferred_regimes = frozenset()
     needs_trades = True
 
     param_space = {

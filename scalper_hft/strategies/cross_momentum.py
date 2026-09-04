@@ -35,6 +35,8 @@ class CrossMomentum(Strategy):
     """
 
     name = "cross_momentum"
+    family = "momentum"
+    preferred_regimes = frozenset({"trend_up", "trend_down"})
 
     param_space = {
         "lookback": (5.0, 60.0, 5.0),

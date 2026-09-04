@@ -144,7 +144,20 @@ class BinanceUserDataStream:
             return False
         if now - self._last_keepalive_mono < self.keepalive_interval_sec:
             return False
-        self.keepalive(self.listen_key)
+
+        def _do_keepalive(k: str) -> None:
+            try:
+                if self.keepalive:
+                    self.keepalive(k)
+            except Exception as e:
+                logger.error("Помилка keepalive: %s", e)
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.run_in_executor(None, _do_keepalive, self.listen_key)
+        except RuntimeError:
+            _do_keepalive(self.listen_key)
+
         self._last_keepalive_mono = now
         return True
 
@@ -152,12 +165,24 @@ class BinanceUserDataStream:
         """Новий listenKey через інжектований REST-колбек. True якщо оновлено."""
         if self.refresh_listen_key is None:
             return False
-        new_key = self.refresh_listen_key()
-        if not new_key:
-            return False
-        self.listen_key = str(new_key)
-        self._last_keepalive_mono = None
-        logger.info("listenKey регенеровано")
+
+        def _do_refresh() -> None:
+            try:
+                if self.refresh_listen_key:
+                    new_key = self.refresh_listen_key()
+                    if new_key:
+                        self.listen_key = str(new_key)
+                        self._last_keepalive_mono = None
+                        logger.info("listenKey регенеровано")
+            except Exception as e:
+                logger.error("Помилка refresh_listen_key: %s", e)
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.run_in_executor(None, _do_refresh)
+        except RuntimeError:
+            _do_refresh()
+
         return True
 
     def handle_raw_message(self, raw_msg: str | bytes | dict[str, Any]) -> OrderTradeEvent | None:

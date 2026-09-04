@@ -66,6 +66,8 @@ class MLStrategy(Strategy):
     """
 
     name = "ml_strategy"
+    family = "ml"
+    preferred_regimes = frozenset()
     needs_trades = False
 
     param_space: dict[str, tuple[float, float, float]] = {

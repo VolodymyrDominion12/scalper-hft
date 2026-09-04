@@ -28,6 +28,8 @@ from scalper_hft.strategies.base import Strategy
 
 class SupertrendStrategy(Strategy):
     name = "supertrend"
+    family = "momentum"
+    preferred_regimes = frozenset({"trend_up", "trend_down"})
 
     param_space = {
         "atr_period": (7.0, 14.0, 1.0),

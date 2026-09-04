@@ -30,6 +30,8 @@ from scalper_hft.strategies.base import Strategy
 
 class PairsArb(Strategy):
     name = "pairs_arb"
+    family = "relative_value"
+    preferred_regimes = frozenset()
 
     param_space = {
         "entry_z": (1.5, 4.0, 0.25),

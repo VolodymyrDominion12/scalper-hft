@@ -21,6 +21,8 @@ from scalper_hft.strategies.base import Strategy
 
 class CvdMomentumScalper(Strategy):
     name = "cvd_momentum"
+    family = "momentum"
+    preferred_regimes = frozenset({"trend_up", "trend_down"})
     needs_trades = True
 
     param_space = {

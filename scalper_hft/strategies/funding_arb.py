@@ -24,6 +24,8 @@ from scalper_hft.strategies.base import Strategy
 
 class FundingArb(Strategy):
     name = "funding_arb"
+    family = "carry"
+    preferred_regimes = frozenset()
     needs_funding = True
 
     param_space = {

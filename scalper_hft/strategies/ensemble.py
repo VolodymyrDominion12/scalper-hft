@@ -1,33 +1,102 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
+from scalper_hft.features.regimes import (
+    DEFAULT_TREND_THRESHOLD,
+    STRUCTURE_LABELS,
+    VOL_LABELS,
+    named_market_state,
+)
 from scalper_hft.strategies.base import Strategy
+from scalper_hft.strategies.taxonomy import DEFAULT_UNFAVORABLE_WEIGHT, regime_capital_weight
 
 logger = logging.getLogger(__name__)
+
+
+def regime_blend_weights(
+    close: pd.Series,
+    preferred: Sequence[frozenset[str]],
+    *,
+    unfavorable: float = DEFAULT_UNFAVORABLE_WEIGHT,
+    trend_threshold: float = DEFAULT_TREND_THRESHOLD,
+) -> pd.DataFrame:
+    """Побарні ваги капіталу [unfavorable, 1] для кожної суб-стратегії."""
+    if not preferred:
+        return pd.DataFrame(index=close.index)
+    for pref in preferred:
+        regime_capital_weight(pref, "range", "normal", unfavorable=unfavorable)
+    state = named_market_state(close, trend_threshold=trend_threshold)
+    structure = state["structure"]
+    vol = state["vol"]
+    parts: list[pd.Series] = []
+    for i, pref in enumerate(preferred):
+        weight = pd.Series(1.0, index=close.index)
+        struct_tags = pref & STRUCTURE_LABELS
+        vol_tags = pref & VOL_LABELS
+        if struct_tags:
+            weight = weight.where(structure.isin(struct_tags), unfavorable)
+        if vol_tags:
+            weight = weight * np.where(vol.isin(vol_tags), 1.0, unfavorable)
+        parts.append(weight.rename(f"w{i}"))
+    return pd.concat(parts, axis=1)
+
+
+def regime_blend_signals(
+    sig_df: pd.DataFrame,
+    close: pd.Series,
+    preferred: Sequence[frozenset[str]],
+    *,
+    unfavorable: float = DEFAULT_UNFAVORABLE_WEIGHT,
+    trend_threshold: float = DEFAULT_TREND_THRESHOLD,
+) -> pd.Series:
+    """М'яке зважування капіталу: position = Σ (w_i / n) · sig_i.
+
+    Не quorum і не hard-switch. Якщо всі w=1 — збігається з mode='mean'.
+    У несприятливому режимі частка стратегії стискається до unfavorable/n.
+    """
+    n = sig_df.shape[1]
+    if n == 0:
+        return pd.Series(0.0, index=sig_df.index)
+    aligned = sig_df.reindex(close.index).fillna(0.0)
+    w_df = regime_blend_weights(
+        close,
+        preferred,
+        unfavorable=unfavorable,
+        trend_threshold=trend_threshold,
+    )
+    w_df.columns = aligned.columns
+    blended = (aligned * w_df).sum(axis=1) / n
+    return blended.clip(-1.0, 1.0)
 
 
 class EnsembleStrategy(Strategy):
     """Ensemble кількох стратегій (Portfolio Construction).
 
     Комбінує сигнали кількох суб-стратегій:
-        - 'mean'  — усереднення (за замовчуванням);
-        - 'vote'  — входимо лише при згоді всіх;
-        - 'hedge' — онлайн-зважування Hedge/EWA за історією прибутковостей
+        - 'mean'   — усереднення (за замовчуванням);
+        - 'vote'   — входимо лише при згоді всіх;
+        - 'hedge'  — онлайн-зважування Hedge/EWA за історією прибутковостей
           (Gofer 2014, Ch.2): ваги адаптуються до концепт-дрейфу без
-          перетренування; сигнал = Σ p_i,t · sig_i,t.
+          перетренування; сигнал = Σ p_i,t · sig_i,t;
+        - 'regime' — м'які ваги капіталу за family/preferred_regimes
+          (Narang гл. 3/6: змішуємо капітал, не голоси).
     """
 
     name = "ensemble"
+    family = "meta"
+    preferred_regimes = frozenset()
     param_space: dict[str, tuple[float, float, float]] = {}
 
     def __init__(self, **params: Any) -> None:
         super().__init__(**params)
         strat_names = str(self.get("strategies", "mean_reversion,ml_strategy")).split(",")
-        self.mode = str(self.get("mode", "mean"))  # "mean" | "vote" | "hedge"
+        self.mode = str(self.get("mode", "mean"))  # "mean" | "vote" | "hedge" | "regime"
 
         from scalper_hft.strategies import get_strategy
 
@@ -81,6 +150,18 @@ class EnsembleStrategy(Strategy):
             from scalper_hft.strategies.blend import hedge_blend_signals
 
             return hedge_blend_signals(sig_df, df["close"])
+
+        if self.mode == "regime":
+            preferred = [frozenset(s.preferred_regimes) for s in self.strats]
+            unfavorable = float(self.get("unfavorable_weight", DEFAULT_UNFAVORABLE_WEIGHT))
+            trend_threshold = float(self.get("trend_threshold", DEFAULT_TREND_THRESHOLD))
+            return regime_blend_signals(
+                sig_df,
+                df["close"],
+                preferred,
+                unfavorable=unfavorable,
+                trend_threshold=trend_threshold,
+            )
 
         if self.mode == "vote":
             # Входимо тільки якщо всі стратегії мають однаковий знак (або більшість)

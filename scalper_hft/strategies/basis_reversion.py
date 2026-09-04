@@ -24,6 +24,8 @@ from scalper_hft.strategies.base import Strategy
 
 class BasisReversion(Strategy):
     name = "basis_reversion"
+    family = "relative_value"
+    preferred_regimes = frozenset()
     needs_funding = True  # для консистентності рушія; фандінг додається до PnL
 
     param_space = {

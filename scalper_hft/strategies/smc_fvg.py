@@ -27,6 +27,8 @@ from scalper_hft.strategies.base import Strategy
 
 class SmcFvgStrategy(Strategy):
     name = "smc_fvg"
+    family = "flow"
+    preferred_regimes = frozenset()
 
     param_space = {
         "atr_sl": (1.0, 3.0, 0.5),

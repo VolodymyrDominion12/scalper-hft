@@ -3,12 +3,29 @@
 Скальпінг-стратегії чутливі до режиму: у тренді працює моментум, у флеті —
 mean-reversion. Фільтри режиму відсікають несприятливі стани і тим самим
 зменшують кількість збиткових трейдів (покращують win rate та PF).
+
+Іменований стан ринку — два каузальні виміри (лише дані ≤ t):
+    структура: range | trend_up | trend_down
+    волатильність: low | normal | high
+Це не «бичий/ведмежий ринок» на денному ТФ, а локальна структура для скальпінгу.
 """
 
 from __future__ import annotations
 
+from typing import Final, Literal, get_args
+
 import numpy as np
 import pandas as pd
+
+MarketStructure = Literal["range", "trend_up", "trend_down"]
+VolRegime = Literal["low", "normal", "high"]
+
+STRUCTURE_LABELS: Final[frozenset[str]] = frozenset(get_args(MarketStructure))
+VOL_LABELS: Final[frozenset[str]] = frozenset(get_args(VolRegime))
+STRUCTURE_ORDER: Final[tuple[str, ...]] = ("range", "trend_up", "trend_down")
+VOL_ORDER: Final[tuple[str, ...]] = ("low", "normal", "high")
+COMPOSITE_ORDER: Final[tuple[str, ...]] = tuple(f"{s}|{v}" for s in STRUCTURE_ORDER for v in VOL_ORDER)
+DEFAULT_TREND_THRESHOLD: Final[float] = 0.35
 
 
 def volatility_regime(close: pd.Series, lookback: int = 60, percentile_window: int = 500) -> pd.Series:
@@ -45,3 +62,62 @@ def session_filter(index: pd.DatetimeIndex, start_hour: int = 0, end_hour: int =
     if start_hour <= end_hour:
         return (hours >= start_hour) & (hours < end_hour)
     return (hours >= start_hour) | (hours < end_hour)
+
+
+def market_structure(
+    close: pd.Series,
+    ema_fast: int = 9,
+    ema_slow: int = 50,
+    trend_threshold: float = DEFAULT_TREND_THRESHOLD,
+) -> pd.Series:
+    """Локальна структура ринку: range / trend_up / trend_down.
+
+    Каузально: EMA та сила тренду на закритті бару t. Якщо сила < порога —
+    діапазон; інакше знак (EMA_fast − EMA_slow) задає напрям.
+    """
+    if trend_threshold < 0.0:
+        raise ValueError(f"trend_threshold must be >= 0, got {trend_threshold}")
+    strength = trend_strength(close, ema_fast=ema_fast, ema_slow=ema_slow)
+    fast = close.ewm(span=ema_fast, adjust=False).mean()
+    slow = close.ewm(span=ema_slow, adjust=False).mean()
+    trending = strength >= trend_threshold
+    up = fast > slow
+    out = pd.Series("range", index=close.index, dtype=object)
+    out.loc[trending & up] = "trend_up"
+    out.loc[trending & ~up] = "trend_down"
+    return out
+
+
+def composite_regime_label(structure: pd.Series, vol: pd.Series) -> pd.Series:
+    """Складена мітка `structure|vol`, наприклад `range|low`."""
+    return structure.astype(str) + "|" + vol.astype(str)
+
+
+def named_market_state(
+    close: pd.Series,
+    *,
+    ema_fast: int = 9,
+    ema_slow: int = 50,
+    trend_threshold: float = DEFAULT_TREND_THRESHOLD,
+    vol_lookback: int = 60,
+    vol_percentile_window: int = 500,
+) -> pd.DataFrame:
+    """Каузальний іменований стан: колонки structure, vol, label.
+
+    label складається як structure|vol. Не HMM і не бик/ведмідь на старшому ТФ.
+    """
+    structure = market_structure(
+        close,
+        ema_fast=ema_fast,
+        ema_slow=ema_slow,
+        trend_threshold=trend_threshold,
+    )
+    vol = volatility_regime(close, lookback=vol_lookback, percentile_window=vol_percentile_window)
+    return pd.DataFrame(
+        {
+            "structure": structure,
+            "vol": vol,
+            "label": composite_regime_label(structure, vol),
+        },
+        index=close.index,
+    )

@@ -102,6 +102,8 @@ class SparseBasketArb(Strategy):
     """Стратегія арбітражу розрідженого кошика (Sparse Mean-Reverting Basket)."""
 
     name = "sparse_basket"
+    family = "relative_value"
+    preferred_regimes = frozenset()
 
     param_space = {
         "lookback": (30, 200, 10),

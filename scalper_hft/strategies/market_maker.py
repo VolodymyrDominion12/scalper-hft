@@ -25,6 +25,8 @@ from scalper_hft.strategies.base import Strategy
 
 class PassiveMarketMaker(Strategy):
     name = "market_maker"
+    family = "market_making"
+    preferred_regimes = frozenset({"low", "normal"})
 
     param_space = {
         "spread_offset_mult": (0.1, 1.5, 0.1),

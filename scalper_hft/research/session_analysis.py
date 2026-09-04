@@ -5,7 +5,8 @@
 
 Використання:
     from scalper_hft.research.session_analysis import (
-        session_breakdown, weekday_breakdown, regime_breakdown, mae_mfe_analysis
+        session_breakdown, weekday_breakdown, regime_breakdown,
+        structure_breakdown, named_regime_breakdown, mae_mfe_analysis
     )
     trades_df = res.trades
     session = session_breakdown(trades_df)
@@ -14,8 +15,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 import pandas as pd
+
+from scalper_hft.features.regimes import COMPOSITE_ORDER, STRUCTURE_ORDER, VOL_ORDER
 
 
 def session_breakdown(trades_df: pd.DataFrame) -> pd.DataFrame:
@@ -109,39 +114,111 @@ def hourly_fill_rate(orders_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows).set_index("hour_utc")
 
 
+def _metrics_for_returns(rets: pd.Series, n_trades: int) -> dict[str, float]:
+    """Trade-level metrics. Sharpe = mean(ret)/std(ret), not annualized."""
+    if rets.empty:
+        return {
+            "n_trades": float(n_trades),
+            "win_rate": 0.0,
+            "avg_pnl": 0.0,
+            "total_pnl": 0.0,
+            "median_pnl": 0.0,
+            "profit_factor": float("nan"),
+            "sharpe": float("nan"),
+        }
+    losses = rets[rets < 0]
+    gains = rets[rets > 0]
+    loss_sum = float(-losses.sum()) if not losses.empty else 0.0
+    if loss_sum > 0:
+        profit_factor = float(gains.sum() / loss_sum)
+    else:
+        profit_factor = float("nan")
+    std = float(rets.std(ddof=1)) if len(rets) > 1 else 0.0
+    mean = float(rets.mean())
+    sharpe = mean / std if std > 0 else float("nan")
+    return {
+        "n_trades": float(n_trades),
+        "win_rate": float((rets > 0).mean()),
+        "avg_pnl": mean,
+        "total_pnl": float(rets.sum()),
+        "median_pnl": float(rets.median()),
+        "profit_factor": profit_factor,
+        "sharpe": sharpe,
+    }
+
+
+def _regime_at_entry(entry_ts: pd.Series, regime_series: pd.Series) -> pd.Series:
+    ts = pd.to_datetime(entry_ts)
+    return ts.map(lambda t: regime_series.asof(t))
+
+
+def _breakdown_by_labels(
+    trades_df: pd.DataFrame,
+    labels: pd.Series,
+    order: Sequence[str],
+    index_name: str,
+) -> pd.DataFrame:
+    rets_col = "ret" if "ret" in trades_df.columns else None
+    rows: list[dict[str, float | str]] = []
+    for name in order:
+        mask = labels == name
+        n = int(mask.sum())
+        rets = trades_df.loc[mask, "ret"] if rets_col is not None else pd.Series(dtype=float)
+        row: dict[str, float | str] = {index_name: name}
+        row.update(_metrics_for_returns(rets, n))
+        rows.append(row)
+    return pd.DataFrame(rows).set_index(index_name)
+
+
 def regime_breakdown(trades_df: pd.DataFrame, regime_series: pd.Series | None = None) -> pd.DataFrame:
     """Метрики угод по режимах волатильності (low/normal/high).
 
     regime_series: Series з індексом datetime і значеннями "low"/"normal"/"high"
     (результат `volatility_regime()`). Якщо None — повертає порожній DataFrame.
+
+    Sharpe тут — mean/std прибутків угод, не річний. Гіпотеза preferred_regimes
+    підтверджується лише якщо OOS Sharpe у «своєму» режимі стійко кращий.
     """
     if trades_df is None or trades_df.empty or regime_series is None:
         return pd.DataFrame()
 
     df = trades_df.copy()
-    # Беремо режим на барі входу
-    entry_ts = pd.to_datetime(df["entry_ts"])
-    df["regime"] = entry_ts.map(lambda ts: regime_series.asof(ts) if ts in regime_series.index or True else "unknown")
+    labels = _regime_at_entry(df["entry_ts"], regime_series)
+    return _breakdown_by_labels(df, labels, VOL_ORDER, "regime")
 
-    rows = []
-    for regime in ["low", "normal", "high"]:
-        sub = df[df["regime"] == regime]
-        rets = sub["ret"] if "ret" in sub.columns and not sub.empty else pd.Series(dtype=float)
-        rows.append(
-            {
-                "regime": regime,
-                "n_trades": len(sub),
-                "win_rate": float((rets > 0).mean()) if len(rets) else 0.0,
-                "avg_pnl": float(rets.mean()) if len(rets) else 0.0,
-                "total_pnl": float(rets.sum()) if len(rets) else 0.0,
-                "profit_factor": (
-                    float(rets[rets > 0].sum() / (-rets[rets < 0].sum()))
-                    if len(rets[rets < 0]) > 0 and -rets[rets < 0].sum() > 0
-                    else float("nan")
-                ),
-            }
-        )
-    return pd.DataFrame(rows).set_index("regime")
+
+def structure_breakdown(
+    trades_df: pd.DataFrame,
+    structure_series: pd.Series | None = None,
+) -> pd.DataFrame:
+    """Метрики угод по структурі ринку (range / trend_up / trend_down)."""
+    if trades_df is None or trades_df.empty or structure_series is None:
+        return pd.DataFrame()
+    df = trades_df.copy()
+    labels = _regime_at_entry(df["entry_ts"], structure_series)
+    return _breakdown_by_labels(df, labels, STRUCTURE_ORDER, "structure")
+
+
+def named_regime_breakdown(
+    trades_df: pd.DataFrame,
+    state: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Метрики угод по складеному стану `structure|vol` (9 комірок).
+
+    `state` — результат `named_market_state(close)`. Клас стратегії не
+    оновлюється з цієї таблиці автоматично: потрібен окремий OOS-вердикт.
+    """
+    if trades_df is None or trades_df.empty or state is None or state.empty:
+        return pd.DataFrame()
+    if "label" in state.columns:
+        label_series = state["label"]
+    elif {"structure", "vol"} <= set(state.columns):
+        label_series = state["structure"].astype(str) + "|" + state["vol"].astype(str)
+    else:
+        raise ValueError("state must have 'label' or both 'structure' and 'vol'")
+    df = trades_df.copy()
+    labels = _regime_at_entry(df["entry_ts"], label_series)
+    return _breakdown_by_labels(df, labels, COMPOSITE_ORDER, "regime")
 
 
 def mae_mfe_analysis(trades_df: pd.DataFrame, df_bars: pd.DataFrame) -> pd.DataFrame:

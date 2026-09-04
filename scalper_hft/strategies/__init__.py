@@ -20,6 +20,13 @@ from scalper_hft.strategies.smc_fvg import SmcFvgStrategy
 from scalper_hft.strategies.sparse_basket import SparseBasketArb
 from scalper_hft.strategies.stoch_rsi import StochRsiStrategy
 from scalper_hft.strategies.supertrend import SupertrendStrategy
+from scalper_hft.strategies.taxonomy import (
+    FAMILIES,
+    PREFERRED_REGIME_LABELS,
+    AlphaFamily,
+    PreferredRegime,
+    regime_capital_weight,
+)
 
 REGISTRY: dict[str, type[Strategy]] = {
     cls.name: cls
@@ -50,10 +57,22 @@ def get_strategy(name: str, **params: float | int | str | bool) -> Strategy:
     return REGISTRY[name](**params)
 
 
+def registry_taxonomy() -> dict[str, dict[str, object]]:
+    """Сім'я та preferred_regimes кожної зареєстрованої стратегії (гіпотези)."""
+    return {
+        name: {
+            "family": cls.family,
+            "preferred_regimes": frozenset(cls.preferred_regimes),
+        }
+        for name, cls in REGISTRY.items()
+    }
+
+
 __all__ = [
     "Strategy",
     "REGISTRY",
     "get_strategy",
+    "registry_taxonomy",
     "SparseBasketArb",
     "Exp3Bandit",
     "exp3_select_signals",
@@ -61,4 +80,9 @@ __all__ = [
     "SupertrendStrategy",
     "StochRsiStrategy",
     "SmcFvgStrategy",
+    "FAMILIES",
+    "PREFERRED_REGIME_LABELS",
+    "AlphaFamily",
+    "PreferredRegime",
+    "regime_capital_weight",
 ]

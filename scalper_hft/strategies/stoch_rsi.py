@@ -26,6 +26,8 @@ from scalper_hft.strategies.base import Strategy
 
 class StochRsiStrategy(Strategy):
     name = "stoch_rsi"
+    family = "mean_reversion"
+    preferred_regimes = frozenset({"range", "low", "normal"})
 
     param_space = {
         "rsi_period": (10.0, 21.0, 1.0),

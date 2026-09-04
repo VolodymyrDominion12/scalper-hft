@@ -18,6 +18,8 @@ from scalper_hft.strategies.base import Strategy
 
 class MeanReversionScalper(Strategy):
     name = "mean_reversion"
+    family = "mean_reversion"
+    preferred_regimes = frozenset({"range", "low", "normal"})
 
     param_space = {
         "rsi_period": (5.0, 30.0, 1.0),

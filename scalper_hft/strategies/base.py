@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
+from scalper_hft.strategies.taxonomy import AlphaFamily, PreferredRegime
+
 if TYPE_CHECKING:
     from scalper_hft.research.filter_trace import FilterTrace
 
@@ -38,6 +40,10 @@ class Strategy(abc.ABC):
     # якщо True — рушій вимикає сигнали, де очікуваний рух < round-trip витрат
     # (Narang гл. 5: edge має покривати транзакційні витрати)
     use_breakeven_gate: bool = False
+    # сім'я альфи (Narang гл. 3); preferred_regimes — гіпотеза, не live-гейт.
+    # порожній frozenset = усі режими (вага 1.0), поки OOS це не спростує.
+    family: AlphaFamily = "meta"
+    preferred_regimes: frozenset[PreferredRegime] = frozenset()
 
     def __init__(self, **params: Any) -> None:
         self.params: dict[str, Any] = dict(params)

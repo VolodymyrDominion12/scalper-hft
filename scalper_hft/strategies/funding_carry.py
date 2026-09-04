@@ -23,6 +23,8 @@ from scalper_hft.strategies.base import Strategy
 
 class FundingCarryScalper(Strategy):
     name = "funding_carry"
+    family = "carry"
+    preferred_regimes = frozenset({"range", "low", "normal"})
     needs_funding = True
 
     param_space = {

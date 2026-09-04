@@ -45,6 +45,8 @@ class HmmReversionScalper(Strategy):
     """
 
     name = "hmm_reversion"
+    family = "mean_reversion"
+    preferred_regimes = frozenset({"range", "low", "normal"})
     needs_trades = False
 
     param_space: dict[str, tuple[float, float, float]] = {
