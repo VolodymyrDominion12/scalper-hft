@@ -19,9 +19,11 @@ import logging
 import random
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import partial
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -36,6 +38,9 @@ _MS = 1_000
 _S = 60_000
 _H = 3_600_000
 _OHLCV_COLS = ["open", "high", "low", "close", "volume"]
+# REST aggTrades на ф'ючерсах доступні лише за ~2 доби — кеш свіжий, якщо хвіст у цьому вікні.
+_AGG_TRADES_REST_DAYS = 2
+_COOLDOWN_FILE = ".binance_rest_cooldown"
 
 
 def _utc_now() -> pd.Timestamp:
@@ -236,14 +241,21 @@ def _default_client() -> BinanceClient:
     return _client
 
 
+def _has_http_status(combined: str, code: int) -> bool:
+    """Чи є HTTP-статус окремим токеном (не підрядок на кшталт 1418 у timestamp)."""
+    return re.search(rf"(?:^|[^\d]){code}(?:[^\d]|$)", combined) is not None
+
+
 def _calculate_backoff(attempt: int, exc: Exception, max_retries: int) -> tuple[float, str]:
     """Обчислити час очікування (секунди) та категорію помилки для логування.
 
     Категорії:
-    1. IP Ban (HTTP 418, -1003, 'IP banned', 'banned until'):
+    1. IP Ban (HTTP 418, 'IP banned', 'banned until', 'IP has been auto-banned'):
        - Якщо є точний timestamp закінчення бану ('banned until 1708935600000'), спимо до нього + 2с.
        - Інакше експоненційно: 60s, 120s, 180s... з джиттером.
-    2. Rate Limit (HTTP 429, RateLimitExceeded, 'Too many requests'):
+       ⚠ Код -1003 сам по собі НЕ є баном: Binance ставить його і на 429
+       ("6000 requests per minute"), і на 418. Бан — лише 418 / banned-текст.
+    2. Rate Limit (HTTP 429, -1003 без бану, RateLimitExceeded, 'Too many requests'):
        - 10s * (2 ** attempt) + jitter, обмежено 180s (10s, 20s, 40s, 80s, 160s...).
     3. Мережеві помилки (502, 503, 504, NetworkError, RequestTimeout, ExchangeNotAvailable):
        - 2s * (2 ** attempt) + jitter, обмежено 60s (2s, 4s, 8s, 16s, 32s...).
@@ -252,10 +264,9 @@ def _calculate_backoff(attempt: int, exc: Exception, max_retries: int) -> tuple[
     exc_type = type(exc).__name__
     combined = f"{exc_type} {exc_str}".lower()
 
-    # 1. IP Ban / 418 / -1003 / "banned until"
+    # 1. Справжній IP-ban: HTTP 418 або явний текст бану. Не -1003 окремо.
     is_ip_ban = (
-        "418" in combined
-        or "-1003" in combined
+        _has_http_status(combined, 418)
         or "ip ban" in combined
         or "banned until" in combined
         or "ip has been auto-banned" in combined
@@ -275,9 +286,10 @@ def _calculate_backoff(attempt: int, exc: Exception, max_retries: int) -> tuple[
         base_ban = 60.0 * (attempt + 1) + random.uniform(1.0, 5.0)
         return min(300.0, base_ban), "ip_ban"
 
-    # 2. Rate limit / 429 / RateLimitExceeded / DDoSProtection
+    # 2. Rate limit / 429 / -1003 (без бану) / RateLimitExceeded / DDoSProtection
     is_rate_limit = (
-        "429" in combined
+        _has_http_status(combined, 429)
+        or "-1003" in combined
         or "too many requests" in combined
         or "ratelimitexceeded" in combined
         or "ddosprotection" in combined
@@ -290,6 +302,67 @@ def _calculate_backoff(attempt: int, exc: Exception, max_retries: int) -> tuple[
     # 3. Network / Server / Timeout / Other transient
     base_net = 2.0 * (2**attempt) + random.uniform(0.5, 2.0)
     return min(60.0, base_net), "network"
+
+
+def agg_trades_cache_fresh(cached: pd.DataFrame | None, *, now: pd.Timestamp | None = None) -> bool:
+    """Чи REST-хвіст aggTrades вже в кеші (Binance віддає лише ~2 доби)."""
+    if cached is None or cached.empty:
+        return False
+    now_ts = now if now is not None else _utc_now()
+    newest = cached.index[-1]
+    return bool(newest >= now_ts - pd.Timedelta(days=_AGG_TRADES_REST_DAYS))
+
+
+def _cooldown_path() -> Path:
+    return get_settings().data_dir_abs / _COOLDOWN_FILE
+
+
+def _wait_shared_cooldown() -> None:
+    """Усі процеси шарять одну паузу після 429, щоб не бити IP одночасно."""
+    path = _cooldown_path()
+    try:
+        until = float(path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return
+    wait = until - time.time()
+    if wait > 0:
+        logger.warning("Спільна пауза Binance REST: ще %.1f с", wait)
+        time.sleep(wait)
+
+
+def _set_shared_cooldown(seconds: float) -> None:
+    """Продовжити спільну паузу, якщо нова межа далі за вже записану."""
+    if seconds <= 0:
+        return
+    until = time.time() + seconds
+    path = _cooldown_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        existing = float(path.read_text(encoding="utf-8").strip())
+        if existing >= until:
+            return
+    except (OSError, ValueError):
+        pass
+    path.write_text(f"{until:.3f}", encoding="utf-8")
+
+
+@contextmanager
+def _exclusive_fetch(name: str) -> Iterator[None]:
+    """Міжпроцесний flock: один REST-прохід на ключ (sweep ProcessPool / job workers)."""
+    try:
+        import fcntl
+    except ImportError:  # pragma: no cover — Windows
+        yield
+        return
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", name)[:120]
+    path = get_settings().data_dir_abs / f".lock_{safe}"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 
 class Downloader:
@@ -315,6 +388,7 @@ class Downloader:
     def _with_retry(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
         last: Exception | None = None
         for attempt in range(self.retries):
+            _wait_shared_cooldown()
             try:
                 return fn(*args, **kwargs)
             except Exception as exc:  # noqa: BLE001 — мережеві помилки різні
@@ -323,9 +397,11 @@ class Downloader:
                     logger.warning("Спроба %d/%d (остання) не вдалась: %s", attempt + 1, self.retries, exc)
                     break
                 sleep_s, category = _calculate_backoff(attempt, exc, self.retries)
+                if category in {"ip_ban", "rate_limit"}:
+                    _set_shared_cooldown(sleep_s)
                 if category == "ip_ban":
                     logger.warning(
-                        "Binance IP тимчасово заблоковано (418 / -1003): очікую %.1f с (спроба %d/%d) [%s]",
+                        "Binance IP заблоковано (418): очікую %.1f с (спроба %d/%d) [%s]",
                         sleep_s,
                         attempt + 1,
                         self.retries,
@@ -333,7 +409,7 @@ class Downloader:
                     )
                 elif category == "rate_limit":
                     logger.warning(
-                        "Rate limit Binance (429): очікую %.1f с (спроба %d/%d) [%s]",
+                        "Rate limit Binance (429 / -1003): очікую %.1f с (спроба %d/%d) [%s]",
                         sleep_s,
                         attempt + 1,
                         self.retries,
@@ -703,22 +779,31 @@ def download_agg_trades(
 ) -> pd.DataFrame:
     store = get_store()
     cached = None if force else store.load_trades(symbol)
+    if not force and agg_trades_cache_fresh(cached):
+        assert cached is not None
+        logger.info("Кеш aggTrades %s актуальний (до %s): %d рядків", symbol, cached.index[-1], len(cached))
+        return cached
     if cached is not None and not cached.empty:
-        # REST може дістати лише останні ~2 доби — якщо кеш їх покриває,
-        # повторне завантаження не потрібне (запобігає 10+ хв ре-фетчу)
-        newest = cached.index[-1]
-        now = _utc_now()
-        if newest >= now - pd.Timedelta(days=2):
-            logger.info("Кеш aggTrades %s актуальний (до %s): %d рядків", symbol, newest, len(cached))
-            return cached
-        logger.info("Оновлення aggTrades %s: було %d рядків до %s", symbol, len(cached), newest)
+        logger.info("Оновлення aggTrades %s: було %d рядків до %s", symbol, len(cached), cached.index[-1])
     logger.info("Завантаження aggTrades %s за %d днів", symbol, days)
-    return Downloader(
-        store=store,
-        retries=retries,
-        batch_delay=batch_delay,
-        checkpoint_batches=checkpoint_batches,
-    ).agg_trades(symbol, days)
+    with _exclusive_fetch(f"aggtrades_{symbol}"):
+        if not force:
+            cached = store.load_trades(symbol)
+            if agg_trades_cache_fresh(cached):
+                assert cached is not None
+                logger.info(
+                    "Кеш aggTrades %s заповнений іншим воркером (до %s): %d рядків",
+                    symbol,
+                    cached.index[-1],
+                    len(cached),
+                )
+                return cached
+        return Downloader(
+            store=store,
+            retries=retries,
+            batch_delay=batch_delay,
+            checkpoint_batches=checkpoint_batches,
+        ).agg_trades(symbol, days)
 
 
 def download_funding(

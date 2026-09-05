@@ -157,6 +157,52 @@ def test_save_sweep_report(tmp_path) -> None:
     assert len(from_csv) == len(res)
 
 
+def test_sweep_warms_agg_trades_once_then_cells_read_store(monkeypatch) -> None:
+    """needs_trades стратегії не мають качати REST у кожній клітинці."""
+    from scalper_hft.data import access as acc
+    from scalper_hft.data import downloader as dl
+    from scalper_hft.data import store as store_mod
+
+    klines = _make_data("BTCUSDT", "1m", 2)[0]
+    trades_calls: list[str] = []
+    load_trades_calls: list[str] = []
+    sample_trades = pd.DataFrame(
+        {"trade_id": [1], "price": [1.0], "amount": [1.0], "side": ["buy"]},
+        index=pd.DatetimeIndex([pd.Timestamp("2024-01-04")]),
+    )
+
+    monkeypatch.setattr(acc, "warm_base_cache", lambda *a, **k: {"BTCUSDT": klines})
+    monkeypatch.setattr(acc, "can_derive", lambda iv, base: iv != base)
+    monkeypatch.setattr(acc, "ensure_klines", lambda *a, **k: klines)
+
+    def fake_download_agg(symbol: str, days: int, **kwargs: object) -> pd.DataFrame:
+        trades_calls.append(symbol)
+        return sample_trades
+
+    class _Store:
+        def load_trades(self, symbol: str) -> pd.DataFrame:
+            load_trades_calls.append(symbol)
+            return sample_trades
+
+        def load_funding(self, symbol: str) -> None:
+            return None
+
+    monkeypatch.setattr(dl, "download_agg_trades", fake_download_agg)
+    monkeypatch.setattr(dl, "download_funding", lambda *a, **k: None)
+    monkeypatch.setattr(store_mod, "get_store", lambda: _Store())
+
+    res = run_sweep(
+        strategies=["cvd_momentum", "mean_reversion"],
+        symbols=["BTCUSDT"],
+        intervals=["1m", "5m"],
+        days=2,
+        workers=1,
+    )
+    assert (res["status"] == "ok").all()
+    assert trades_calls == ["BTCUSDT"]
+    assert load_trades_calls.count("BTCUSDT") == 2
+
+
 def test_sweep_resume_skips_ok_cells(tmp_path) -> None:
     from scalper_hft.research.sweep_store import SweepStore
 
@@ -235,4 +281,3 @@ def test_sweep_store_load_coerces_numeric_columns(tmp_path) -> None:
         assert loaded["avg_oos_sharpe"].dtype == "float64"
         assert loaded["oos_positive_frac"].dtype == "float64"
         assert loaded["sharpe"].dtype == "float64"
-

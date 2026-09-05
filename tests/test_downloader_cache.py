@@ -3,15 +3,40 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 from scalper_hft.data.downloader import (
     Downloader,
     _interval_ms,
     _to_ms,
+    agg_trades_cache_fresh,
     format_ms_windows,
     klines_coverage,
     merge_windows,
     missing_klines_windows,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_binance_rest_files(tmp_path, monkeypatch) -> None:
+    """Cooldown/lock-файли не повинні чіпати ./data і не блокувати pytest."""
+    from scalper_hft.data import downloader as dl
+
+    monkeypatch.setattr(dl, "_cooldown_path", lambda: tmp_path / ".binance_rest_cooldown")
+    monkeypatch.setattr(
+        dl,
+        "_exclusive_fetch",
+        _noop_exclusive_fetch,
+    )
+
+
+def _noop_exclusive_fetch(_name: str):
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _inner():
+        yield
+
+    return _inner()
 
 
 def _bars_df(start: str, n: int, freq: str = "1min") -> pd.DataFrame:
@@ -246,6 +271,20 @@ def test_calculate_backoff_rate_limit() -> None:
     assert 40.0 <= sleep_s2 <= 46.0
 
 
+def test_calculate_backoff_429_with_code_1003_is_rate_limit_not_ip_ban() -> None:
+    """Binance 429 {"code":-1003} — ліміт 6000 req/min, не HTTP 418 ban."""
+    from scalper_hft.data.downloader import _calculate_backoff
+
+    exc = RuntimeError(
+        'binance 429 Too Many Requests {"code":-1003,"msg":"Too many requests; '
+        "current limit of IP(188.163.81.59) is 6000 requests per minute. "
+        'Please use the websocket for live updates to avoid polling the API."}'
+    )
+    sleep_s, cat = _calculate_backoff(attempt=0, exc=exc, max_retries=8)
+    assert cat == "rate_limit"
+    assert 10.0 <= sleep_s <= 16.0
+
+
 def test_calculate_backoff_network_error() -> None:
     from scalper_hft.data.downloader import _calculate_backoff
 
@@ -404,3 +443,125 @@ def test_agg_trades_continues_from_last_cached_trade(monkeypatch) -> None:
     Downloader(client=client, retries=1, store=store, batch_delay=0.0).agg_trades("BTCUSDT", days=2)
     assert client.calls
     assert client.calls[0] >= _to_ms(last)
+
+
+def test_agg_trades_cache_fresh() -> None:
+    now = pd.Timestamp("2024-01-10 12:00:00")
+    assert not agg_trades_cache_fresh(None, now=now)
+    assert not agg_trades_cache_fresh(pd.DataFrame(), now=now)
+    stale = pd.DataFrame(
+        {"trade_id": [1], "price": [1.0], "amount": [1.0], "side": ["buy"]},
+        index=[now - pd.Timedelta(days=3)],
+    )
+    fresh = pd.DataFrame(
+        {"trade_id": [1], "price": [1.0], "amount": [1.0], "side": ["buy"]},
+        index=[now - pd.Timedelta(hours=6)],
+    )
+    assert not agg_trades_cache_fresh(stale, now=now)
+    assert agg_trades_cache_fresh(fresh, now=now)
+
+
+def test_download_agg_trades_fresh_cache_skips_network(monkeypatch) -> None:
+    from scalper_hft.data import downloader as dl
+
+    now = pd.Timestamp("2024-01-10 12:00:00")
+    monkeypatch.setattr(dl, "_utc_now", lambda: now)
+    existing = pd.DataFrame(
+        {"trade_id": [1], "price": [0.1], "amount": [1.0], "side": ["buy"]},
+        index=[now - pd.Timedelta(hours=1)],
+    )
+
+    class _Store:
+        def load_trades(self, symbol: str) -> pd.DataFrame:
+            return existing
+
+        def save_trades(self, symbol: str, df: pd.DataFrame) -> None:
+            raise AssertionError("свіжий кеш не перезаписується")
+
+    monkeypatch.setattr(dl, "get_store", lambda: _Store())
+
+    class _Boom:
+        def __init__(self, **kwargs: object) -> None:
+            raise AssertionError("Downloader не має створюватися")
+
+    monkeypatch.setattr(dl, "Downloader", _Boom)
+    out = dl.download_agg_trades("DOGEUSDT", days=60)
+    assert len(out) == 1
+
+
+def test_download_agg_trades_rechecks_cache_after_lock(monkeypatch) -> None:
+    """Під lock інший воркер уже зберіг кеш — REST не викликається."""
+    from scalper_hft.data import downloader as dl
+
+    now = pd.Timestamp("2024-01-10 12:00:00")
+    monkeypatch.setattr(dl, "_utc_now", lambda: now)
+    filled = pd.DataFrame(
+        {"trade_id": [1], "price": [0.1], "amount": [1.0], "side": ["buy"]},
+        index=[now - pd.Timedelta(minutes=5)],
+    )
+    n_load = {"n": 0}
+
+    class _Store:
+        def load_trades(self, symbol: str) -> pd.DataFrame | None:
+            n_load["n"] += 1
+            if n_load["n"] == 1:
+                return None
+            return filled
+
+        def save_trades(self, symbol: str, df: pd.DataFrame) -> None:
+            raise AssertionError("не має зберігати")
+
+    monkeypatch.setattr(dl, "get_store", lambda: _Store())
+
+    class _Boom:
+        def __init__(self, **kwargs: object) -> None:
+            raise AssertionError("Downloader не має створюватися після lock")
+
+    monkeypatch.setattr(dl, "Downloader", _Boom)
+    out = dl.download_agg_trades("DOGEUSDT", days=60)
+    assert len(out) == 1
+    assert n_load["n"] == 2
+
+
+def test_set_shared_cooldown_writes_future_ts(tmp_path, monkeypatch) -> None:
+    import time
+
+    from scalper_hft.data import downloader as dl
+
+    path = tmp_path / ".binance_rest_cooldown"
+    monkeypatch.setattr(dl, "_cooldown_path", lambda: path)
+    dl._set_shared_cooldown(30.0)
+    until = float(path.read_text(encoding="utf-8").strip())
+    assert until > time.time() + 20
+    dl._set_shared_cooldown(5.0)
+    until2 = float(path.read_text(encoding="utf-8").strip())
+    assert until2 == until
+    path.write_text(str(time.time() - 10.0), encoding="utf-8")
+    dl._wait_shared_cooldown()  # минуле — без sleep
+
+
+def test_with_retry_sets_shared_cooldown_on_429(tmp_path, monkeypatch) -> None:
+    from scalper_hft.data import downloader as dl
+
+    path = tmp_path / ".binance_rest_cooldown"
+    monkeypatch.setattr(dl, "_cooldown_path", lambda: path)
+    monkeypatch.setattr(dl.time, "sleep", lambda _s: None)
+    sleeps: list[float] = []
+    monkeypatch.setattr(dl, "_set_shared_cooldown", lambda s: sleeps.append(s))
+
+    class _Once429:
+        def __init__(self) -> None:
+            self.n = 0
+
+        def fetch_klines(self, symbol: str, timeframe: str, since_ms: int, limit: int = 1000):
+            self.n += 1
+            if self.n == 1:
+                raise RuntimeError('binance 429 Too Many Requests {"code":-1003,"msg":"Too many requests"}')
+            return []
+
+    store = _MemStore()
+    now = pd.Timestamp("2024-01-10 12:00:00")
+    monkeypatch.setattr(dl, "_utc_now", lambda: now)
+    Downloader(client=_Once429(), retries=3, store=store, batch_delay=0.0).klines("BTCUSDT", "1m", days=1)
+    assert sleeps
+    assert sleeps[0] >= 10.0

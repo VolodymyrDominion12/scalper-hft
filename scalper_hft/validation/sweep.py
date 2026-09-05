@@ -3,6 +3,8 @@
 Мета (дослідження: перевірка багатьох гіпотез без частих звернень до API):
     - база (1m) качається з Binance один раз на символ і кешується
       (parquet або PostgreSQL у Docker);
+    - aggTrades / funding — теж один послідовний прогрів на символ
+      (інакше ProcessPool одночасно б'є той самий REST і ловить 429);
     - решта таймфреймів (5m/15m/30m/1h/4h/1d...) будується ресемплінгом
       локально — нуль API-дзвінків;
     - кожна клітинка (стратегія, символ, таймфрейм) — незалежний бектест
@@ -179,17 +181,15 @@ def _build_cell_runner(
             klines, trades, funding = data_provider(symbol, interval, days)
         else:
             from scalper_hft.data.access import ensure_klines
-            from scalper_hft.data.downloader import download_agg_trades, download_funding
+            from scalper_hft.data.store import get_store
 
-            # readonly: база вже прогріта (warm_base_cache у run_sweep) —
-            # клітинки лише читають кеш і ресемплять, НЕ докачують хвіст і
-            # НЕ перезаписують мільйони рядків (інакше кожна клітинка бачить
-            # хвіст застарілим на хвилини → шторм запитів/upsert-ів).
-            klines = ensure_klines(
-                symbol, interval, days, base_interval=base_interval, derive=True, readonly=True
-            )
-            trades = download_agg_trades(symbol, days) if strategy.needs_trades else None
-            funding = download_funding(symbol, days) if strategy.needs_funding else None
+            # readonly: klines/aggTrades/funding уже прогріті в run_sweep —
+            # клітинки лише читають кеш. Інакше ProcessPool (workers>1)
+            # одночасно качає ті самі aggTrades і ловить 429 -1003 (6000 req/min).
+            klines = ensure_klines(symbol, interval, days, base_interval=base_interval, derive=True, readonly=True)
+            data_store = get_store()
+            trades = data_store.load_trades(symbol) if strategy.needs_trades else None
+            funding = data_store.load_funding(symbol) if strategy.needs_funding else None
         if klines is None or klines.empty:
             return SweepRow(
                 strategy=strategy.name, symbol=symbol, interval=interval, status="error", error="немає даних"
@@ -316,6 +316,13 @@ def run_sweep(
         if need_base:
             logger.info("Прогрів бази %s для %s символів (%d днів)...", base_interval, len(symbols), days)
             warm_base_cache(symbols, days, base_interval=base_interval)
+        need_trades = any(getattr(REGISTRY[n], "needs_trades", False) for n in strategies)
+        if need_trades:
+            from scalper_hft.data.downloader import download_agg_trades
+
+            logger.info("Прогрів aggTrades для %s символів (послідовно, без гонки REST)...", len(symbols))
+            for sym in symbols:
+                download_agg_trades(sym, days)
         need_funding = any(getattr(REGISTRY[n], "needs_funding", False) for n in strategies)
         if need_funding:
             from scalper_hft.data.downloader import download_funding
