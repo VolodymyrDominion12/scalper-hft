@@ -13,14 +13,15 @@ from collections.abc import Mapping, MutableMapping
 from typing import Any
 
 from scalper_hft.symbols import CANONICAL_SYMBOLS
-from scalper_hft.validation.sweep import DEFAULT_INTERVALS
 
 SYMBOLS: list[str] = list(CANONICAL_SYMBOLS)
 
 # Пари для pairs_arb: лише ті, що пройшли коінтеграційний скринінг/валідацію.
 PAIR_CHOICES = ["XRPUSDT/BTCUSDT", "BTCUSDT/ETHUSDT", "LINKUSDT/BTCUSDT", "LINKUSDT/ETHUSDT"]
 
-BT_INTERVALS: list[str] = list(DEFAULT_INTERVALS)
+# Ті самі ТФ, що validation.sweep.DEFAULT_INTERVALS — без імпорту validation
+# (дашборд піднімає _common до site-packages).
+BT_INTERVALS: list[str] = ["1m", "5m", "15m", "30m", "1h", "4h"]
 RESEARCH_BT_PREFILL = "research_bt_prefill"
 RESEARCH_AUDIT_PREFILL = "research_audit_prefill"
 
