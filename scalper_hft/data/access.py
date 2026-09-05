@@ -40,6 +40,7 @@ def ensure_klines(
     base_interval: str = DEFAULT_BASE_INTERVAL,
     derive: bool = True,
     force: bool = False,
+    readonly: bool = False,
 ) -> pd.DataFrame:
     """Повернути klines (symbol, interval) за останні `days` днів.
 
@@ -47,7 +48,21 @@ def ensure_klines(
         derive: якщо True (за замовчуванням) — не питати Binance про цільовий
             інтервал, а виводити його ресемплінгом із base_interval.
         force: ігнорувати «свіжість» бази і докачати хвіст 1m.
+        readonly: лише читання кешу — жодних мережевих запитів і записів
+            (клітинки sweep: база вже прогріта warm_base_cache один раз,
+            а кожна паралельна клітинка, що перевіряє «свіжість», бачить
+            хвіст застарілим на хвилини → шторм докачувань і DELETE+COPY
+            мільйонів рядків; readonly це усуває).
     """
+    if readonly:
+        df = klines_from_store(symbol, interval, days, base_interval=base_interval)
+        if df is None or df.empty:
+            raise RuntimeError(
+                f"readonly: у кеші немає даних {symbol} {interval} — прогрійте базу "
+                f"({base_interval}) заздалегідь (warm_base_cache / download)"
+            )
+        return df
+
     from scalper_hft.data.downloader import download_klines
 
     if interval == base_interval or not derive or not can_derive(interval, base_interval):
@@ -122,11 +137,34 @@ def warm_base_cache(
     Викликається один раз на початку sweep: далі всі старші таймфрейми
     будуються локально без жодного звернення до Binance. Послідовно
     (спільний ccxt-клієнт пейсить запити глобально, 429-бекф).
+
+    ⚠ Безкоштовний прогрів: якщо кеш уже ПОКРИВАЄ потрібний період (перший
+    бар раніше за now−days), мережа НЕ смикається і кеш НЕ перезаписується
+    (хвіст-«свіжість» до секунди не потрібна для sweep на 180 днів; інакше
+    кожен sweep-запуск робив би DELETE+COPY ~1.6M рядків на символ заради
+    кількох хвилин нових барів).
     """
     from scalper_hft.data.downloader import download_klines
 
+    store = get_store()
+    now = pd.Timestamp.now(tz="UTC").tz_localize(None)
+    need_start = now - pd.Timedelta(days=days)
+
     out: dict[str, pd.DataFrame] = {}
     for sym in symbols:
+        cached = store.load_klines(sym, base_interval)
+        if cached is not None and not cached.empty and cached.index[0] <= need_start:
+            logger.info(
+                "База %s %s: кеш покриває період (%s … %s, %d барів) — прогрів без мережі",
+                sym,
+                base_interval,
+                cached.index[0],
+                cached.index[-1],
+                len(cached),
+            )
+            out[sym] = cached
+            continue
+        logger.info("База %s %s: бракує періоду — повний warmup", sym, base_interval)
         out[sym] = download_klines(sym, base_interval, days)
     return out
 

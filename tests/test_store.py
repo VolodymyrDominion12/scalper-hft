@@ -68,6 +68,23 @@ def test_parquet_missing_returns_none(parquet_store) -> None:
     assert parquet_store.load_funding("NOPEUSDT") is None
 
 
+def test_parquet_symbol_stats(parquet_store) -> None:
+    parquet_store.save_klines("BTCUSDT", "1m", _klines_df(10))
+    parquet_store.save_klines("BTCUSDT", "5m", _klines_df(5))
+    parquet_store.save_spot_klines("BTCUSDT", "1h", _klines_df(3))
+    parquet_store.save_funding("BTCUSDT", _funding_df())
+    parquet_store.save_trades("BTCUSDT", _trades_df())
+    stats = parquet_store.symbol_stats(["BTCUSDT", "ETHUSDT"])
+    btc = stats["BTCUSDT"]
+    assert btc.klines_1m.n_rows == 10
+    assert "1m" in btc.intervals
+    assert "5m" in btc.intervals
+    assert all("spot" not in iv for iv in btc.intervals)
+    assert btc.funding.n_rows == 2
+    assert btc.trades.n_rows == 3
+    assert stats["ETHUSDT"].klines_1m.n_rows == 0
+
+
 def test_get_store_default_parquet(monkeypatch) -> None:
     monkeypatch.setenv("DATA_BACKEND", "parquet")
     monkeypatch.setattr("scalper_hft.config._settings", None)
@@ -118,3 +135,26 @@ def test_postgres_operational_error_returns_none() -> None:
     store = PostgresStore("host=localhost port=1 dbname=nope user=nope password=nope connect_timeout=2")
     assert store.load_klines("X", "1m") is None
     assert store.list_klines() == []
+    assert store.symbol_stats(["X"])["X"].klines_1m.n_rows == 0
+
+
+@pytest.mark.skipif(not os.getenv("TEST_POSTGRES_DSN"), reason="TEST_POSTGRES_DSN не задано")
+def test_postgres_symbol_stats() -> None:
+    store = PostgresStore(os.getenv("TEST_POSTGRES_DSN"))
+    store.ensure_schema()
+    store.save_klines("INVUSDT", "1m", _klines_df(50))
+    store.save_klines("INVUSDT", "5m", _klines_df(10))
+    store.save_spot_klines("INVUSDT", "1h", _klines_df(3))
+    store.save_funding("INVUSDT", _funding_df())
+    store.save_trades("INVUSDT", _trades_df())
+    stats = store.symbol_stats(["INVUSDT", "MISSINGUSDT"])
+    inv = stats["INVUSDT"]
+    assert inv.klines_1m.n_rows == 50
+    assert inv.klines_1m.start == pd.Timestamp("2024-01-01")
+    assert "1m" in inv.intervals
+    assert "5m" in inv.intervals
+    assert all(not iv.startswith("spot") for iv in inv.intervals)
+    assert inv.funding.n_rows == 2
+    assert inv.trades.n_rows > 0
+    assert inv.trades.end is not None
+    assert stats["MISSINGUSDT"].klines_1m.n_rows == 0

@@ -1,0 +1,55 @@
+name: cross_momentum
+version: "1.0"
+status: candidate
+family: momentum
+
+hypothesis: >
+  Відносна сила активу за lookback барів передбачає продовження тренду
+  (momentum effect — добре задокументований у традиційних ринках, менш
+  стабільний у crypto через коінтеграцію). У single-symbol режимі порівнює
+  rolling percentile власного return з медіаною (time-series momentum).
+  У multi-symbol режимі ранжує крос-секцію і виокремлює top/bottom performers.
+  Край: crypto-momentum коротший за equity (fade ефект через
+  crypto-market microstructure та алго-трейдери).
+
+edge_conditions:
+  - name: time_series_momentum
+    description: >
+      Rolling percentile return показує auto-correlation > 0.05 на OOS-вікні
+      (підтверджує персистентність тренду на даному горизонті).
+  - name: low_correlation_pairs_arb
+    description: >
+      Кореляція сигналів cross_momentum і pairs_arb <= 0.3 (диверсифікаційна цінність).
+
+params:
+  lookback:
+    default: 20
+    min: 5
+    max: 60
+    step: 5
+    description: Горизонт momentum у барах.
+  top_pct:
+    default: 0.2
+    min: 0.1
+    max: 0.4
+    step: 0.1
+    description: Частка активів для long/short (у multi-symbol режимі).
+  signal_smooth:
+    default: 1
+    min: 1
+    max: 5
+    step: 1
+    description: EMA-згладжування фінального сигналу (1 = без згладжування).
+
+invariants:
+  no_lookahead: true
+  signal_values: [-1, 0, 1]
+  no_nan_output: true
+
+preferred_regimes: ["trend_up", "trend_down"]
+
+notes: >
+  У single-symbol режимі (CLI backtest) порівнює symbol з rolling percentile.
+  Переваги для портфеля: низька кореляція з pairs_arb (trend vs mean-reversion).
+  Потребує OOS аудиту: crypto-momentum менш стабільний за equity через
+  короткий цикл зворотного зв'язку між алго-трейдерами.

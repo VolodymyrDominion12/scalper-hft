@@ -9,23 +9,29 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Protocol
 
 import pandas as pd
-import pyarrow.parquet as pq
+
+from scalper_hft.data.store import (
+    CachePeek,
+    ParquetStore,
+    SymbolCacheStats,
+    empty_symbol_stats,
+    peek_cache_file,
+)
+
+ParquetPeek = CachePeek
 
 Freshness = Literal["fresh", "aging", "stale", "missing", "future"]
 
 _SPOT_MARK = "spot"
 
 
-@dataclass(frozen=True, slots=True)
-class ParquetPeek:
-    """Мінімальний зріз parquet: кількість рядків і часовий span індексу."""
+class CacheInventorySource(Protocol):
+    """Мінімальний контракт для інвентарю свіжості (parquet або Postgres)."""
 
-    n_rows: int
-    start: pd.Timestamp | None
-    end: pd.Timestamp | None
+    def symbol_stats(self, symbols: Sequence[str]) -> dict[str, SymbolCacheStats]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,67 +50,7 @@ class PaperKpis:
 
 def peek_parquet(path: Path) -> ParquetPeek:
     """Row count і min/max timestamps без завантаження OHLCV-колонок."""
-    if not path.exists():
-        return ParquetPeek(0, None, None)
-    try:
-        pf = pq.ParquetFile(path)
-    except Exception:  # noqa: BLE001 — битий файл = порожній зріз
-        return ParquetPeek(0, None, None)
-    n = int(pf.metadata.num_rows)
-    if n <= 0:
-        return ParquetPeek(0, None, None)
-    names = list(pf.schema_arrow.names)
-    ts_name: str | None = None
-    for candidate in ("__index_level_0__", "timestamp", "ts", "time"):
-        if candidate in names:
-            ts_name = candidate
-            break
-    start, end = _span_from_statistics(pf, names, ts_name)
-    if start is None and ts_name is not None and n <= 2_000_000:
-        start, end = _span_from_column(path, ts_name)
-    return ParquetPeek(n, start, end)
-
-
-def _span_from_statistics(
-    pf: pq.ParquetFile,
-    names: list[str],
-    ts_name: str | None,
-) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
-    if ts_name is None:
-        return None, None
-    col_idx = names.index(ts_name)
-    mins: list[pd.Timestamp] = []
-    maxs: list[pd.Timestamp] = []
-    for i in range(pf.num_row_groups):
-        stats = pf.metadata.row_group(i).column(col_idx).statistics
-        if stats is None or stats.min is None or stats.max is None:
-            continue
-        try:
-            mins.append(pd.Timestamp(stats.min))
-            maxs.append(pd.Timestamp(stats.max))
-        except (ValueError, TypeError, OverflowError):
-            return None, None
-    if not mins:
-        return None, None
-    return min(mins), max(maxs)
-
-
-def _span_from_column(path: Path, ts_name: str) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
-    try:
-        series = pd.read_parquet(path, columns=[ts_name]).iloc[:, 0]
-    except Exception:  # noqa: BLE001
-        try:
-            idx = pd.read_parquet(path, columns=[]).index
-        except Exception:  # noqa: BLE001
-            return None, None
-        if not isinstance(idx, pd.DatetimeIndex) or len(idx) == 0:
-            return None, None
-        return pd.Timestamp(idx.min()), pd.Timestamp(idx.max())
-    ts = pd.to_datetime(series, utc=True, errors="coerce").dropna()
-    if ts.empty:
-        return None, None
-    ts = ts.dt.tz_convert("UTC").dt.tz_localize(None)
-    return pd.Timestamp(ts.min()), pd.Timestamp(ts.max())
+    return peek_cache_file(path)
 
 
 def klines_interval_from_name(symbol: str, path: Path) -> str | None:
@@ -165,15 +111,23 @@ def cache_inventory(
     symbols: Sequence[str],
     *,
     now: pd.Timestamp | None = None,
+    store: CacheInventorySource | None = None,
 ) -> pd.DataFrame:
-    """Один рядок на символ: 1m span, інші інтервали, funding/trades/bookTicker."""
+    """Один рядок на символ: 1m span, інші інтервали, funding/trades/bookTicker.
+
+    `store` — джерело klines/funding/aggTrades (Postgres або parquet).
+    Без `store` читаємо parquet у `data_dir`. Book ticker лишається файловим.
+    """
     clock = now if now is not None else pd.Timestamp.now(tz="UTC").tz_convert(None)
+    backend = store if store is not None else ParquetStore(data_dir)
+    stats = backend.symbol_stats(list(symbols))
     rows: list[dict[str, object]] = []
     for sym in symbols:
-        k1m = peek_parquet(data_dir / f"{sym}_1m_klines.parquet")
-        intervals = _discover_intervals(data_dir, sym)
-        funding = peek_parquet(data_dir / f"{sym}_funding.parquet")
-        trades = peek_parquet(data_dir / f"{sym}_aggTrades.parquet")
+        s = stats.get(sym, empty_symbol_stats())
+        k1m = s.klines_1m
+        funding = s.funding
+        trades = s.trades
+        intervals = list(s.intervals)
         book = peek_parquet(data_dir / f"{sym}_bookTicker.parquet")
         age = age_hours(k1m.end, clock)
         span_days = float("nan")
@@ -197,17 +151,6 @@ def cache_inventory(
             }
         )
     return pd.DataFrame(rows)
-
-
-def _discover_intervals(data_dir: Path, symbol: str) -> list[str]:
-    found: list[str] = []
-    if not data_dir.exists():
-        return found
-    for path in sorted(data_dir.glob(f"{symbol}_*_klines.parquet")):
-        interval = klines_interval_from_name(symbol, path)
-        if interval is not None:
-            found.append(interval)
-    return found
 
 
 def inventory_kpis(inv: pd.DataFrame) -> dict[str, int]:

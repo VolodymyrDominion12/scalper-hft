@@ -1,0 +1,189 @@
+# _schema.yaml — мета-схема специфікації торгової стратегії (scalper-hft)
+#
+# Кожна стратегія у specs/strategies/<name>.yaml ПОВИННА відповідати цій схемі.
+# Валідація: specs/strategies/_validator.py → tests/test_strategy_specs.py
+#
+# Рівні деталізації (залежать від status):
+#   validated  → всі секції обов'язкові
+#   candidate  → hypothesis + invariants обов'язкові; edge_conditions — мінімум 2
+#   pending    → hypothesis обов'язкова
+#   rejected   → rejection_reason обов'язковий
+#
+# Про сумісність:
+#   Схема є jsonschema-сумісною декларацією. _validator.py перевіряє її вручну
+#   (без jsonschema-бібліотеки), щоб не додавати залежностей.
+
+$version: "1.0"
+
+$fields:
+  # ─── Ідентифікація ────────────────────────────────────────────────────────
+  name:
+    type: str
+    required: true
+    description: >
+      Унікальний ідентифікатор стратегії. Повинен точно збігатись із
+      Strategy.name у класі та ключем у REGISTRY.
+    example: "pairs_arb"
+
+  version:
+    type: str
+    required: true
+    description: >
+      Версія специфікації у форматі MAJOR.MINOR.
+      Змінюйте MAJOR при ламаючих змінах у логіці стратегії.
+    example: "1.0"
+
+  status:
+    type: str
+    required: true
+    allowed: [validated, candidate, pending, rejected]
+    description: >
+      validated  — пройшла повний цикл WF+DSR+CSCV, дозволена для paper/live.
+      candidate  — реалізована, не завершила повний аудит OOS.
+      pending    — очікує додаткових даних або інфраструктури.
+      rejected   — аудит показав відсутність edge; rejection_reason обов'язковий.
+
+  family:
+    type: str
+    required: true
+    allowed: [momentum, mean_reversion, relative_value, carry, flow, market_making, ml, meta]
+    description: >
+      Сім'я альфи за Narang «Inside the Black Box», гл. 3.
+      Повинна збігатися із Strategy.family у класі Python.
+
+  # ─── Економічна гіпотеза ─────────────────────────────────────────────────
+  hypothesis:
+    type: str
+    required: [validated, candidate, pending]
+    description: >
+      Чітке економічне або статистичне твердження, чому стратегія має edge.
+      Формулюйте фальсифіковано: "X відбувається за умови Y" (не "стратегія
+      добре торгує"). 1–5 речень.
+
+  # ─── Умови існування edge ────────────────────────────────────────────────
+  edge_conditions:
+    type: list[EdgeCondition]
+    required: [validated]
+    min_items:
+      validated: 3
+      candidate: 2
+    description: >
+      Перелік умов, за яких гіпотеза підтримується даними. Кожна умова —
+      об'єкт із полями `name` (ідентифікатор) і `description` (текст).
+      Можуть містити числові пороги (напр. sharpe_oos_min: 0.3).
+
+  # ─── Параметри ────────────────────────────────────────────────────────────
+  params:
+    type: dict[str, ParamSpec]
+    required: [validated, candidate]
+    description: >
+      Словник параметрів стратегії. Ключ = ім'я параметра (повинне збігатись
+      із param_space у класі). Значення — об'єкт ParamSpec.
+
+  # ─── Інваріанти (поведінкові гарантії) ───────────────────────────────────
+  invariants:
+    type: InvariantSpec
+    required: [validated, candidate]
+    description: >
+      Фіксовані поведінкові гарантії, порушення яких = баг (не вибір параметрів).
+
+  # ─── Режими ───────────────────────────────────────────────────────────────
+  preferred_regimes:
+    type: list[str]
+    required: false
+    allowed_values: [range, trend_up, trend_down, low, normal, high]
+    description: >
+      Ринкові режими, де гіпотеза теоретично сильніша. Порожній список = всі
+      режими. Повинен збігатись з Strategy.preferred_regimes.
+
+  # ─── Відхилення ───────────────────────────────────────────────────────────
+  rejection_reason:
+    type: str
+    required: [rejected]
+    description: >
+      Причина відхилення зі статистичними доказами (напр. "OOS Sharpe < 0,
+      DSR = 0 на walk-forward 12 місяців"). Обов'язковий при status = rejected.
+
+  # ─── Аудит та валідація ───────────────────────────────────────────────────
+  validation_summary:
+    type: ValidationSummary
+    required: false
+    description: >
+      Підсумок результатів OOS-аудиту. Заповнюється після walk-forward.
+
+  notes:
+    type: str
+    required: false
+    description: Будь-які додаткові коментарі, посилання, контекст.
+
+# ─── Типи вкладених об'єктів ──────────────────────────────────────────────
+
+$types:
+  EdgeCondition:
+    name: {type: str, required: true}
+    description: {type: str, required: true}
+
+  ParamSpec:
+    default: {type: [float, int, bool], required: true}
+    min: {type: [float, int], required: false}
+    max: {type: [float, int], required: false}
+    step: {type: [float, int], required: false}
+    description: {type: str, required: false}
+
+  InvariantSpec:
+    no_lookahead:
+      type: bool
+      required: true
+      description: Сигнал на барі t не використовує дані t+1..T.
+    signal_values:
+      type: list[int]
+      required: true
+      allowed: [[-1, 0, 1]]
+      description: Множина допустимих значень сигналу.
+    no_nan_output:
+      type: bool
+      required: false
+      default: true
+      description: generate_signals() не повертає NaN.
+    maker_only:
+      type: bool
+      required: false
+      description: Стратегія розрахована лише на maker-виконання (post-only).
+    requires_pair_columns:
+      type: bool
+      required: false
+      description: df повинен містити колонки leg1 і leg2.
+    needs_trades:
+      type: bool
+      required: false
+      description: Стратегія потребує aggTrades (needs_trades = True).
+    needs_funding:
+      type: bool
+      required: false
+      description: Стратегія потребує funding rates.
+
+  ValidationSummary:
+    sharpe_oos: {type: float, required: false}
+    max_drawdown: {type: float, required: false}
+    trade_count: {type: int, required: false}
+    wf_windows_positive_pct: {type: float, required: false}
+    dsr_passed: {type: bool, required: false}
+    cscv_pbo: {type: float, required: false}
+    interval: {type: str, required: false}
+    days_tested: {type: int, required: false}
+
+# ─── Правила обов'язковості за статусом ───────────────────────────────────
+
+$status_rules:
+  validated:
+    required_fields: [name, version, status, family, hypothesis, edge_conditions, params, invariants]
+    min_edge_conditions: 3
+  candidate:
+    required_fields: [name, version, status, family, hypothesis, params, invariants]
+    min_edge_conditions: 2
+  pending:
+    required_fields: [name, version, status, family, hypothesis]
+    min_edge_conditions: 0
+  rejected:
+    required_fields: [name, version, status, family, rejection_reason]
+    min_edge_conditions: 0

@@ -1,0 +1,24 @@
+name: mean_reversion
+version: "1.0"
+status: rejected
+family: mean_reversion
+
+rejection_reason: >
+  OOS Sharpe < 0 на всіх walk-forward вікнах; Deflated Sharpe Ratio DSR = 0
+  (data-snooping підтверджений). RSI + BB mean-reversion на crypto 1h barах
+  не показує статистично значущого edge після maker-комісій. Висновок:
+  crypto-перпи у 2024–2026 мають трендові властивості на 1h горизонті,
+  mean-reversion не працює без сильного режим-фільтру (навіть з ним — недостатньо).
+
+invariants:
+  no_lookahead: true
+  signal_values: [-1, 0, 1]
+  no_nan_output: true
+
+preferred_regimes: ["range", "low", "normal"]
+
+notes: >
+  Базова стратегія для порівняння. Відхилена через відсутність OOS edge.
+  Залишається у реєстрі як бенчмарк і компонент RegimeSupervisor/EnsembleStrategy
+  у несприятливих режимах (де шортуємо проти неї).
+  Реалізована фіч: FilterTrace для аналізу кількості відфільтрованих сигналів.

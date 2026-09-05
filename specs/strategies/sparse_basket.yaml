@@ -1,0 +1,66 @@
+name: sparse_basket
+version: "1.0"
+status: candidate
+family: relative_value
+
+hypothesis: >
+  Розріджений лінійний кошик з N активів (N >= 3 крипто-perps), побудований
+  методом Box-Tiao decomposition з L1-регуляризацією (soft thresholding),
+  максимізує швидкість mean-reversion (параметр θ процесу OU).
+  Спред S_t = Σ w_i * log(P_i) є стаціонарним і реверсується швидше
+  за будь-яку двоактивну пару. Розрідженість (sparsity_k <= 5) зменшує
+  transaction costs порівняно з повним кошиком.
+
+edge_conditions:
+  - name: ou_theta_positive
+    description: >
+      Оцінений параметр OU θ > 0 (half_life < infinity) на OOS-вікні.
+      Якщо θ ≈ 0 — кошик нестаціонарний, входи заборонені.
+  - name: wf_positive_windows
+    description: >
+      Walk-forward OOS >= 2 вікна з позитивним Sharpe (мала вибірка,
+      потребує >= 6 місяців даних на 5+ монет для повного аудиту).
+  - name: spread_covers_costs
+    description: >
+      Середній |z| при вході покриває N-leg round-trip витрати
+      (N = sparsity_k ненульових ніг × 2 × maker 0.02%).
+
+params:
+  lookback:
+    default: 60
+    min: 30
+    max: 200
+    step: 10
+    description: Вікно rolling для mean/std спреду кошика (барів).
+  entry_z:
+    default: 2.0
+    min: 1.0
+    max: 3.0
+    step: 0.2
+    description: Z-score для відкриття позиції по кошику.
+  exit_z:
+    default: 0.2
+    min: 0.0
+    max: 0.8
+    step: 0.1
+    description: Поріг |z| для закриття (реверсія до нуля).
+  sparsity_k:
+    default: 3
+    min: 2
+    max: 5
+    step: 1
+    description: Максимум ненульових ваг у кошику (topK після soft threshold).
+
+invariants:
+  no_lookahead: true
+  signal_values: [-1, 0, 1]
+  no_nan_output: true
+  maker_only: true
+
+preferred_regimes: []  # mean-reversion кошика — режим-незалежний
+
+notes: >
+  Додано у Спринт 5. Алгоритм: compute_sparse_basket_weights() рахує ваги
+  по Box-Tiao (eigh(Γ₀, Γ_Δ)), стратегія торгує rolling z-score кошика.
+  Потребує OOS-аудиту на портфелі 5+ монет і >= 6 міс. даних.
+  Референс: "Financial Signal Processing and Machine Learning", гл. 3.

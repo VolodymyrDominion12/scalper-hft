@@ -1,0 +1,24 @@
+name: funding_carry
+version: "1.0"
+status: rejected
+family: carry
+
+rejection_reason: >
+  Виправлено баг з обліком фандінгу (раніше: 480× завищення). Після
+  коректного обліку тертя > фандінгу: maker-комісія + slippage на відкриття/
+  закриття позиції перевищує накопичений фандінг у поточному low-rate режимі
+  (2025–2026). Стратегія може відновитись лише при систематично high-funding
+  (> 0.05%/8h = ~54% річних), що нетипово для поточного ринку.
+
+invariants:
+  no_lookahead: true
+  signal_values: [-1, 0, 1]
+  no_nan_output: true
+  needs_funding: true
+
+preferred_regimes: ["range", "low", "normal"]
+
+notes: >
+  Баг: funding_rate × 480 замість × 3 (8h → день). Виправлено. Після
+  виправлення edge зник. Funding carry може бути прибутковим у майбутньому
+  bull-cycle — залишаємо як резерв. Референс: docs/funding_regimes.md.

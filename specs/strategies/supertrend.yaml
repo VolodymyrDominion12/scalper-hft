@@ -1,0 +1,65 @@
+name: supertrend
+version: "1.0"
+status: candidate
+family: momentum
+
+hypothesis: >
+  ATR-based trailing stop (Supertrend) ідентифікує зміну тренду через перетин
+  ціни динамічного рівня підтримки/опору. Підтвердження об'ємом (volume > factor
+  × SMA20) фільтрує хибні пробої у флеті. Стратегія прибуткова у трендових
+  ринках, де величина руху після пробою > ATR × (sl + tp multipliers).
+  Портована з trade-bot-main для тестування у perp futures контексті.
+
+edge_conditions:
+  - name: trend_regime_dominance
+    description: >
+      Positive Sharpe лише у trend_up/trend_down режимах (>= 60% OOS-барів
+      класифіковані як трендові при прибутковому результаті).
+  - name: volume_confirmation_value
+    description: >
+      OOS Sharpe з volume_filter > OOS Sharpe без volume_filter (фільтр додає цінність).
+
+params:
+  atr_period:
+    default: 10
+    min: 7
+    max: 14
+    step: 1
+    description: Вікно ATR для розрахунку смуг Supertrend.
+  atr_mult:
+    default: 3.0
+    min: 2.0
+    max: 4.0
+    step: 0.25
+    description: Ширина смуги = atr_mult × ATR.
+  atr_mult_sl:
+    default: 2.0
+    min: 1.5
+    max: 3.0
+    step: 0.25
+    description: SL від ціни входу у множниках ATR.
+  atr_mult_tp:
+    default: 4.5
+    min: 3.0
+    max: 7.0
+    step: 0.5
+    description: TP від ціни входу у множниках ATR.
+  volume_factor:
+    default: 1.0
+    min: 0.8
+    max: 1.6
+    step: 0.1
+    description: Мінімальний об'єм у % від SMA20 для підтвердження входу.
+
+invariants:
+  no_lookahead: true
+  signal_values: [-1, 0, 1]
+  no_nan_output: true
+
+preferred_regimes: ["trend_up", "trend_down"]
+
+notes: >
+  Портована з trade-bot-main (supertrend_strategy.py + Indicators.supertrend).
+  allow_short=False (дефолт) — шорт-позиція є виходом з лонга (спотова логіка);
+  allow_short=True — справжній шорт на перп.
+  Stateful реалізація (Python-цикл) через SL/TP управління.

@@ -181,7 +181,13 @@ def _build_cell_runner(
             from scalper_hft.data.access import ensure_klines
             from scalper_hft.data.downloader import download_agg_trades, download_funding
 
-            klines = ensure_klines(symbol, interval, days, base_interval=base_interval, derive=True)
+            # readonly: база вже прогріта (warm_base_cache у run_sweep) —
+            # клітинки лише читають кеш і ресемплять, НЕ докачують хвіст і
+            # НЕ перезаписують мільйони рядків (інакше кожна клітинка бачить
+            # хвіст застарілим на хвилини → шторм запитів/upsert-ів).
+            klines = ensure_klines(
+                symbol, interval, days, base_interval=base_interval, derive=True, readonly=True
+            )
             trades = download_agg_trades(symbol, days) if strategy.needs_trades else None
             funding = download_funding(symbol, days) if strategy.needs_funding else None
         if klines is None or klines.empty:

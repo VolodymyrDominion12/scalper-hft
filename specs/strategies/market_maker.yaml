@@ -1,0 +1,69 @@
+name: market_maker
+version: "1.0"
+status: pending
+family: market_making
+
+hypothesis: >
+  Пасивне котирування обох сторін (bid + ask) на відстані spread_offset_mult × ATR
+  від mid-price заробляє bid-ask спред, поки adverse selection не з'їдає прибуток.
+  Ризик: inventory accumulation при спрямованому ринку.
+  Реалізовано Avellaneda-Stoikov reservation price для скорочення inventory ризику.
+  Стратегія прибуткова лише за low-vol режиму з достатньою ліквідністю.
+
+edge_conditions:
+  - name: l2_data_available
+    description: >
+      Потрібні реальні L2-дані (order book depth) для точного моделювання
+      черги та adverse selection. Бектест на свічках — спрощена модель.
+  - name: low_vol_regime
+    description: >
+      Прибуток можливий лише у low/normal volatility. У high-vol adverse
+      selection знищує P&L (fill = bad price).
+  - name: maker_rebates
+    description: >
+      Binance maker 0.02% обов'язковий. Будь-яке taker виконання = збиток.
+
+params:
+  spread_offset_mult:
+    default: 0.5
+    min: 0.1
+    max: 1.5
+    step: 0.1
+    description: Множник ATR для ширини котирування від mid-price.
+  inventory_cap:
+    default: 1.0
+    min: 0.0
+    max: 2.0
+    step: 0.25
+    description: Максимальна абсолютна позиція (у base units). При перевищенні — не котируємо.
+  gamma:
+    default: 0.1
+    min: 0.01
+    max: 1.0
+    step: 0.05
+    description: Параметр ризик-відрази Avellaneda-Stoikov (вищий = агресивніший skew).
+  kappa:
+    default: 1.5
+    min: 0.5
+    max: 5.0
+    step: 0.5
+    description: Інтенсивність прибуття ордерів (ринкова глибина).
+  vpin_threshold:
+    default: 0.75
+    min: 0.5
+    max: 0.95
+    step: 0.05
+    description: Поріг VPIN (Volume-Synchronized Probability of Informed Trading) для паузи котирування.
+
+invariants:
+  no_lookahead: true
+  signal_values: [-1, 0, 1]
+  no_nan_output: true
+  maker_only: true
+
+preferred_regimes: ["low", "normal"]
+
+notes: >
+  Експериментальний. Реальна черга (queue position) та ребейти не моделюються.
+  Для production потрібен nautilus_trader зі справжнім L2 bookTicker.
+  Референс: "Inside the Black Box", гл. 15; Avellaneda & Stoikov (2008).

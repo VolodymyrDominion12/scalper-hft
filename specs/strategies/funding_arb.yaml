@@ -1,0 +1,24 @@
+name: funding_arb
+version: "1.0"
+status: rejected
+family: carry
+
+rejection_reason: >
+  Фандінг-режим 2025–2026 структурно низький: >= 36% річних фандінгу
+  спостерігались лише у 2024 Q1 (< 4% часу у 2025–2026).
+  Після реалізму транзакційних витрат (2-leg taker + spot borrowing)
+  стратегія збиткова у понад 96% барів. Edge існував у bull ринку 2024 Q1
+  і не є стабільним. Референс: docs/funding_regimes.md.
+
+invariants:
+  no_lookahead: true
+  signal_values: [-1, 0, 1]
+  no_nan_output: true
+  needs_funding: true
+
+preferred_regimes: []
+
+notes: >
+  Потребує перевірки у майбутньому bull-cycle (якщо фандінг знову > 36% річних
+  стабільно >= 30 днів). Поточна реалізація залишається у реєстрі як
+  "режимно-сплячий" резерв.

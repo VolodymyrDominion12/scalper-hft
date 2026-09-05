@@ -1,0 +1,83 @@
+name: stoch_rsi
+version: "1.0"
+status: candidate
+family: mean_reversion
+
+hypothesis: >
+  Stochastic RSI (%K/%D crossover) у зонах перекупленості/перепроданості
+  ідентифікує короткострокові контр-трендові точки входу. Crossover %K над %D
+  у зоні oversold (перший бар виходу з екстремуму) дає кращий timing входу,
+  ніж простий RSI-threshold. Фільтр EMA50 (не лови "падаючий ніж") та
+  volume-підтвердження знижують кількість false positives.
+
+edge_conditions:
+  - name: crossover_signal_value
+    description: >
+      %K/%D crossover у oversold/overbought зоні показує позитивний IC
+      (Spearman > 0.02) з наступними 5-барними returns на OOS-вікні.
+  - name: ema_filter_value
+    description: >
+      OOS Sharpe з EMA50-фільтром > OOS Sharpe без фільтру (close >= ema50 × 0.97).
+
+params:
+  rsi_period:
+    default: 14
+    min: 10
+    max: 21
+    step: 1
+    description: Вікно RSI, на якому рахується Stochastic нормалізація.
+  smooth_k:
+    default: 3
+    min: 2
+    max: 5
+    step: 1
+    description: EMA-згладжування %K.
+  smooth_d:
+    default: 3
+    min: 2
+    max: 5
+    step: 1
+    description: EMA-згладжування %D (signal line).
+  oversold:
+    default: 20.0
+    min: 15.0
+    max: 30.0
+    step: 2.5
+    description: Поріг %K для зони перепроданості.
+  overbought:
+    default: 80.0
+    min: 70.0
+    max: 85.0
+    step: 2.5
+    description: Поріг %K для зони перекупленості.
+  atr_mult_sl:
+    default: 2.0
+    min: 1.5
+    max: 3.0
+    step: 0.25
+    description: SL від ціни входу у множниках ATR.
+  atr_mult_tp:
+    default: 3.5
+    min: 2.5
+    max: 5.0
+    step: 0.5
+    description: TP від ціни входу у множниках ATR.
+  volume_factor:
+    default: 1.0
+    min: 0.8
+    max: 1.5
+    step: 0.1
+    description: Мінімальний об'єм у % від SMA20.
+
+invariants:
+  no_lookahead: true
+  signal_values: [-1, 0, 1]
+  no_nan_output: true
+
+preferred_regimes: ["range", "low", "normal"]
+
+notes: >
+  Портована з trade-bot-main (stoch_rsi_strategy.py). allow_short=False —
+  дефолтна спотова логіка; True — шорт на перп.
+  Відмінність від mean_reversion: Stoch RSI дає кращий timing (crossover),
+  але вимагає більше барів для розрахунку (rsi_period + smooth_k + smooth_d).

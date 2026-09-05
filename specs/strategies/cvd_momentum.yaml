@@ -1,0 +1,23 @@
+name: cvd_momentum
+version: "1.0"
+status: rejected
+family: momentum
+
+rejection_reason: >
+  Fee-drag при overfitting до 1m барів: Profit Factor 0.30 (< 1.0), тобто
+  стратегія втрачає гроші. Надмірна частота угод на 1m-барах + taker-виконання
+  = комісії перевищують будь-який CVD-сигнал. CVD на 1h/4h занадто повільний
+  для scalping (сигнал вже "відіграний"). Висновок: CVD є гарним фічем для
+  ML-стратегій, але не самостійним сигналом.
+
+invariants:
+  no_lookahead: true
+  signal_values: [-1, 0, 1]
+  no_nan_output: true
+  needs_trades: true
+
+preferred_regimes: ["trend_up", "trend_down"]
+
+notes: >
+  CVD (Cumulative Volume Delta) залишається як фіча для MLStrategy та
+  ObImbalanceScalper. Як самостійна стратегія — відхилена через fee-drag.

@@ -75,7 +75,7 @@ sync: ## Синхронізувати оточення через uv sync --all-
 # ==============================================================================
 # Тестування та перевірка якості коду
 # ==============================================================================
-.PHONY: test test-cov lint format typecheck check
+.PHONY: test test-cov lint format typecheck check spec-check spec-validate
 test: ## Запустити швидкі тести pytest
 	uv run pytest tests/ -q
 
@@ -91,7 +91,16 @@ format: ## Автоформатування коду через ruff
 typecheck: ## Перевірити типи за допомогою mypy
 	uv run mypy scalper_hft
 
-check: lint typecheck test ## Повна перевірка: lint + typecheck + test
+# ==============================================================================
+# Spec-Driven Development (SDD)
+# ==============================================================================
+spec-check: ## [SDD] Запустити повний spec-runner: валідація схеми + behavioral тести
+	uv run pytest tests/test_strategy_specs.py -v --tb=short
+
+spec-validate: ## [SDD] Тільки валідація YAML-схеми (без behavioral тестів)
+	uv run python specs/strategies/_validator.py
+
+check: lint typecheck test spec-check ## Повна перевірка: lint + typecheck + test + spec-check
 
 # ==============================================================================
 # Ринкові дані

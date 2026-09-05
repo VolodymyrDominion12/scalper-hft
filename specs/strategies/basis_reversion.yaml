@@ -1,0 +1,23 @@
+name: basis_reversion
+version: "1.0"
+status: rejected
+family: relative_value
+
+rejection_reason: >
+  Basis (perp - spot price) надто вузький для трейдингу після комісій:
+  типовий basis = 1–2.4 bps, тоді як 2-leg round-trip = ~8 bps (maker).
+  Перп стійко дешевший за спот (−4 bps у середньому) — немає реверсії,
+  є структурний discount. Edge не існує при будь-яких параметрах.
+
+invariants:
+  no_lookahead: true
+  signal_values: [-1, 0, 1]
+  no_nan_output: true
+
+preferred_regimes: []
+
+notes: >
+  Basis reversion потребує: spot → позиція на spot (short-selling обмежений),
+  або perp → spot з суттєво ширшим basis. На USDT-M ф'ючерсах обидві ноги
+  на perp → basis = перп/перп, що ще вужчий. Не перспективна без L1
+  spot-delivery контракту.

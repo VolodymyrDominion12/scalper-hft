@@ -1,0 +1,54 @@
+name: smc_fvg
+version: "1.0"
+status: candidate
+family: flow
+
+hypothesis: >
+  Fair Value Gap (FVG) — ціновий розрив між high[t-2] і low[t] (бичачий)
+  або low[t-2] і high[t] (ведмежий) — є зонами незаповненої ліквідності.
+  Smart Money Concepts (SMC): інституційні гравці повертаються до цих зон
+  для заповнення, що дає передбачуваний re-test. Перший дотик ціни до зони
+  (не закриття) є точкою входу. Зона живе max_fvg_age барів або до закриття.
+
+edge_conditions:
+  - name: fvg_retest_rate
+    description: >
+      >= 50% FVG-зон мають хоча б один re-test (дотик ціни) у межах
+      max_fvg_age барів на OOS-даних (підтверджує гіпотезу "заповнення").
+  - name: sharpe_oos_positive
+    description: >
+      OOS Sharpe > 0 на мінімум 2 walk-forward вікнах після maker-комісій.
+
+params:
+  atr_sl:
+    default: 2.0
+    min: 1.0
+    max: 3.0
+    step: 0.5
+    description: SL від ціни входу у множниках ATR.
+  atr_tp:
+    default: 4.0
+    min: 2.0
+    max: 6.0
+    step: 0.5
+    description: TP від ціни входу у множниках ATR.
+  max_fvg_age:
+    default: 24
+    min: 6
+    max: 48
+    step: 2
+    description: Максимальна "живість" FVG-зони у барах. Старі зони ігноруються.
+
+invariants:
+  no_lookahead: true
+  signal_values: [-1, 0, 1]
+  no_nan_output: true
+
+preferred_regimes: []  # FVG формуються у трендах, re-test — у корекціях
+
+notes: >
+  Портована з trade-bot-main (smc_fvg_strategy.py + smc/liquidity.py::fvg).
+  allow_short=False — дефолт (спот); True — шорт на перп.
+  volume_filter — вхід лише при volume > SMA20. FVG визначається на закритті
+  бару t, доступна для торгівлі лише з t+1 (no-lookahead гарантовано).
+  Потребує OOS-аудиту: SMC — неоднозначна теорія, edge на crypto не доведено.

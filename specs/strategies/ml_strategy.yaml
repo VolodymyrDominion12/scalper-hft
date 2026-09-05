@@ -1,0 +1,70 @@
+name: ml_strategy
+version: "1.0"
+status: candidate
+family: ml
+
+hypothesis: >
+  LightGBM мета-модель, навчена на Triple-Barrier labels (López de Prado),
+  здатна передбачати напрямок руху ціни за мікроструктурними фічами (CVD,
+  order flow imbalance, HMM-стани, GARCH-volatility). Bet sizing (Kelly criterion
+  або fractional Kelly) масштабує сигнал пропорційно впевненості моделі,
+  що покращує Sharpe порівняно з бінарним ±1. Суворий no-lookahead через
+  purged walk-forward cross-validation (embargo = 5 барів).
+
+edge_conditions:
+  - name: oos_log_loss
+    description: >
+      Log-loss на purged OOS < log(2) = 0.693 (краще за random classifier).
+  - name: dsr_passed
+    description: >
+      Deflated Sharpe Ratio DSR > 0 після корекції на кількість спроб моделей.
+  - name: feature_importance_stability
+    description: >
+      Top-5 фіч за важливістю стабільні (Spearman rho >= 0.7) між WF-вікнами
+      — свідчить про реальний edge, не numerical artifact.
+
+params:
+  pt:
+    default: 1.0
+    min: 0.5
+    max: 3.0
+    step: 0.5
+    description: Profit-take множник × ATR (triple-barrier).
+  sl:
+    default: 1.0
+    min: 0.5
+    max: 3.0
+    step: 0.5
+    description: Stop-loss множник × ATR (triple-barrier).
+  holding_bars:
+    default: 10
+    min: 5
+    max: 30
+    step: 5
+    description: Вертикальний бар'єр (максимум барів тримання позиції).
+  confidence_thr:
+    default: 0.50
+    min: 0.5
+    max: 0.75
+    step: 0.05
+    description: Mінімальна впевненість LightGBM для видачі сигналу (0.5 = без фільтра).
+  decay:
+    default: 0.9
+    min: 0.5
+    max: 1.0
+    step: 0.05
+    description: Time-decay для ваг зразків (AFML Ch.4). 1.0 = без декаю.
+
+invariants:
+  no_lookahead: true
+  signal_values: [-1, 0, 1]
+  no_nan_output: true
+
+preferred_regimes: []  # ML-модель теоретично адаптується до всіх режимів
+
+notes: >
+  MLStrategy використовує triple-barrier labels (tp_sl_ratio, volatility-scaled)
+  та purged walk-forward CV (embargo = 5 барів). Фічі: RSI, BB, ATR, CVD,
+  HMM posteriors, GARCH sigma. Вимагає строгих DSR-перевірок через ризик
+  data-snooping у великому param space. Референс: "Advances in Financial
+  Machine Learning", гл. 3–7.

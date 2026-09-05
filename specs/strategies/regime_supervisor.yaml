@@ -1,0 +1,58 @@
+name: regime_supervisor
+version: "1.0"
+status: candidate
+family: meta
+
+hypothesis: >
+  Детектор ринкового режиму (HMM + rule-based структура + волатильність)
+  дозволяє динамічно зважувати суб-стратегії пропорційно їх теоретичній
+  відповідності поточному режиму. Онлайн-адаптація ваг (ContextualHedgeBlend)
+  швидше реагує на концепт-дрейф ніж статичне blending. Комбінований Sharpe
+  перевищує будь-яку суб-стратегію у всіх режимах — не через кращий signal,
+  а через кращий режим-гейтинг.
+
+edge_conditions:
+  - name: regime_detection_accuracy
+    description: >
+      Детектор режиму правильно класифікує > 60% барів порівняно з
+      ретроспективним labels (структура: EMA cross; vol: percentile).
+  - name: contextual_hedge_improvement
+    description: >
+      ContextualHedgeBlend показує >= 10% вищий Sharpe vs рівних ваг (equal_weight)
+      у >= 2 з 3 walk-forward вікон.
+
+params:
+  strategies:
+    default: "mean_reversion,supertrend,hmm_reversion"
+    description: Список суб-стратегій через кому (name:param1=val1:param2=val2).
+  blend_mode:
+    default: "contextual_hedge"
+    description: regime_soft | contextual_hedge | exp3
+  n_hmm_states:
+    default: 3
+    description: Кількість HMM-станів.
+  hmm_fit_bars:
+    default: 2000
+    min: 500
+    max: 5000
+    step: 500
+    description: Перші N барів для causal HMM fit.
+  unfavorable_weight:
+    default: 0.25
+    min: 0.1
+    max: 0.5
+    step: 0.05
+    description: Мінімальна вага суб-стратегії у несприятливому режимі.
+
+invariants:
+  no_lookahead: true
+  signal_values: [-1, 0, 1]
+  no_nan_output: true
+
+preferred_regimes: []
+
+notes: >
+  RegimeSupervisor є розширеним EnsembleStrategy з явним RegimeDetector.
+  Три blend_mode: "regime_soft" (статичні ваги за taxonomy), "contextual_hedge"
+  (онлайн per-regime Hedge), "exp3" (Exp3Bandit — вибирає одну найкращу стратегію).
+  Потребує спільного аудиту з суб-стратегіями (тест: чи supervisor > best sub-strategy).

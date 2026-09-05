@@ -65,6 +65,36 @@ def test_klines_from_store_resamples_1m(monkeypatch) -> None:
     assert store.load_klines("ETHUSDT", "5m") is None
 
 
+def test_ensure_klines_readonly_uses_cache_no_network(monkeypatch) -> None:
+    from scalper_hft.data import access as acc
+    from scalper_hft.data import downloader as dl
+
+    store = _MemStore()
+    store.save_klines("BTCUSDT", "1m", _bars_df("2024-01-01", 120))
+    monkeypatch.setattr(acc, "get_store", lambda: store)
+    monkeypatch.setattr(dl, "get_store", lambda: store)
+
+    out = ensure_klines("BTCUSDT", "5m", days=1, readonly=True)
+    assert len(out) == 24  # 120 1m → 24 повних 5m
+    # нічого не записано і не докачано
+    assert store.load_klines("BTCUSDT", "5m") is None
+    assert store.load_klines("BTCUSDT", "1m") is not None
+
+
+def test_ensure_klines_readonly_raises_when_cache_empty(monkeypatch) -> None:
+    import pytest
+
+    from scalper_hft.data import access as acc
+    from scalper_hft.data import downloader as dl
+
+    store = _MemStore()
+    monkeypatch.setattr(acc, "get_store", lambda: store)
+    monkeypatch.setattr(dl, "get_store", lambda: store)
+
+    with pytest.raises(RuntimeError, match="readonly"):
+        ensure_klines("BTCUSDT", "1m", days=1, readonly=True)
+
+
 def test_load_research_data_defaults_to_derive(monkeypatch) -> None:
     seen: dict[str, object] = {}
 

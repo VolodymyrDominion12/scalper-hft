@@ -1,0 +1,91 @@
+name: pairs_arb
+version: "1.0"
+status: validated
+family: relative_value
+
+hypothesis: >
+  Log-ratio між двома висококорельованими USDT-M perpetuals (напр. XRP/BTC,
+  LINK/BTC, LINK/ETH) є стаціонарним (I(0)) процесом, що дає підставу
+  моделювати його як Ornstein-Uhlenbeck. Відхилення від rolling-середнього
+  на ±entry_z стандартних відхилень реверсується до середнього за горизонт
+  lookback барів, покриваючи 2-leg maker round-trip витрати (~0.08%).
+  Обидві ноги торгуються на USDT-M perps — немає обмежень short-selling.
+
+edge_conditions:
+  - name: spread_stationary
+    description: >
+      ADF-тест відкидає H0 одиничного кореня на рівні p < 0.05 на кожному
+      OOS-вікні walk-forward (>= 80% вікон).
+  - name: wf_positive_windows
+    description: >
+      Walk-forward OOS: >= 60% вікон з позитивним Sharpe (не менше 10 вікон).
+  - name: sharpe_oos_min
+    description: >
+      Середній OOS Sharpe (annualized) >= 0.3 після комісій maker 0.02%
+      і slippage 0.01% per leg.
+  - name: dsr_passed
+    description: >
+      Deflated Sharpe Ratio DSR > 0 (тест Бейлі-Лопеса на data-snooping bias).
+  - name: trade_count_min
+    description: >
+      Мінімум 20 OOS-угод на вікно для статистичної значущості.
+  - name: max_drawdown_cap
+    description: >
+      Максимальна просадка OOS <= 15%. Стратегія зупиняється при перевищенні.
+
+params:
+  entry_z:
+    default: 2.0
+    min: 1.5
+    max: 4.0
+    step: 0.25
+    description: Z-score спреду для відкриття позиції. Вищий = менше угод, більший edge per trade.
+  exit_z:
+    default: 0.3
+    min: 0.0
+    max: 1.0
+    step: 0.1
+    description: Поріг |z| для закриття (реверсія до середнього). 0 = середнє.
+  lookback:
+    default: 480
+    min: 60
+    max: 1440
+    step: 60
+    description: Вікно rolling для mean/std спреду (у барах). 480 = 20 днів на 1h.
+  breakeven_gate:
+    default: false
+    description: Відключати сигнали де ATR(spread) < 2-leg round-trip витрат.
+  hmm_vol_gate:
+    default: false
+    description: Блокувати нові входи у HMM-стані max-волатильності (P(state2) > 0.6).
+  use_kalman:
+    default: false
+    description: Kalman-фільтр для динамічного hedge ratio замість фіксованого log-ratio.
+  dynamic_half_life:
+    default: false
+    description: Автоматично підбирати lookback за ADF-оцінкою half-life.
+
+invariants:
+  no_lookahead: true
+  signal_values: [-1, 0, 1]
+  no_nan_output: true
+  maker_only: true
+  requires_pair_columns: true  # df повинен мати leg1 та leg2
+
+preferred_regimes: []  # статистичний арбітраж — незалежний від тренду/волатильності
+
+validation_summary:
+  sharpe_oos: 0.89           # XRP/BTC 1h, 90 днів, 12 WF вікон
+  max_drawdown: 0.065
+  trade_count: 28
+  wf_windows_positive_pct: 0.80
+  dsr_passed: true
+  interval: "1h"
+  days_tested: 90
+
+notes: >
+  Найсильніша стратегія проєкту (Спринт 5). Портфель із 3–4 пар
+  (XRP/BTC + LINK/BTC + BTC/ETH) показав +12.5%/рік, maxDD -3.6%.
+  Для production: maker post-only (DRY_RUN=true), ліміт <= 30%
+  капіталу на пару. Щотижневий WF-аудит обов'язковий.
+  Референс: docs/STRATEGY_STATUS.md → "Валідовані кандидати".

@@ -1,0 +1,54 @@
+name: ob_imbalance
+version: "1.0"
+status: pending
+family: flow
+
+hypothesis: >
+  Best-bid/ask imbalance = (bid_depth − ask_depth) / (bid + ask) передбачає
+  короткостроковий напрямок ціни (мікроструктурний ефект, добре задокументований
+  у академічній літературі). Z-нормалізований imbalance за rolling-вікном
+  дає стабільніші пороги входу між різними рівнями ліквідності.
+  Стратегія чекає накопичення depth5 bookTicker (>= 30 днів live-запису).
+
+edge_conditions:
+  - name: depth5_data_available
+    description: >
+      Мінімум 30 днів live depth5 bookTicker записів (systemd-сервіс активний).
+      Без реальних depth-даних — синтетичний imbalance з aggTrades, якість нижча.
+  - name: short_horizon_predictability
+    description: >
+      Imbalance з depth5 має Spearman IC > 0.02 з майбутніми 1–5-барними returns.
+
+params:
+  buy_threshold:
+    default: 0.3
+    min: 0.05
+    max: 0.6
+    step: 0.05
+    description: Z-score imbalance для входу в лонг/шорт.
+  exit_threshold:
+    default: 0.05
+    min: 0.0
+    max: 0.3
+    step: 0.05
+    description: Поріг |imbalance_z| для виходу (нейтральна зона).
+  lookback:
+    default: 50
+    min: 10
+    max: 200
+    step: 10
+    description: Вікно rolling z-score нормалізації.
+
+invariants:
+  no_lookahead: true
+  signal_values: [-1, 0, 1]
+  no_nan_output: true
+  needs_trades: true  # використовує aggTrades для синтетичного imbalance
+
+preferred_regimes: []
+
+notes: >
+  Статус pending: очікує накопичення depth5 даних. Поточна реалізація
+  використовує синтетичний imbalance через buy_ratio з aggTrades.
+  Top-of-book imbalance: 83% |imb|>0.5 (вкрай біполярний);
+  depth-weighted стабільніший (43–46%). Референс: docs/ob_validation.md.

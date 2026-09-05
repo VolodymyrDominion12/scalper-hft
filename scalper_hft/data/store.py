@@ -15,12 +15,131 @@ PostgreSQL (DATA_BACKEND=postgres) — для майбутнього дослі�
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
 import pandas as pd
+import pyarrow.parquet as pq
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class CachePeek:
+    """Кількість рядків і часовий span без завантаження OHLCV."""
+
+    n_rows: int
+    start: pd.Timestamp | None
+    end: pd.Timestamp | None
+
+
+@dataclass(frozen=True, slots=True)
+class SymbolCacheStats:
+    """Зріз кешу одного символу для дашборду свіжості."""
+
+    klines_1m: CachePeek
+    intervals: tuple[str, ...]
+    funding: CachePeek
+    trades: CachePeek
+
+
+_EMPTY_PEEK = CachePeek(0, None, None)
+_TF_CANDIDATES = ("1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d")
+
+
+def empty_symbol_stats() -> SymbolCacheStats:
+    """Порожній зріз: символу немає ні в parquet, ні в Postgres."""
+    return SymbolCacheStats(klines_1m=_EMPTY_PEEK, intervals=(), funding=_EMPTY_PEEK, trades=_EMPTY_PEEK)
+
+
+def peek_cache_file(path: Path) -> CachePeek:
+    """Row count і min/max timestamps parquet без завантаження OHLCV-колонок."""
+    if not path.exists():
+        return _EMPTY_PEEK
+    try:
+        pf = pq.ParquetFile(path)
+    except Exception:  # noqa: BLE001 — битий файл = порожній зріз
+        return _EMPTY_PEEK
+    n = int(pf.metadata.num_rows)
+    if n <= 0:
+        return _EMPTY_PEEK
+    names = list(pf.schema_arrow.names)
+    ts_name: str | None = None
+    for candidate in ("__index_level_0__", "timestamp", "ts", "time"):
+        if candidate in names:
+            ts_name = candidate
+            break
+    start, end = _span_from_statistics(pf, names, ts_name)
+    if start is None and ts_name is not None and n <= 2_000_000:
+        start, end = _span_from_column(path, ts_name)
+    return CachePeek(n, start, end)
+
+
+def _span_from_statistics(
+    pf: pq.ParquetFile,
+    names: list[str],
+    ts_name: str | None,
+) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
+    if ts_name is None:
+        return None, None
+    col_idx = names.index(ts_name)
+    mins: list[pd.Timestamp] = []
+    maxs: list[pd.Timestamp] = []
+    for i in range(pf.num_row_groups):
+        stats = pf.metadata.row_group(i).column(col_idx).statistics
+        if stats is None or stats.min is None or stats.max is None:
+            continue
+        try:
+            mins.append(pd.Timestamp(stats.min))
+            maxs.append(pd.Timestamp(stats.max))
+        except (ValueError, TypeError, OverflowError):
+            return None, None
+    if not mins:
+        return None, None
+    return min(mins), max(maxs)
+
+
+def _span_from_column(path: Path, ts_name: str) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
+    try:
+        series = pd.read_parquet(path, columns=[ts_name]).iloc[:, 0]
+    except Exception:  # noqa: BLE001
+        try:
+            idx = pd.read_parquet(path, columns=[]).index
+        except Exception:  # noqa: BLE001
+            return None, None
+        if not isinstance(idx, pd.DatetimeIndex) or len(idx) == 0:
+            return None, None
+        return pd.Timestamp(idx.min()), pd.Timestamp(idx.max())
+    ts = pd.to_datetime(series, utc=True, errors="coerce").dropna()
+    if ts.empty:
+        return None, None
+    ts = ts.dt.tz_convert("UTC").dt.tz_localize(None)
+    return pd.Timestamp(ts.min()), pd.Timestamp(ts.max())
+
+
+def _naive_utc(value: object) -> pd.Timestamp | None:
+    if value is None:
+        return None
+    ts = pd.Timestamp(value)
+    if pd.isna(ts):
+        return None
+    if ts.tzinfo is not None:
+        ts = ts.tz_convert("UTC").tz_localize(None)
+    return ts
+
+
+def _estimate_bars(start: pd.Timestamp | None, end: pd.Timestamp | None, interval: str) -> int:
+    """Кількість барів з span (без COUNT по мільйонах рядків)."""
+    if start is None or end is None:
+        return 0
+    from scalper_hft.data.resample import INTERVAL_MINUTES
+
+    step = float(INTERVAL_MINUTES.get(interval, 1.0))
+    if step <= 0:
+        return 0
+    return int((end - start).total_seconds() / (60.0 * step)) + 1
 
 
 class MarketDataStore(Protocol):
@@ -42,6 +161,10 @@ class MarketDataStore(Protocol):
 
     def list_klines(self) -> list[tuple[str, str]]:
         """(symbol, interval) пари, наявні в кеші (для планування sweep)."""
+        ...
+
+    def symbol_stats(self, symbols: Sequence[str]) -> dict[str, SymbolCacheStats]:
+        """COUNT/MIN/MAX по символах без завантаження рядків (дашборд свіжості)."""
         ...
 
 
@@ -108,6 +231,22 @@ class ParquetStore:
                 interval = parts[-2]
                 symbol = "_".join(parts[:-2])
                 out.append((symbol, interval))
+        return out
+
+    def symbol_stats(self, symbols: Sequence[str]) -> dict[str, SymbolCacheStats]:
+        intervals_by_sym: dict[str, list[str]] = {}
+        for sym, interval in self.list_klines():
+            if "spot" in interval:
+                continue
+            intervals_by_sym.setdefault(sym, []).append(interval)
+        out: dict[str, SymbolCacheStats] = {}
+        for sym in symbols:
+            out[sym] = SymbolCacheStats(
+                klines_1m=peek_cache_file(self.data_dir / f"{sym}_1m_klines.parquet"),
+                intervals=tuple(intervals_by_sym.get(sym, ())),
+                funding=peek_cache_file(self.data_dir / f"{sym}_funding.parquet"),
+                trades=peek_cache_file(self.data_dir / f"{sym}_aggTrades.parquet"),
+            )
         return out
 
 
@@ -326,6 +465,94 @@ class PostgresStore:
             logger.warning("Postgres недоступний (%s)", exc)
             return []
 
+    def symbol_stats(self, symbols: Sequence[str]) -> dict[str, SymbolCacheStats]:
+        wanted = [str(s) for s in symbols]
+        empty = {sym: empty_symbol_stats() for sym in wanted}
+        if not wanted:
+            return {}
+        import psycopg
+
+        # По символу (префікс PK). GROUP BY на всю таблицю + ANY(...)
+        # дає seq-scan ~23M рядків — дашборд «висить», тести теж.
+        try:
+            self.ensure_schema()
+            with self._connect() as conn, conn.cursor() as cur:
+                return {sym: self._symbol_stats_one(cur, sym) for sym in wanted}
+        except psycopg.OperationalError as exc:
+            logger.warning("Postgres недоступний (%s) — порожній інвентар", exc)
+            return empty
+
+    def _symbol_stats_one(self, cur: Any, symbol: str) -> SymbolCacheStats:
+        k1m = self._index_peek(cur, "klines", symbol, interval="1m")
+        intervals = self._present_intervals(cur, symbol, has_1m=k1m.n_rows > 0)
+        funding = self._agg_peek(cur, "funding", symbol)
+        trades = self._agg_peek(cur, "agg_trades", symbol)
+        return SymbolCacheStats(
+            klines_1m=k1m,
+            intervals=intervals,
+            funding=funding,
+            trades=trades,
+        )
+
+    def _present_intervals(self, cur: Any, symbol: str, *, has_1m: bool) -> tuple[str, ...]:
+        # LIMIT 1 без ORDER BY на interval='1m' дає seq-scan ~23M рядків
+        # (планувальник бачить 1.5M хітів). Інші ТФ — INDEX seek через ORDER BY ts.
+        found: list[str] = ["1m"] if has_1m else []
+        for interval in _TF_CANDIDATES:
+            if interval == "1m":
+                continue
+            cur.execute(
+                "SELECT 1 FROM klines WHERE symbol = %s AND interval = %s ORDER BY ts LIMIT 1",
+                (symbol, interval),
+            )
+            if cur.fetchone():
+                found.append(interval)
+        return tuple(found)
+
+    def _index_peek(self, cur: Any, table: str, symbol: str, *, interval: str) -> CachePeek:
+        if table != "klines":
+            raise ValueError(f"неочікувана таблиця {table}")
+        cur.execute(
+            "SELECT ts FROM klines WHERE symbol = %s AND interval = %s ORDER BY ts ASC LIMIT 1",
+            (symbol, interval),
+        )
+        first = cur.fetchone()
+        if not first:
+            return _EMPTY_PEEK
+        cur.execute(
+            "SELECT ts FROM klines WHERE symbol = %s AND interval = %s ORDER BY ts DESC LIMIT 1",
+            (symbol, interval),
+        )
+        last = cur.fetchone()
+        start = _naive_utc(first[0])
+        end = _naive_utc(last[0] if last else first[0])
+        return CachePeek(_estimate_bars(start, end, interval), start, end)
+
+    def _agg_peek(self, cur: Any, table: str, symbol: str) -> CachePeek:
+        if table not in {"funding", "agg_trades"}:
+            raise ValueError(f"неочікувана таблиця {table}")
+        cur.execute(
+            f"SELECT ts FROM {table} WHERE symbol = %s ORDER BY ts ASC LIMIT 1",
+            (symbol,),
+        )
+        first = cur.fetchone()
+        if not first:
+            return _EMPTY_PEEK
+        cur.execute(
+            f"SELECT ts FROM {table} WHERE symbol = %s ORDER BY ts DESC LIMIT 1",
+            (symbol,),
+        )
+        last = cur.fetchone()
+        start = _naive_utc(first[0])
+        end = _naive_utc(last[0] if last else first[0])
+        if table == "funding":
+            cur.execute(f"SELECT COUNT(*)::bigint FROM {table} WHERE symbol = %s", (symbol,))
+            n_rows = int((cur.fetchone() or (0,))[0] or 0)
+        else:
+            # COUNT(*) по agg_trades сканує мільйони рядків (у проді ~9M лише BTC).
+            n_rows = 1
+        return CachePeek(n_rows, start, end)
+
 
 def get_store() -> MarketDataStore:
     """Фабрика бекенду кешу за Settings.data_backend ('parquet' | 'postgres')."""
@@ -339,4 +566,13 @@ def get_store() -> MarketDataStore:
     return ParquetStore()
 
 
-__all__ = ["MarketDataStore", "ParquetStore", "PostgresStore", "get_store"]
+__all__ = [
+    "CachePeek",
+    "MarketDataStore",
+    "ParquetStore",
+    "PostgresStore",
+    "SymbolCacheStats",
+    "empty_symbol_stats",
+    "get_store",
+    "peek_cache_file",
+]

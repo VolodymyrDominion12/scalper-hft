@@ -60,6 +60,10 @@ with st.container(horizontal=True):
     st.badge(settings.exchange, icon=":material/account_balance:", color="blue")
     exec_label = "maker" if settings.maker_execution else "taker"
     st.badge(f"Виконання {exec_label}", icon=":material/swap_horiz:", color="violet")
+    if settings.data_backend == "postgres":
+        st.badge("Кеш PostgreSQL", icon=":material/database:", color="blue")
+    else:
+        st.badge("Кеш parquet", icon=":material/folder:", color="gray")
 
 st.caption(
     f"Комісії: maker {settings.maker_fee:.2%} · taker {settings.taker_fee:.2%} · "
@@ -70,8 +74,11 @@ st.caption(
 
 
 @st.cache_data(ttl="5m", max_entries=8)
-def _cached_inventory(data_dir_s: str, symbols: tuple[str, ...]) -> pd.DataFrame:
-    return cache_inventory(Path(data_dir_s), symbols)
+def _cached_inventory(data_dir_s: str, symbols: tuple[str, ...], backend: str) -> pd.DataFrame:
+    from scalper_hft.data.store import get_store
+
+    store = get_store() if backend == "postgres" else None
+    return cache_inventory(Path(data_dir_s), symbols, store=store)
 
 
 def _clear_cache_pending() -> None:
@@ -115,7 +122,7 @@ def _on_cache_row_action() -> None:
 
 
 def _render_download_form(symbols: list[str], *, action: str) -> None:
-    inv = _cached_inventory(str(data_dir), tuple(SYMBOLS))
+    inv = _cached_inventory(str(data_dir), tuple(SYMBOLS), settings.data_backend)
     span = max_span_days(inv, symbols)
     default_days = suggested_cache_days(span, action=action)
     names = ", ".join(symbols)
@@ -154,9 +161,7 @@ def _render_download_form(symbols: list[str], *, action: str) -> None:
             for i, sym in enumerate(symbols, start=1):
                 st.write(f"{i}/{len(symbols)} `{sym}`")
                 try:
-                    result = download_symbol_cache(
-                        sym, depth, force=force, funding=funding, trades=trades
-                    )
+                    result = download_symbol_cache(sym, depth, force=force, funding=funding, trades=trades)
                     extra = []
                     if result.funding_rows is not None:
                         extra.append(f"funding {result.funding_rows}")
@@ -192,6 +197,11 @@ def _expand_cache_dialog(symbols: list[str]) -> None:
 @st.dialog("Видалити кеш", icon=":material/delete:", on_dismiss=_clear_cache_pending)
 def _delete_cache_dialog(symbols: list[str]) -> None:
     st.warning(f"Видалити parquet-кеш для {len(symbols)} симв.: {', '.join(symbols)}")
+    if settings.data_backend == "postgres":
+        st.caption(
+            "Ринкові дані живуть у PostgreSQL. Це діалог стирає лише файли в data/, "
+            "рядки в таблицях klines / funding / agg_trades не чіпає."
+        )
     files: list[str] = []
     for sym in symbols:
         files.extend(p.name for p in list_symbol_cache_files(data_dir, sym))
@@ -340,7 +350,7 @@ def _cached_sweep(path_s: str) -> pd.DataFrame:
 
 inv_slot = st.container()
 with inv_slot.skeleton():
-    inv = _cached_inventory(str(data_dir), tuple(SYMBOLS))
+    inv = _cached_inventory(str(data_dir), tuple(SYMBOLS), settings.data_backend)
 kpis = inventory_kpis(inv)
 
 with st.container(horizontal=True):
@@ -386,10 +396,17 @@ st.dataframe(
 )
 
 st.header(":material/database: Свіжість кешу")
-st.caption(
-    "Span і вік останнього 1m бара. Позначте рядки для масових дій або меню «Дії» в рядку. "
-    "Застарілий кеш = lookahead-ризик на «сьогоднішніх» висновках."
-)
+if settings.data_backend == "postgres":
+    st.caption(
+        "Джерело: PostgreSQL (`DATA_BACKEND=postgres`), таблиці klines / funding / agg_trades — "
+        "не файли `data/*.parquet`. Span і вік останнього 1m бара. "
+        "Застарілий кеш = lookahead-ризик на «сьогоднішніх» висновках."
+    )
+else:
+    st.caption(
+        "Span і вік останнього 1m бара з parquet у data/. Позначте рядки для масових дій або меню «Дії» в рядку. "
+        "Застарілий кеш = lookahead-ризик на «сьогоднішніх» висновках."
+    )
 st.session_state.setdefault("cache_pending", None)
 _cache_manager(inv)
 

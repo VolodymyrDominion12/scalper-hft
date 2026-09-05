@@ -90,6 +90,33 @@ def test_peek_and_inventory_from_tmp_parquet(tmp_path: Path) -> None:
     assert kpis["klines_1m"] == 10
 
 
+def test_cache_inventory_reads_store_not_empty_dir(tmp_path: Path) -> None:
+    from scalper_hft.data.store import CachePeek, SymbolCacheStats
+
+    class _Store:
+        def symbol_stats(self, symbols: list[str]) -> dict[str, SymbolCacheStats]:
+            peek = CachePeek(1_580_000, pd.Timestamp("2023-09-03"), pd.Timestamp("2026-09-05 04:50"))
+            return {
+                "ETHUSDT": SymbolCacheStats(
+                    klines_1m=peek,
+                    intervals=("1m",),
+                    funding=CachePeek(10, None, pd.Timestamp("2026-09-05")),
+                    trades=CachePeek(100, None, None),
+                )
+            }
+
+    now = pd.Timestamp("2026-09-05 06:00")
+    inv = cache_inventory(tmp_path, ["ETHUSDT", "BTCUSDT"], now=now, store=_Store())
+    by_sym = inv.set_index("symbol")
+    eth = by_sym.loc["ETHUSDT"]
+    assert eth["klines_1m"] == 1_580_000
+    assert eth["freshness"] == "fresh"
+    assert eth["agg_trades"] == 100
+    btc = by_sym.loc["BTCUSDT"]
+    assert btc["klines_1m"] == 0
+    assert btc["freshness"] == "missing"
+
+
 def test_fill_rate_and_paper_kpis() -> None:
     assert fill_rate(0, 0) != fill_rate(0, 0)  # NaN
     assert fill_rate(8, 2) == pytest.approx(0.8)

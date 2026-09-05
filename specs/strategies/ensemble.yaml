@@ -1,0 +1,63 @@
+name: ensemble
+version: "1.0"
+status: candidate
+family: meta
+
+hypothesis: >
+  Зважена комбінація кількох альфа-стратегій з різними сім'ями (momentum +
+  mean_reversion + relative_value) знижує дисперсію P&L порівняно з будь-якою
+  одиничною стратегією. Ваги адаптуються онлайн через Hedge no-regret алгоритм
+  (мінімізація regret), що дозволяє адаптуватись до концепт-дрейфу без
+  пере-навчання. Комбінований Sharpe має перевищувати середнє суб-стратегій
+  за рахунок диверсифікації.
+
+edge_conditions:
+  - name: diversification_benefit
+    description: >
+      Std(ensemble_pnl) < mean(std(sub_pnl)) — комбінація знижує волатильність.
+  - name: sharpe_beats_average
+    description: >
+      OOS Sharpe ensemble > середній OOS Sharpe суб-стратегій (принаймні у
+      >= 60% walk-forward вікон).
+
+# ensemble та regime_supervisor використовують **kwargs — параметри передаються
+# рядком через CLI або через **params dict. Не мають типізованого __init__.
+# Параметри задекларовані тут як документація, але НЕ перевіряються у param_space.
+params_doc:
+  strategies:
+    default: "mean_reversion,supertrend,hmm_reversion"
+    description: Список суб-стратегій через кому (name:param1=val1).
+  blend_mode:
+    default: "contextual_hedge"
+    description: >
+      regime_soft — лише static prior із taxonomy.
+      contextual_hedge — ContextualHedgeBlend (рекомендований; онлайн).
+      exp3 — Exp3Bandit (вибирає ONE best strategy per bar).
+  n_hmm_states:
+    default: 3
+    description: Кількість HMM-станів для детектора режиму.
+  hmm_fit_bars:
+    default: 2000
+    min: 500
+    max: 5000
+    step: 500
+    description: Перші N барів для initial HMM fit (лише causal).
+  unfavorable_weight:
+    default: 0.25
+    min: 0.1
+    max: 0.5
+    step: 0.05
+    description: Мінімальна вага суб-стратегії у несприятливому режимі (regime_soft).
+
+invariants:
+  no_lookahead: true
+  signal_values: [-1, 0, 1]  # ensemble clipує до [-1,1], але проміжні флоут можливі без clip
+  continuous_output_possible: true  # Мета-стратегія може повертати float до [-1,1]
+  no_nan_output: true
+
+preferred_regimes: []  # мета-стратегія адаптується до будь-якого режиму
+
+notes: >
+  EnsembleStrategy реалізує blend_mode через ContextualHedgeBlend або Exp3Bandit.
+  RegimeSupervisor — потужніший варіант з явним детектором режиму.
+  Потребує OOS-аудиту: чи дійсно онлайн-адаптація дає +Sharpe vs static blend.
