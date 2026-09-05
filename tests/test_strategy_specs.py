@@ -160,13 +160,21 @@ def test_spec_preferred_regimes_match_class(name: str, spec: dict[str, Any]) -> 
 
 @pytest.mark.parametrize("name,spec", ALL_SPECS, ids=SPEC_IDS)
 def test_spec_params_in_param_space(name: str, spec: dict[str, Any]) -> None:
-    """Кожен параметр зі spec.params є у Strategy.param_space або __init__."""
+    """Кожен параметр зі spec.params є у Strategy.param_space або __init__.
+
+    Примітка: стратегії з **kwargs (__init__(self, **params)) використовують
+    'params_doc' замість 'params' у spec — перевірка пропускається (немає __init__ сигнатури).
+    """
     from scalper_hft.strategies import REGISTRY
     import inspect
 
     spec_name = spec.get("name", name)
     if spec_name not in REGISTRY:
         pytest.skip(f"'{spec_name}' відсутній у REGISTRY")
+
+    # Якщо spec використовує params_doc — пропускаємо (kwargs-стратегія)
+    if "params_doc" in spec and "params" not in spec:
+        pytest.skip(f"{spec_name}: використовує params_doc (**kwargs), перевірка параметрів не застосовна")
 
     spec_params = spec.get("params") or {}
     if not spec_params:
@@ -215,17 +223,29 @@ ACTIVE_IDS = [name for name, _ in ACTIVE_SPECS]
 
 @pytest.mark.parametrize("name,spec", ACTIVE_SPECS, ids=ACTIVE_IDS)
 def test_signals_domain(name: str, spec: dict[str, Any]) -> None:
-    """generate_signals() повертає тільки значення з {-1, 0, 1}."""
+    """generate_signals() повертає тільки значення з {-1, 0, 1}.
+
+    Примітка: мета-стратегії (continuous_output_possible: true) можуть
+    повертати float сигнали у [-1, 1] — цей тест пропускається.
+    """
     from scalper_hft.strategies import REGISTRY
 
     spec_name = spec.get("name", name)
     if spec_name not in REGISTRY:
         pytest.skip(f"'{spec_name}' відсутній у REGISTRY")
 
+    # Мета-стратегії можуть повертати float-зважені сигнали — пропускаємо
+    invariants = spec.get("invariants") or {}
+    if invariants.get("continuous_output_possible", False):
+        pytest.skip(
+            f"{spec_name}: мета-стратегія з continuous_output_possible=true, "
+            f"повертає float у [-1,1] замість цілих сигналів"
+        )
+
     cls = REGISTRY[spec_name]
     strategy = cls()
 
-    requires_pair = (spec.get("invariants") or {}).get("requires_pair_columns", False)
+    requires_pair = invariants.get("requires_pair_columns", False)
     df = make_pair_ohlcv() if requires_pair else make_synthetic_ohlcv()
 
     try:

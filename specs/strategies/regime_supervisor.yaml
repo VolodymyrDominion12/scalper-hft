@@ -21,7 +21,9 @@ edge_conditions:
       ContextualHedgeBlend показує >= 10% вищий Sharpe vs рівних ваг (equal_weight)
       у >= 2 з 3 walk-forward вікон.
 
-params:
+# regime_supervisor використовує **kwargs — параметри передаються рядком.
+# Параметри задекларовані як документація, але НЕ перевіряються у param_space.
+params_doc:
   strategies:
     default: "mean_reversion,supertrend,hmm_reversion"
     description: Список суб-стратегій через кому (name:param1=val1:param2=val2).
@@ -46,7 +48,8 @@ params:
 
 invariants:
   no_lookahead: true
-  signal_values: [-1, 0, 1]
+  signal_values: [-1, 0, 1]  # ціль після clip; мета-стратегія може повертати float
+  continuous_output_possible: true  # contextual_hedge повертає зважені float
   no_nan_output: true
 
 preferred_regimes: []

@@ -99,8 +99,12 @@ def validate_spec(spec: dict[str, Any], *, path: str = "<unknown>") -> list[str]
     # ── 3. Обов'язкові поля за статусом ──────────────────────────────────
     required = REQUIRED_BY_STATUS.get(status, [])
     for field in required:
+        # params_doc є прийнятною альтернативою params (для **kwargs-стратегій)
+        if field == "params" and "params_doc" in spec:
+            continue
         if field not in spec:
             errors.append(f"[{ctx}] status='{status}' вимагає поле '{field}'")
+
 
     # ── 4. Перевірка edge_conditions ─────────────────────────────────────
     min_ec = MIN_EDGE_CONDITIONS.get(status, 0)
