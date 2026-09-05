@@ -176,6 +176,28 @@ def test_sweep_highlights_prefers_oos() -> None:
     assert sweep_highlights(pd.DataFrame()).empty
 
 
+def test_sweep_highlights_handles_object_dtype_and_all_none_oos() -> None:
+    # Симуляція результатів з SQLite де avg_oos_sharpe має dtype object і значення None
+    df = pd.DataFrame(
+        {
+            "strategy": ["mean_reversion", "pairs_arb"],
+            "symbol": ["BTCUSDT", "ETHUSDT"],
+            "interval": ["5m", "15m"],
+            "status": ["ok", "ok"],
+            "sharpe": [1.5, 2.5],
+            "avg_oos_sharpe": [None, None],
+            "n_trades": [20, 30],
+        }
+    )
+    assert df["avg_oos_sharpe"].dtype == object
+    top = sweep_highlights(df, top_n=2)
+    assert len(top) == 2
+    # Має відсортувати за sharpe (fallback) без TypeError
+    assert top.iloc[0]["strategy"] == "pairs_arb"
+    assert top.iloc[1]["strategy"] == "mean_reversion"
+
+
+
 def test_strategy_book_pairs_arb_validated() -> None:
     assert lane_for("pairs_arb") == "validated"
     assert lane_for("mean_reversion") == "rejected"

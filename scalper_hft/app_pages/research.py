@@ -607,6 +607,23 @@ with tabs[4]:
             bc_min_wr = bc3.number_input("Min win rate", 0.0, 1.0, 0.4, step=0.05, key="bc_minwr")
             bc_show_n = bc4.number_input("Показати топ N", 5, 200, 30, key="bc_n")
 
+            # Приведення числових колонок
+            for col in [
+                "sharpe",
+                "n_trades",
+                "win_rate",
+                "sortino",
+                "calmar",
+                "total_return",
+                "max_dd",
+                "profit_factor",
+                "trades_per_day",
+                "avg_oos_sharpe",
+                "oos_positive_frac",
+            ]:
+                if col in all_df.columns:
+                    all_df[col] = pd.to_numeric(all_df[col], errors="coerce")
+
             ok = (
                 all_df[all_df.get("status", pd.Series("ok", index=all_df.index)) == "ok"]
                 if "status" in all_df.columns
@@ -624,8 +641,13 @@ with tabs[4]:
             if filtered.empty:
                 st.warning("Немає комбінацій, що відповідають фільтрам")
             else:
-                sort_col = "avg_oos_sharpe" if "avg_oos_sharpe" in filtered.columns else "sharpe"
-                top = filtered.nlargest(int(bc_show_n), sort_col)
+                has_oos = "avg_oos_sharpe" in filtered.columns and filtered["avg_oos_sharpe"].notna().any()
+                sort_col = "avg_oos_sharpe" if has_oos else "sharpe"
+                if sort_col in filtered.columns:
+                    valid = filtered.dropna(subset=[sort_col])
+                    top = valid.nlargest(int(bc_show_n), sort_col) if not valid.empty else filtered.head(int(bc_show_n))
+                else:
+                    top = filtered.head(int(bc_show_n))
 
                 disp_cols = [
                     c

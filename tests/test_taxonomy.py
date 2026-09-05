@@ -29,11 +29,12 @@ EXPECTED_FAMILIES: dict[str, str] = {
     "supertrend": "momentum",
     "stoch_rsi": "mean_reversion",
     "smc_fvg": "flow",
+    "regime_supervisor": "meta",
 }
 
 
-def test_registry_has_sixteen_named_strategies() -> None:
-    assert len(REGISTRY) == 16
+def test_registry_has_seventeen_named_strategies() -> None:
+    assert len(REGISTRY) == 17
     assert set(REGISTRY) == set(EXPECTED_FAMILIES)
 
 

@@ -268,15 +268,22 @@ def sweep_highlights(df: pd.DataFrame, top_n: int = 5) -> pd.DataFrame:
     """Топ комбінацій за OOS Sharpe (fallback — in-sample Sharpe)."""
     if df is None or df.empty:
         return pd.DataFrame()
-    view = df
+    view = df.copy()
     if "status" in view.columns:
         view = view[view["status"].fillna("ok") == "ok"]
     if view.empty:
         return pd.DataFrame()
-    sort_col = "avg_oos_sharpe" if "avg_oos_sharpe" in view.columns else "sharpe"
+    for col in ("sharpe", "avg_oos_sharpe"):
+        if col in view.columns:
+            view[col] = pd.to_numeric(view[col], errors="coerce")
+    has_oos = "avg_oos_sharpe" in view.columns and view["avg_oos_sharpe"].notna().any()
+    sort_col = "avg_oos_sharpe" if has_oos else "sharpe"
     if sort_col not in view.columns:
         return pd.DataFrame()
-    ranked = view.dropna(subset=[sort_col]).nlargest(int(top_n), sort_col)
+    valid = view.dropna(subset=[sort_col])
+    if valid.empty:
+        return pd.DataFrame()
+    ranked = valid.nlargest(int(top_n), sort_col)
     cols = [
         c
         for c in (

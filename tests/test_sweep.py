@@ -200,3 +200,39 @@ def test_sweep_resume_skips_ok_cells(tmp_path) -> None:
 
 def test_default_intervals_include_user_requested() -> None:
     assert {"1m", "5m", "15m", "30m", "1h"} <= set(DEFAULT_INTERVALS)
+
+
+def test_sweep_store_load_coerces_numeric_columns(tmp_path) -> None:
+    from scalper_hft.research.sweep_store import SweepRow, SweepStore
+
+    db = tmp_path / "sweep_test.db"
+    with SweepStore(db) as store:
+        # Додаємо запис, де OOS-метрики не заповнені (NULL в SQLite)
+        row = SweepRow(
+            strategy="mean_reversion",
+            symbol="BTCUSDT",
+            interval="5m",
+            days=10,
+            mode="backtest",
+            sharpe=1.8,
+        )
+        # явно вказуємо None для OOS колонок
+        d = row.as_dict()
+        d["avg_oos_sharpe"] = None
+        d["oos_positive_frac"] = None
+        store._conn.execute(
+            """
+            INSERT INTO sweep_results (strategy, symbol, interval, days, mode, sharpe, avg_oos_sharpe, oos_positive_frac)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("mean_reversion", "BTCUSDT", "5m", 10, "backtest", 1.8, None, None),
+        )
+        store._conn.commit()
+
+        loaded = store.load()
+        assert not loaded.empty
+        # Перевірка що dtype не object, а числовий float64
+        assert loaded["avg_oos_sharpe"].dtype == "float64"
+        assert loaded["oos_positive_frac"].dtype == "float64"
+        assert loaded["sharpe"].dtype == "float64"
+

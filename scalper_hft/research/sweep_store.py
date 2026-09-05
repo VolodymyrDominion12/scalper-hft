@@ -139,6 +139,28 @@ DO UPDATE SET
 # ── Store ─────────────────────────────────────────────────────────────────────
 
 
+_NUMERIC_COLUMNS: tuple[str, ...] = (
+    "days",
+    "n_bars",
+    "n_trades",
+    "total_return",
+    "sharpe",
+    "sortino",
+    "calmar",
+    "max_dd",
+    "win_rate",
+    "profit_factor",
+    "avg_trade",
+    "exposure",
+    "trades_per_day",
+    "avg_is_sharpe",
+    "avg_oos_sharpe",
+    "oos_positive_frac",
+    "n_raw_signals",
+    "n_filtered",
+)
+
+
 class SweepStore:
     """SQLite-сховище для результатів sweep-прогону.
 
@@ -191,7 +213,11 @@ class SweepStore:
             query += f" AND {col}=?"
             params.append(val)
         query += " ORDER BY sharpe DESC NULLS LAST"
-        return pd.read_sql_query(query, self._conn, params=params)
+        df = pd.read_sql_query(query, self._conn, params=params)
+        for col in _NUMERIC_COLUMNS:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        return df
 
     def load_filter_attribution(self) -> pd.DataFrame:
         """Зведена таблиця: filter_name × стратегія × total blocked."""
