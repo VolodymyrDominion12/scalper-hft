@@ -9,8 +9,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
-from scalper_hft.research.job_artifacts import load_backtest_result, save_backtest_result
-from scalper_hft.research.job_handlers import handle_backtest, payload_from_backtest_cli
+from scalper_hft.research.job_artifacts import load_backtest_result, load_cell_audit, save_backtest_result
+from scalper_hft.research.job_handlers import handle_backtest, handle_overfit, payload_from_backtest_cli, run_job
 from scalper_hft.research.job_worker import run_claimed_job
 from scalper_hft.research.jobs import JobStore, fingerprint
 
@@ -173,6 +173,59 @@ def test_handler_backtest_writes_artifacts(tmp_path: Path, monkeypatch: pytest.M
     pd.testing.assert_series_equal(res.equity, roundtrip.equity, check_names=False)
 
 
+def test_handle_overfit_writes_audit_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from scalper_hft.validation.cell_audit import CellAudit
+
+    canned = CellAudit(
+        symbol="BTCUSDT",
+        interval="1h",
+        strategy="mean_reversion",
+        status="ok",
+        avg_oos_sharpe=0.44,
+        oos_pos_frac=0.7,
+        dsr=0.96,
+        smoothness=0.5,
+        bt_n_trades=50,
+        windows=({"window_idx": 0, "oos_sharpe": 0.4, "is_sharpe": 0.8, "oos_return": 0.01, "n_trades": 5},),
+        sensitivity_grid=({"lookback": 10.0, "metric": 1.2},),
+        sens_param="lookback",
+    )
+
+    monkeypatch.setattr("scalper_hft.validation.cell_audit.audit_cell", lambda *a, **k: canned)
+    job_dir = tmp_path / "overfit"
+    handle_overfit(
+        {
+            "strategy": "mean_reversion",
+            "symbol": "BTCUSDT",
+            "interval": "1h",
+            "days": 30,
+            "train_bars": 200,
+            "test_bars": 50,
+        },
+        job_dir,
+    )
+    loaded = load_cell_audit(job_dir)
+    assert loaded.status == "ok"
+    assert loaded.avg_oos_sharpe == pytest.approx(0.44)
+    assert (job_dir / "audit.json").exists()
+    assert (job_dir / "wf_windows.parquet").exists()
+    assert (job_dir / "sensitivity.csv").exists()
+
+
+def test_handle_overfit_raises_on_error_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from scalper_hft.validation.cell_audit import CellAudit
+
+    canned = CellAudit(symbol="BTCUSDT", interval="1h", strategy="x", status="error", error="немає даних")
+    monkeypatch.setattr("scalper_hft.validation.cell_audit.audit_cell", lambda *a, **k: canned)
+    with pytest.raises(RuntimeError, match="немає даних"):
+        handle_overfit({"strategy": "x", "symbol": "BTCUSDT", "interval": "1h", "days": 7}, tmp_path / "bad")
+
+
+def test_run_job_unknown_kind(tmp_path: Path) -> None:
+    with pytest.raises(KeyError, match="невідомий kind"):
+        run_job("nope", {}, tmp_path / "x")
+
+
 def test_save_load_backtest_result_roundtrip(tmp_path: Path) -> None:
     from scalper_hft.backtest.engine import BacktestResult
     from scalper_hft.backtest.metrics import BacktestMetrics
@@ -313,4 +366,3 @@ def test_prune_jobs_cleans_orphaned_directories(tmp_path: Path) -> None:
     assert stats.orphaned_dirs == 1
     assert not orphan_dir.exists()
     store.close()
-

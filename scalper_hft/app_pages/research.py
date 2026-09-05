@@ -1,11 +1,13 @@
-"""Сторінка «🔬 Дослідження»: масовий sweep, filter attribution, порівняння стратегій.
+"""Сторінка «Дослідження»: масовий sweep, filter attribution, порівняння стратегій.
 
 Секції:
   1. Sweep Matrix — запуск масового прогону та heatmap результатів
   2. Filter Attribution — аналіз які фільтри скільки угод відкидають і чи це вигідно
   3. Equity Comparison — порівняння equity кривих декількох комбінацій
   4. Trade Quality — MAE/MFE, hourly heatmap, розподіл PnL
-  5. Best Combinations — топ результатів з кнопкою переходу до бектесту
+  5. Best Combinations — топ результатів з переходом до бектесту / аудиту
+  6. Cell audit — walk-forward + DSR + sensitivity + PASS/FAIL
+  7. Regimes — розбивка угод по vol / structure
 """
 
 from __future__ import annotations
@@ -17,26 +19,41 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-from scalper_hft.app_pages._common import SYMBOLS
+from scalper_hft.app_pages._common import (
+    BT_INTERVALS,
+    RESEARCH_AUDIT_PREFILL,
+    RESEARCH_BT_PREFILL,
+    SYMBOLS,
+    apply_research_audit_prefill,
+    combo_prefill,
+    overfit_job_payload,
+    single_backtest_payload,
+)
 from scalper_hft.config import get_settings
-from scalper_hft.research.jobs import DEFAULT_JOBS_PATH, JobStore
+from scalper_hft.research.jobs import DEFAULT_JOBS_PATH, JobStore, artifacts_dir, fingerprint
 from scalper_hft.research.sweep_store import SweepStore
+from scalper_hft.validation.cell_audit import default_train_test
+from scalper_hft.validation.sweep import DEFAULT_INTERVALS, default_strategies
 
 settings = get_settings()
 _SWEEP_DB = Path("results/sweep.db")
 
-st.title("🔬 Дослідження")
+apply_research_audit_prefill(st.session_state)
+
+st.title("Дослідження")
 st.caption(
-    "Масовий sweep всіх стратегій × символів × таймфреймів · Filter attribution · Аналіз угод · Порівняння кривих"
+    "Масовий sweep стратегій × символів × таймфреймів · filter attribution · аудит комірки · режими · порівняння кривих"
 )
 
 tabs = st.tabs(
     [
-        "📊 Sweep Matrix",
-        "🔍 Filter Attribution",
-        "📈 Порівняння Equity",
-        "🎯 Якість Угод",
-        "🏆 Топ Комбінації",
+        "Sweep matrix",
+        "Filter attribution",
+        "Порівняння equity",
+        "Якість угод",
+        "Топ комбінації",
+        "Аудит комірки",
+        "Режими",
     ]
 )
 
@@ -50,14 +67,27 @@ with tabs[0]:
     col_left, col_right = st.columns([1, 3])
     with col_left:
         st.caption("Налаштування прогону")
-        from scalper_hft.validation.sweep import DEFAULT_INTERVALS, default_strategies
 
-        all_strats = default_strategies(include_slow=False)
+        sel_slow = st.toggle("Включити повільні (ML / ensemble)", value=False, key="sw_slow")
+        all_strats = default_strategies(include_slow=sel_slow)
         sel_strats = st.multiselect("Стратегії", all_strats, default=all_strats[:5], key="sw_strats")
         sel_symbols = st.multiselect("Символи", SYMBOLS, default=SYMBOLS[:3], key="sw_syms")
         sel_ivs = st.multiselect("Таймфрейми", DEFAULT_INTERVALS, default=["5m", "15m", "1h"], key="sw_ivs")
         sel_days = st.slider("Днів даних", 14, 180, 60, key="sw_days")
-        sel_mode = st.radio("Режим", ["backtest", "walkforward"], key="sw_mode", horizontal=True)
+        sel_mode = st.segmented_control("Режим", ["backtest", "walkforward"], key="sw_mode")
+        if sel_mode is None:
+            sel_mode = "backtest"
+        if sel_mode == "walkforward":
+            _iv0 = sel_ivs[0] if sel_ivs else "1h"
+            _dt, _dte = default_train_test(_iv0)
+            if "sw_train" not in st.session_state:
+                st.session_state["sw_train"] = int(_dt)
+            if "sw_test" not in st.session_state:
+                st.session_state["sw_test"] = int(_dte)
+            sel_train = st.number_input("Train барів", 50, 20_000, key="sw_train")
+            sel_test = st.number_input("Test барів (OOS)", 20, 10_000, key="sw_test")
+        else:
+            sel_train, sel_test = 2000, 500
         sel_workers = st.slider("Потоки", 1, 8, 2, key="sw_workers")
         sel_trace = st.toggle("Filter tracing (повільніше)", value=False, key="sw_trace")
         sel_resume = st.toggle("Resume (не повторювати виконані)", value=True, key="sw_resume")
@@ -93,10 +123,10 @@ with tabs[0]:
                 "workers": int(sel_workers),
                 "resume": bool(sel_resume),
                 "enable_trace": bool(sel_trace),
-                "include_slow": False,
+                "include_slow": bool(sel_slow),
                 "base_interval": "1m",
-                "train_bars": 2000,
-                "test_bars": 500,
+                "train_bars": int(sel_train),
+                "test_bars": int(sel_test),
             }
             with JobStore(DEFAULT_JOBS_PATH) as js:
                 job = js.submit("sweep", payload)
@@ -202,7 +232,7 @@ with tabs[1]:
 
         fa_strat = st.selectbox("Стратегія", sorted(REGISTRY), key="fa_strat")
         fa_sym = st.selectbox("Символ", SYMBOLS, key="fa_sym")
-        fa_iv = st.selectbox("Таймфрейм", ["1m", "5m", "15m", "1h", "4h"], index=1, key="fa_iv")
+        fa_iv = st.selectbox("Таймфрейм", BT_INTERVALS, index=1, key="fa_iv")
         fa_days = st.slider("Днів", 7, 180, 60, key="fa_days")
         fa_horizon = st.slider("Shadow-горизонт (барів)", 1, 20, 5, key="fa_horizon")
         run_trace_btn = st.button("🔬 Запустити з трейсингом", key="fa_run")
@@ -288,16 +318,6 @@ with tabs[1]:
                                     st.metric("Shadow win rate", f"{row['shadow_win_rate']:.0%}", border=True)
                                     st.metric("Shadow avg PnL", f"{row['shadow_mean_ret']:+.4%}", border=True)
                                     st.metric("Shadow total PnL", f"{row['shadow_total_pnl']:+.4%}", border=True)
-
-                        # Зберегти у session_state для Tab 5
-                        st.session_state["fa_result"] = {
-                            "strat": fa_strat,
-                            "sym": fa_sym,
-                            "iv": fa_iv,
-                            "res": res,
-                            "trace": trace,
-                            "pnl_df": pnl_df,
-                        }
         else:
             # Завантажити з sweep store якщо є
             if _SWEEP_DB.exists():
@@ -341,7 +361,7 @@ with tabs[2]:
 
         ec_strat = st.selectbox("Стратегія", sorted(_REG), key="ec_strat")
         ec_sym = st.selectbox("Символ", SYMBOLS, key="ec_sym")
-        ec_iv = st.selectbox("Таймфрейм", ["1m", "5m", "15m", "1h"], index=1, key="ec_iv")
+        ec_iv = st.selectbox("Таймфрейм", BT_INTERVALS, index=1, key="ec_iv")
         ec_days = st.slider("Днів", 14, 180, 60, key="ec_days")
         ec_label = st.text_input("Мітка", value=f"{ec_strat} {ec_sym} {ec_iv}", key="ec_label")
         add_curve_btn = st.button("➕ Додати криву", key="ec_add")
@@ -444,7 +464,7 @@ with tabs[3]:
 
         tq_strat = st.selectbox("Стратегія", sorted(_REG2), key="tq_strat")
         tq_sym = st.selectbox("Символ", SYMBOLS, key="tq_sym")
-        tq_iv = st.selectbox("Таймфрейм", ["1m", "5m", "15m", "1h"], index=1, key="tq_iv")
+        tq_iv = st.selectbox("Таймфрейм", BT_INTERVALS, index=1, key="tq_iv")
         tq_days = st.slider("Днів", 14, 180, 60, key="tq_days")
         run_tq_btn = st.button("▶ Запустити аналіз", key="tq_run")
 
@@ -584,7 +604,7 @@ with tabs[3]:
 # TAB 5 — Best Combinations
 # ═══════════════════════════════════════════════════════════════════════════════
 with tabs[4]:
-    st.subheader("🏆 Топ комбінації зі sweep")
+    st.subheader("Топ комбінації зі sweep")
     st.caption("Найкращі комбінації (стратегія × символ × таймфрейм) з усіх sweep-прогонів")
 
     if not _SWEEP_DB.exists():
@@ -669,11 +689,13 @@ with tabs[4]:
                         "oos_positive_frac",
                         "n_raw_signals",
                         "n_filtered",
+                        "days",
                     ]
                     if c in top.columns
                 ]
+                top_view = top[disp_cols].reset_index(drop=True)
                 st.dataframe(
-                    top[disp_cols].reset_index(drop=True),
+                    top_view,
                     width="stretch",
                     hide_index=True,
                     column_config={
@@ -688,6 +710,49 @@ with tabs[4]:
                         "oos_positive_frac": st.column_config.NumberColumn("OOS+ frac", format="%.0%"),
                     },
                 )
+                labels = [
+                    f"{r.strategy} · {r.symbol} {r.interval}" + (f" ({r.mode})" if "mode" in top_view.columns else "")
+                    for r in top_view.itertuples(index=False)
+                ]
+                picked = st.selectbox(
+                    "Комбінація",
+                    list(range(len(top_view))),
+                    format_func=lambda i: labels[i],
+                    key="bc_pick",
+                )
+                row = top_view.iloc[int(picked)]
+                combo = combo_prefill(row.to_dict())
+                train_b, test_b = default_train_test(combo["interval"])
+                csv_bytes = top_view.to_csv(index=False).encode("utf-8")
+                with st.container(horizontal=True):
+                    if st.button("Відкрити бектест", icon=":material/query_stats:", key="bc_open_bt"):
+                        st.session_state[RESEARCH_BT_PREFILL] = combo
+                        st.switch_page("app_pages/backtest.py")
+                    if st.button("Поставити аудит у чергу", icon=":material/fact_check:", key="bc_audit"):
+                        st.session_state[RESEARCH_AUDIT_PREFILL] = combo
+                        payload = overfit_job_payload(
+                            combo["strategy"],
+                            combo["symbol"],
+                            combo["interval"],
+                            combo["days"],
+                            train_bars=train_b,
+                            test_bars=test_b,
+                        )
+                        with JobStore(DEFAULT_JOBS_PATH) as js:
+                            job = js.submit("overfit", payload)
+                            alive = js.worker_is_alive()
+                        st.session_state["au_last_job"] = job.id
+                        if not alive:
+                            st.warning("Воркер не запущений — `uv run python -m scalper_hft.cli job worker`")
+                        st.rerun()
+                    st.download_button(
+                        "Завантажити CSV",
+                        data=csv_bytes,
+                        file_name="sweep_top.csv",
+                        mime="text/csv",
+                        icon=":material/download:",
+                        key="bc_csv",
+                    )
 
                 # Зведена статистика по стратегіях
                 st.subheader("Зведена статистика по стратегіях")
@@ -713,3 +778,185 @@ with tabs[4]:
                         "mean_n_trades": st.column_config.NumberColumn("Avg Trades", format="%.0f"),
                     },
                 )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 6 — Cell audit
+# ═══════════════════════════════════════════════════════════════════════════════
+with tabs[5]:
+    st.subheader("Аудит комірки")
+    st.caption(
+        "Walk-forward + Deflated Sharpe + sensitivity. Вердикт PASS лише якщо всі пороги "
+        "overfitting-audit виконано. Рахунок іде через чергу jobs (kind=overfit)."
+    )
+    from scalper_hft.research.job_artifacts import load_cell_audit
+    from scalper_hft.strategies import REGISTRY as _REG_AU
+    from scalper_hft.validation.cell_audit import cell_verdict
+
+    au_col1, au_col2 = st.columns([1, 2])
+    with au_col1:
+        au_strat = st.selectbox("Стратегія", sorted(_REG_AU), key="au_strat")
+        au_sym = st.selectbox("Символ", SYMBOLS, key="au_sym")
+        au_iv = st.selectbox("Таймфрейм", BT_INTERVALS, index=min(1, len(BT_INTERVALS) - 1), key="au_iv")
+        au_days = st.slider("Днів", 14, 365, 60, key="au_days")
+        _dt, _dte = default_train_test(str(au_iv))
+        if "au_train" not in st.session_state:
+            st.session_state["au_train"] = int(_dt)
+        if "au_test" not in st.session_state:
+            st.session_state["au_test"] = int(_dte)
+        au_train = st.number_input("Train барів", 50, 20_000, key="au_train")
+        au_test = st.number_input("Test барів (OOS)", 20, 10_000, key="au_test")
+        au_payload = overfit_job_payload(
+            str(au_strat),
+            str(au_sym),
+            str(au_iv),
+            int(au_days),
+            train_bars=int(au_train),
+            test_bars=int(au_test),
+        )
+        au_fp = fingerprint("overfit", au_payload)
+        with JobStore(DEFAULT_JOBS_PATH) as _js:
+            au_job = _js.get_by_fingerprint(au_fp)
+            au_alive = _js.worker_is_alive()
+        run_audit = st.button("Поставити аудит у чергу", icon=":material/fact_check:", key="au_run")
+        if run_audit:
+            with JobStore(DEFAULT_JOBS_PATH) as _js:
+                au_job = _js.submit("overfit", au_payload)
+                au_alive = _js.worker_is_alive()
+            st.rerun()
+        if not au_alive:
+            st.warning("Воркер не запущений — `uv run python -m scalper_hft.cli job worker`")
+        st.page_link("app_pages/jobs.py", label="Черга задач", icon=":material/pending_actions:")
+
+    with au_col2:
+        if au_job is None:
+            st.info("Ще немає аудиту з цими параметрами.")
+        elif au_job.status in {"queued", "running"}:
+            prog = f"{au_job.progress_done}/{au_job.progress_total}" if au_job.progress_total else au_job.status
+            st.info(f"Задача #{au_job.id} · {au_job.status} · {prog}")
+        elif au_job.status == "failed":
+            st.error(f"Задача #{au_job.id} провалилась: {au_job.error}")
+        elif au_job.status == "cancelled":
+            st.warning(f"Задача #{au_job.id} скасована.")
+        elif au_job.status == "succeeded":
+            try:
+                audit = load_cell_audit(artifacts_dir(DEFAULT_JOBS_PATH, au_job.id))
+            except FileNotFoundError:
+                st.warning("Артефакти ще не записані.")
+            else:
+                verdict, why = cell_verdict(audit)
+                if verdict == "PASS":
+                    st.badge("PASS", icon=":material/check_circle:", color="green")
+                else:
+                    st.badge("FAIL", icon=":material/cancel:", color="red")
+                    if why:
+                        st.caption(why)
+                with st.container(horizontal=True):
+                    st.metric("OOS Sharpe", f"{audit.avg_oos_sharpe or 0:.3f}", border=True)
+                    st.metric("OOS+", f"{(audit.oos_pos_frac or 0):.0%}", border=True)
+                    st.metric("DSR", f"{audit.dsr if audit.dsr is not None else float('nan'):.3f}", border=True)
+                    st.metric(
+                        "Smoothness",
+                        f"{audit.smoothness if audit.smoothness is not None else float('nan'):.2f}",
+                        border=True,
+                    )
+                    st.metric("Угод (BT)", f"{audit.bt_n_trades or 0}", border=True)
+                if audit.windows:
+                    wf_df = pd.DataFrame(list(audit.windows))
+                    st.subheader("Walk-forward вікна")
+                    st.dataframe(wf_df, width="stretch", hide_index=True)
+                    fig_wf = go.Figure()
+                    fig_wf.add_trace(go.Bar(x=wf_df["window_idx"], y=wf_df["oos_sharpe"], name="OOS Sharpe"))
+                    fig_wf.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+                    fig_wf.update_layout(height=280, yaxis_title="OOS Sharpe", xaxis_title="Вікно")
+                    st.plotly_chart(fig_wf, width="stretch")
+                if audit.sensitivity_grid and audit.sens_param:
+                    sens_df = pd.DataFrame(list(audit.sensitivity_grid))
+                    st.subheader(f"Sensitivity ({audit.sens_param})")
+                    if "metric" in sens_df.columns and audit.sens_param in sens_df.columns:
+                        fig_s = px.line(
+                            sens_df,
+                            x=audit.sens_param,
+                            y="metric",
+                            markers=True,
+                            title="Sharpe по сітці параметра",
+                        )
+                        fig_s.update_layout(height=280)
+                        st.plotly_chart(fig_s, width="stretch")
+                    st.dataframe(sens_df, width="stretch", hide_index=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 7 — Regimes
+# ═══════════════════════════════════════════════════════════════════════════════
+with tabs[6]:
+    st.subheader("Режими ринку")
+    st.caption(
+        "Розбивка угод по волатильності, структурі та складеному стану structure|vol. "
+        "Це in-sample атрибуція, не OOS-вердикт."
+    )
+    from scalper_hft.data.access import klines_from_store
+    from scalper_hft.features.regimes import named_market_state
+    from scalper_hft.research.job_artifacts import load_backtest_result
+    from scalper_hft.research.session_analysis import (
+        named_regime_breakdown,
+        regime_breakdown,
+        structure_breakdown,
+    )
+    from scalper_hft.strategies import REGISTRY as _REG_RG
+
+    rg_col1, rg_col2 = st.columns([1, 2])
+    with rg_col1:
+        rg_strat = st.selectbox("Стратегія", sorted(_REG_RG), key="rg_strat")
+        rg_sym = st.selectbox("Символ", SYMBOLS, key="rg_sym")
+        rg_iv = st.selectbox("Таймфрейм", BT_INTERVALS, index=min(1, len(BT_INTERVALS) - 1), key="rg_iv")
+        rg_days = st.slider("Днів", 14, 365, 60, key="rg_days")
+        rg_payload = single_backtest_payload(str(rg_strat), str(rg_sym), str(rg_iv), int(rg_days))
+        rg_fp = fingerprint("backtest", rg_payload)
+        with JobStore(DEFAULT_JOBS_PATH) as _js:
+            rg_job = _js.get_by_fingerprint(rg_fp)
+            rg_alive = _js.worker_is_alive()
+        if st.button("Поставити бектест у чергу", icon=":material/play_arrow:", key="rg_run"):
+            with JobStore(DEFAULT_JOBS_PATH) as _js:
+                rg_job = _js.submit("backtest", rg_payload)
+            st.rerun()
+        if not rg_alive:
+            st.warning("Воркер не запущений — `uv run python -m scalper_hft.cli job worker`")
+        st.page_link("app_pages/jobs.py", label="Черга задач", icon=":material/pending_actions:")
+
+    with rg_col2:
+        if rg_job is None:
+            st.info("Немає бектесту з цими параметрами — поставте задачу зліва.")
+        elif rg_job.status in {"queued", "running"}:
+            st.info(f"Задача #{rg_job.id} · {rg_job.status}")
+        elif rg_job.status == "failed":
+            st.error(f"Задача #{rg_job.id} провалилась: {rg_job.error}")
+        elif rg_job.status != "succeeded":
+            st.warning(f"Задача #{rg_job.id}: {rg_job.status}")
+        else:
+            try:
+                rg_res = load_backtest_result(artifacts_dir(DEFAULT_JOBS_PATH, rg_job.id))
+            except FileNotFoundError:
+                st.warning("Артефакти ще не записані.")
+            else:
+                trades = rg_res.trades
+                if trades is None or trades.empty:
+                    st.info("Угод немає — немає що розкладати по режимах.")
+                else:
+                    df_k = klines_from_store(str(rg_sym), str(rg_iv), int(rg_days))
+                    if df_k is None or df_k.empty or "close" not in df_k.columns:
+                        st.warning(f"Немає klines {rg_sym} {rg_iv} для класифікації режиму.")
+                    else:
+                        state = named_market_state(df_k["close"])
+                        vol = regime_breakdown(trades, state["vol"])
+                        struct = structure_breakdown(trades, state["structure"])
+                        named = named_regime_breakdown(trades, state)
+                        if not vol.empty:
+                            st.markdown("**Волатильність**")
+                            st.dataframe(vol.reset_index(), width="stretch", hide_index=True)
+                        if not struct.empty:
+                            st.markdown("**Структура**")
+                            st.dataframe(struct.reset_index(), width="stretch", hide_index=True)
+                        if not named.empty:
+                            st.markdown("**Складений стан (structure|vol)**")
+                            st.dataframe(named.reset_index(), width="stretch", hide_index=True)

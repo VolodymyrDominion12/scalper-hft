@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, fields
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
@@ -13,6 +13,9 @@ from scalper_hft.backtest.engine import BacktestResult
 from scalper_hft.backtest.event_engine import EventBacktestResult
 from scalper_hft.backtest.metrics import BacktestMetrics
 from scalper_hft.backtest.pairs import PairsResult
+
+if TYPE_CHECKING:
+    from scalper_hft.validation.cell_audit import CellAudit
 
 
 def _series_to_frame(s: pd.Series, name: str) -> pd.DataFrame:
@@ -65,6 +68,34 @@ def save_backtest_result(
         _series_to_frame(res.positions, "position").to_parquet(job_dir / "positions.parquet")
     trades = res.trades if res.trades is not None else pd.DataFrame()
     trades.to_parquet(job_dir / "trades.parquet")
+
+
+def save_cell_audit(job_dir: Path, audit: CellAudit) -> None:
+    """Записати audit.json + wf_windows.parquet + sensitivity.csv."""
+    from scalper_hft.validation.cell_audit import CellAudit
+
+    if not isinstance(audit, CellAudit):
+        raise TypeError(f"expected CellAudit, got {type(audit).__name__}")
+    job_dir.mkdir(parents=True, exist_ok=True)
+    payload = audit.to_json_dict()
+    (job_dir / "audit.json").write_text(json.dumps(payload, default=str), encoding="utf-8")
+    extra = {"kind": "overfit"}
+    (job_dir / "metrics.json").write_text(
+        json.dumps({"kind": "overfit", "metrics": {}, "params": {}, "extra": extra}, default=str),
+        encoding="utf-8",
+    )
+    if audit.windows:
+        pd.DataFrame(list(audit.windows)).to_parquet(job_dir / "wf_windows.parquet")
+    if audit.sensitivity_grid:
+        pd.DataFrame(list(audit.sensitivity_grid)).to_csv(job_dir / "sensitivity.csv", index=False)
+
+
+def load_cell_audit(job_dir: Path) -> CellAudit:
+    """Відновити CellAudit з audit.json."""
+    from scalper_hft.validation.cell_audit import CellAudit
+
+    raw = json.loads((job_dir / "audit.json").read_text(encoding="utf-8"))
+    return CellAudit.from_mapping(raw)
 
 
 def load_backtest_result(job_dir: Path) -> BacktestResult:
@@ -125,4 +156,3 @@ def calculate_job_artifacts_size(job_dir: Path) -> int:
             except OSError:
                 pass
     return total
-

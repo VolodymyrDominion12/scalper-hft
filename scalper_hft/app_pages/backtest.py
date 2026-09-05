@@ -11,7 +11,7 @@ from typing import Any
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from scalper_hft.app_pages._common import PAIR_CHOICES, SYMBOLS
+from scalper_hft.app_pages._common import BT_INTERVALS, PAIR_CHOICES, SYMBOLS, apply_research_bt_prefill
 from scalper_hft.backtest.engine import run_backtest
 from scalper_hft.backtest.execution import CostModel
 from scalper_hft.config import get_settings
@@ -35,24 +35,28 @@ from scalper_hft.visualization import (
 settings = get_settings()
 data_dir = settings.data_dir_abs
 
+apply_research_bt_prefill(st.session_state)
+
 st.title("Бектест")
 
 st.sidebar.header("Параметри", divider=False)
+_strat_names = sorted(REGISTRY)
 strategy_name = st.sidebar.selectbox(
     "Стратегія",
-    sorted(REGISTRY),
-    index=sorted(REGISTRY).index("pairs_arb") if "pairs_arb" in REGISTRY else 0,
+    _strat_names,
+    index=_strat_names.index("pairs_arb") if "pairs_arb" in _strat_names else 0,
     format_func=select_label,
+    key="bt_strategy",
 )
 is_pairs = strategy_name == "pairs_arb"
 if is_pairs:
-    pair_sel = st.sidebar.selectbox("Пара", PAIR_CHOICES)
+    pair_sel = st.sidebar.selectbox("Пара", PAIR_CHOICES, key="bt_pair")
     leg1, leg2 = pair_sel.split("/")
-    interval = st.sidebar.selectbox("Таймфрейм", ["1h", "15m", "5m"], index=0)
+    interval = st.sidebar.selectbox("Таймфрейм", ["1h", "15m", "5m"], index=0, key="bt_interval_pairs")
 else:
-    symbol = st.sidebar.selectbox("Символ", SYMBOLS)
-    interval = st.sidebar.selectbox("Таймфрейм", ["1m", "5m", "15m", "1h"], index=1)
-days = st.sidebar.slider("Глибина даних, днів", 7, 365, 90 if is_pairs else 30)
+    symbol = st.sidebar.selectbox("Символ", SYMBOLS, key="bt_symbol")
+    interval = st.sidebar.selectbox("Таймфрейм", BT_INTERVALS, index=1, key="bt_interval_single")
+days = st.sidebar.slider("Глибина даних, днів", 7, 365, 90 if is_pairs else 30, key="bt_days")
 run_bt = st.sidebar.button("▶ Запустити бектест")
 run_rerun = st.sidebar.button("Перезапустити задачу")
 run_diag = st.sidebar.button("🩺 Діагностика (cohort/stress)")

@@ -665,9 +665,7 @@ def cmd_regime_backtest(args: argparse.Namespace) -> None:
         return
 
     # ── Бектест RegimeSupervisor ─────────────────────────────────────────
-    blend_modes = [args.blend_mode] if args.blend_mode != "all" else [
-        "regime_soft", "contextual_hedge", "exp3"
-    ]
+    blend_modes = [args.blend_mode] if args.blend_mode != "all" else ["regime_soft", "contextual_hedge", "exp3"]
     supervisor_results: dict[str, pd.Series] = {}
     for mode in blend_modes:
         try:
@@ -688,7 +686,11 @@ def cmd_regime_backtest(args: argparse.Namespace) -> None:
 
     # ── Зведена таблиця ─────────────────────────────────────────────────
     all_returns = {**baseline_returns, **supervisor_results}
-    summary = supervisor_vs_baseline(df["close"], baseline_returns, list(supervisor_results.values())[0] if supervisor_results else pd.Series(0.0, index=df.index))
+    summary = supervisor_vs_baseline(
+        df["close"],
+        baseline_returns,
+        list(supervisor_results.values())[0] if supervisor_results else pd.Series(0.0, index=df.index),
+    )
     print("\n" + "=" * 70)
     print("SUPERVISOR vs BASELINE — Загальна таблиця")
     print("=" * 70)
@@ -2060,7 +2062,7 @@ def main(argv: list[str] | None = None) -> None:
     jl = job_sub.add_parser("list", help="Список задач")
     jl.add_argument("--limit", type=int, default=50)
     js = job_sub.add_parser("submit", help="Поставити job з JSON params")
-    js.add_argument("kind", choices=["backtest", "pairs", "sweep"])
+    js.add_argument("kind", choices=["backtest", "pairs", "sweep", "overfit"])
     js.add_argument("--params", default="{}", help="JSON-об'єкт параметрів")
     js.add_argument("--force", action="store_true", help="Перезапустити навіть succeeded")
     jst = job_sub.add_parser("status", help="Статус і хвіст логу")

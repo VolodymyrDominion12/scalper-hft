@@ -153,6 +153,39 @@ def handle_sweep(
     logger.info("sweep: %d рядків → %s", len(df), out_csv)
 
 
+def handle_overfit(payload: dict[str, Any], job_dir: Path, **_: Any) -> None:
+    from scalper_hft.research.job_artifacts import save_cell_audit
+    from scalper_hft.validation.cell_audit import audit_cell, default_train_test
+
+    name = str(payload["strategy"])
+    symbol = str(payload["symbol"])
+    interval = str(payload["interval"])
+    days = int(payload["days"])
+    train_default, test_default = default_train_test(interval)
+    train_bars = int(payload.get("train_bars") or train_default)
+    test_bars = int(payload.get("test_bars") or test_default)
+    audit = audit_cell(
+        name,
+        symbol,
+        interval,
+        days,
+        train_bars=train_bars,
+        test_bars=test_bars,
+    )
+    if audit.status != "ok":
+        raise RuntimeError(audit.error or "аудит комірки не вдався")
+    save_cell_audit(job_dir, audit)
+    logger.info(
+        "overfit %s %s %s: oos=%.3f dsr=%s n_trades=%s",
+        name,
+        symbol,
+        interval,
+        audit.avg_oos_sharpe or 0.0,
+        audit.dsr,
+        audit.bt_n_trades,
+    )
+
+
 def handle_test_sleep(payload: dict[str, Any], job_dir: Path, **_: Any) -> None:
     """Лише для тестів cancel/heartbeat (не в CLI)."""
     import time
@@ -165,6 +198,7 @@ HANDLERS: dict[str, Handler] = {
     "backtest": handle_backtest,
     "pairs": handle_pairs,
     "sweep": handle_sweep,
+    "overfit": handle_overfit,
     "_test_sleep": handle_test_sleep,
 }
 

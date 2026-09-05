@@ -9,6 +9,13 @@
 """
 
 from scalper_hft.validation.capacity import capacity_curve, capacity_report, saturation_scale
+from scalper_hft.validation.cell_audit import (
+    CellAudit,
+    audit_cell,
+    cell_verdict,
+    default_train_test,
+    min_trades_for,
+)
 from scalper_hft.validation.cohort import cohort_decay, cohort_metrics, cohort_report
 from scalper_hft.validation.cscv import CscvResult, combinatorial_splits, pbo_cscv, variant_returns
 from scalper_hft.validation.cv import PurgedKFold, purged_kfold_indices, time_series_split
@@ -37,6 +44,11 @@ from scalper_hft.validation.survival import (
 from scalper_hft.validation.walk_forward import WalkForwardResult, run_walk_forward
 
 __all__ = [
+    "CellAudit",
+    "audit_cell",
+    "cell_verdict",
+    "default_train_test",
+    "min_trades_for",
     "CscvResult",
     "combinatorial_splits",
     "pbo_cscv",
