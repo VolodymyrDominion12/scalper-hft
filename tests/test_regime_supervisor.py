@@ -150,6 +150,21 @@ def test_regime_detector_dwell_reduces_switches(synthetic_close: pd.Series) -> N
     assert changes4 <= changes0, f"dwell мав би зменшити зміни: {changes4} > {changes0}"
 
 
+def test_regime_detector_htf_structure_valid_labels(synthetic_close: pd.Series) -> None:
+    """htf_structure у детекторі дає валідні structure/label (без помилок)."""
+    from scalper_hft.features.regime_detector import RegimeDetector
+    from scalper_hft.features.regimes import STRUCTURE_LABELS, VOL_LABELS
+
+    idx = pd.date_range("2023-01-01", periods=4000, freq="1h")
+    t = np.arange(4000, dtype=float)
+    close = pd.Series(100.0 * np.exp(0.0003 * t) + np.sin(t / 60.0) * 3.0, index=idx)
+
+    det = RegimeDetector(n_hmm_states=3, hmm_fit_bars=200, htf_structure="1d")
+    result = det.detect(close)
+    assert set(result["structure"].unique()) <= STRUCTURE_LABELS
+    assert set(result["label"].unique()) <= {f"{s}|{v}" for s in STRUCTURE_LABELS for v in VOL_LABELS}
+
+
 def test_regime_detector_step_fits_after_warmup(synthetic_close: pd.Series) -> None:
     """HMM автоматично навчається після hmm_fit_bars барів у step()."""
     from scalper_hft.features.regime_detector import RegimeDetector

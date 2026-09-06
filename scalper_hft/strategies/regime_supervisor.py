@@ -84,6 +84,7 @@ class RegimeSupervisor(Strategy):
             n_hmm_states=int(self.get("n_hmm_states", 3)),
             hmm_fit_bars=int(self.get("hmm_fit_bars", 2000)),
             min_dwell_bars=int(self.get("min_dwell_bars", 0)),
+            htf_structure=self.get("htf_tf", "") or None,
         )
 
         # Стан онлайн-блендера НЕ кешується між викликами generate_signals:

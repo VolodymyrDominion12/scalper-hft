@@ -11,6 +11,7 @@ from scalper_hft.features.regimes import (
     VOL_LABELS,
     apply_min_dwell,
     apply_regime_gates,
+    htf_market_structure,
     market_structure,
     named_market_state,
     volatility_regime,
@@ -131,3 +132,29 @@ def test_apply_regime_gates_noop_when_disabled() -> None:
     regime = _regime_df(["trend_up", "high", "range"], ["normal", "high", "low"])
     out = apply_regime_gates(sig, regime)
     assert list(out) == [1.0, -1.0, 1.0]
+
+
+def test_htf_market_structure_direction_and_labels() -> None:
+    """Стійкий денний аптренд → trend_up на 1h-ряду через htf='1d'."""
+    n = 24 * 400  # 400 днів 1h
+    idx = pd.date_range("2024-01-01", periods=n, freq="1h")
+    t = np.arange(n, dtype=float)
+    close = pd.Series(100.0 * np.exp(0.0004 * t), index=idx)  # сильний рівний аптренд
+    out = htf_market_structure(close, htf="1d", ema_fast=3, ema_slow=20)
+    assert set(out.dropna().unique()) <= STRUCTURE_LABELS
+    tail = out.iloc[int(n * 0.8) :]
+    assert (tail == "trend_up").mean() > 0.9, f"htf мав би бачити trend_up, got {tail.value_counts().to_dict()}"
+
+
+def test_htf_market_structure_causal() -> None:
+    """Рішення на барі t не залежить від майбутніх цін (мутація хвоста не міняє prefix)."""
+    rng = np.random.default_rng(7)
+    n = 24 * 300
+    idx = pd.date_range("2024-01-01", periods=n, freq="1h")
+    close = pd.Series(100.0 * np.exp(np.cumsum(rng.normal(0.0002, 0.01, n))), index=idx)
+    base = htf_market_structure(close, htf="1d")
+    mutated = close.copy()
+    mutated.iloc[-24 * 60 :] *= 3.0  # майбутній шок
+    mut = htf_market_structure(mutated, htf="1d")
+    cut = n - 24 * 60
+    pd.testing.assert_series_equal(base.iloc[:cut], mut.iloc[:cut])

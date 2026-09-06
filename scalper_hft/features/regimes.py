@@ -95,6 +95,49 @@ def market_structure(
     return out
 
 
+def htf_market_structure(
+    close: pd.Series,
+    htf: str = "1d",
+    ema_fast: int = 3,
+    ema_slow: int = 20,
+    trend_threshold: float = DEFAULT_TREND_THRESHOLD,
+) -> pd.Series:
+    """Напрямок ринку на СТАРШОМУ таймфреймі (causal, без lookahead).
+
+    Проблема (iter2-діагностика): структура на робочому ТФ (1h EMA 9/50)
+    запізнюється відносно тренду старшого ТФ → напрямкові гейти на ній ріжуть
+    правильні лонги. `htf_market_structure` рахує EMA-структуру на зресемпленому
+    старшому ТФ (напр. 4h бари → htf='1d') і мапить на кожен бар робочого ТФ
+    через ОСТАННІЙ ЗАКРИТИЙ htf-бар ≤ t (searchsorted по часах закриття вікон).
+
+    Returns: Series('range'|'trend_up'|'trend_down'), індексована як close.
+    """
+    if trend_threshold < 0.0:
+        raise ValueError(f"trend_threshold must be >= 0, got {trend_threshold}")
+    off = pd.tseries.frequencies.to_offset(htf)
+    htf_close = close.resample(off).last().dropna()
+    if len(htf_close) < ema_slow + 5:
+        return pd.Series("range", index=close.index, dtype=object)
+
+    fast = htf_close.ewm(span=ema_fast, adjust=False).mean()
+    slow = htf_close.ewm(span=ema_slow, adjust=False).mean()
+    strength = (fast - slow).abs() / htf_close.rolling(ema_slow, min_periods=ema_slow).std().replace(0, np.nan)
+    up = (fast > slow) & (strength >= trend_threshold)
+    down = (fast < slow) & (strength >= trend_threshold)
+    htf_labels = pd.Series("range", index=htf_close.index, dtype=object)
+    htf_labels.loc[up] = "trend_up"
+    htf_labels.loc[down] = "trend_down"
+
+    # Часи ЗАКРИТТЯ htf-вікон; бар t бачить лише вікна з end <= t.
+    ends = htf_close.index + off
+    ts = close.index
+    pos = ends.searchsorted(ts.to_numpy(), side="right") - 1
+    out = pd.Series("range", index=close.index, dtype=object)
+    valid = pos >= 0
+    out.loc[valid] = htf_labels.iloc[pos[valid]].to_numpy()
+    return out
+
+
 def composite_regime_label(structure: pd.Series, vol: pd.Series) -> pd.Series:
     """Складена мітка `structure|vol`, наприклад `range|low`."""
     return structure.astype(str) + "|" + vol.astype(str)

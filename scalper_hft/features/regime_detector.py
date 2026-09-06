@@ -35,6 +35,7 @@ from scalper_hft.features.hmm_regime import GaussianHMM
 from scalper_hft.features.regimes import (
     DEFAULT_TREND_THRESHOLD,
     apply_min_dwell,
+    htf_market_structure,
     named_market_state,
 )
 
@@ -111,6 +112,10 @@ class RegimeDetector:
                         лише після N послідовних барів (default 0 = без змін).
                         Зменшує regime churn для мета-стратегій (дослідження:
                         min-dwell ~2 дні ріже churn на ~68%).
+        htf_structure:  старший таймфрейм для structure (напр. "1d") замість
+                        same-TF EMA-cross; None = локальна структура (default).
+                        Каузально: лише закриті htf-вікна ≤ t (iter3: 1h-структура
+                        запізнюється відносно тренду старшого ТФ).
     """
 
     def __init__(
@@ -124,6 +129,7 @@ class RegimeDetector:
         vol_percentile_window: int = 500,
         hmm_seed: int = 42,
         min_dwell_bars: int = 0,
+        htf_structure: str | None = None,
     ) -> None:
         self.n_hmm_states = n_hmm_states
         self.hmm_fit_bars = hmm_fit_bars
@@ -134,6 +140,7 @@ class RegimeDetector:
         self.vol_percentile_window = vol_percentile_window
         self.hmm_seed = hmm_seed
         self.min_dwell_bars = int(min_dwell_bars)
+        self.htf_structure = htf_structure
 
         # Стан після fit()
         self._hmm: GaussianHMM | None = None
@@ -209,6 +216,10 @@ class RegimeDetector:
             vol_lookback=self.vol_lookback,
             vol_percentile_window=self.vol_percentile_window,
         )
+        # Структура зі СТАРШОГО ТФ (опційно): лише закриті htf-вікна ≤ t.
+        if self.htf_structure:
+            state_df["structure"] = htf_market_structure(close, htf=self.htf_structure)
+            state_df["label"] = state_df["structure"].astype(str) + "|" + state_df["vol"].astype(str)
         # Гістерезис структури (опційний) — після формування label/vol:
         # label перераховується під згладжену structure.
         if self.min_dwell_bars > 0:
@@ -374,6 +385,7 @@ class RegimeDetector:
                         "vol_percentile_window": self.vol_percentile_window,
                         "hmm_seed": self.hmm_seed,
                         "min_dwell_bars": self.min_dwell_bars,
+                        "htf_structure": self.htf_structure,
                     },
                 },
                 f,

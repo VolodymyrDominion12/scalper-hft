@@ -1,5 +1,5 @@
 name: regime_supervisor
-version: "1.2"
+version: "1.3"
 status: candidate
 family: meta
 
@@ -70,6 +70,12 @@ params_doc:
     description: >
       True — у trend_up заборонені шорти, у trend_down — лонги (не торгуємо
       проти явного тренду; range — без обмежень).
+  htf_tf:
+    default: ""
+    description: >
+      Старший таймфрейм для structure (напр. "1d") замість same-TF EMA-cross;
+      порожньо = локальна структура. Каузально (лише закриті htf-вікна) —
+      iter3: 1h/4h-структура запізнюється відносно тренду старшого ТФ.
 
 invariants:
   no_lookahead: true
