@@ -28,6 +28,7 @@ ml = [
 ]
 dashboard = [
     "streamlit>=1.30",
+    "bcrypt>=4.0",
 ]
 live = [
     "websockets>=12",

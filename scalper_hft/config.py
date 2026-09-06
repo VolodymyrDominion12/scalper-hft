@@ -101,6 +101,9 @@ class Settings:
     telegram_bot_pin: str = field(
         default_factory=lambda: os.getenv("TELEGRAM_BOT_PIN", "")
     )
+    
+    # Dashboard Auth
+    dashboard_password_hash: str = field(default_factory=lambda: os.getenv("DASHBOARD_PASSWORD_HASH", ""))
 
     @property
     def postgres_conninfo(self) -> str:

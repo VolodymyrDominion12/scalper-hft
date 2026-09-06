@@ -1504,6 +1504,29 @@ def cmd_mcp(args: argparse.Namespace) -> None:
     run_stdio()
 
 
+def cmd_dashboard_hash(args: argparse.Namespace) -> None:
+    """Генерація хешу паролю для DASHBOARD_PASSWORD_HASH."""
+    import getpass
+
+    from scalper_hft.dashboard_auth import generate_hash
+
+    pwd1 = getpass.getpass("Введіть новий пароль для дашборду: ")
+    pwd2 = getpass.getpass("Повторіть пароль: ")
+    if pwd1 != pwd2:
+        print("❌ Паролі не співпадають.")
+        sys.exit(1)
+    
+    if not pwd1:
+        print("❌ Пароль не може бути порожнім.")
+        sys.exit(1)
+
+    hash_str = generate_hash(pwd1)
+    print("\n✅ Пароль успішно захешовано!")
+    print("Додайте цей рядок до вашого файлу .env:\n")
+    print(f"DASHBOARD_PASSWORD_HASH='{hash_str}'")
+    print("\nПісля цього перезапустіть дашборд.")
+
+
 def cmd_dashboard(args: argparse.Namespace) -> None:
     """Запуск Streamlit-дашборду тим самим Python, що й CLI (не Anaconda PATH)."""
     import subprocess
@@ -2124,6 +2147,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--port", type=int, default=None, help="Порт Streamlit (за замовч. 8501)")
     p.add_argument("--no-worker", action="store_true", help="Не піднімати research worker разом із дашбордом")
     p.set_defaults(func=cmd_dashboard)
+
+    p = sub.add_parser("dashboard-hash", help="Згенерувати хеш паролю для DASHBOARD_PASSWORD_HASH")
+    p.set_defaults(func=cmd_dashboard_hash)
 
     job_p = sub.add_parser("job", help="Черга дослідницьких задач (SQLite + worker-процеси)")
     job_sub = job_p.add_subparsers(dest="job_cmd", required=True)

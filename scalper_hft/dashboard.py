@@ -31,13 +31,19 @@ from scalper_hft.app_pages import reload_shared  # noqa: E402
 reload_shared()
 
 import streamlit as st  # noqa: E402
+from scalper_hft.dashboard_auth import check_password  # noqa: E402
 
 st.set_page_config(page_title="scalper-hft", page_icon="📈", layout="wide")
 
+if not check_password():
+    st.stop()
+
 pages = [
     st.Page("app_pages/overview.py", title="Моніторинг", icon=":material/monitoring:", default=True),
+    st.Page("app_pages/multi_exchange.py", title="Multi-Exchange", icon=":material/stacked_line_chart:"),
     st.Page("app_pages/backtest.py", title="Бектест", icon=":material/query_stats:"),
     st.Page("app_pages/research.py", title="Дослідження", icon=":material/science:"),
+    st.Page("app_pages/research_hub.py", title="Research Hub", icon=":material/library_books:"),
     st.Page("app_pages/jobs.py", title="Задачі", icon=":material/pending_actions:"),
     st.Page("app_pages/help.py", title="Довідка", icon=":material/help:"),
 ]

@@ -74,6 +74,37 @@ st.caption(
     "Бектест без комісій не є edge."
 )
 
+# Multi-exchange KPI + Bot Cards
+st.subheader("Системні KPI та Боти")
+if _PAPER_DB.exists():
+    try:
+        from scalper_hft.live.store import PaperStore
+        with PaperStore(_PAPER_DB) as p_store:
+            accounts = pd.read_sql_query("SELECT * FROM accounts", p_store._conn)
+            bots = p_store.all_bots()
+            
+        if not accounts.empty:
+            st.caption("Останні баланси по біржах (live/paper)")
+            # Get latest balance per exchange/mode
+            accounts["ts"] = pd.to_datetime(accounts["ts"])
+            latest = accounts.sort_values("ts").groupby(["exchange", "mode"]).last().reset_index()
+            
+            cols = st.columns(len(latest) if len(latest) > 0 else 1)
+            for i, row in latest.iterrows():
+                with cols[i % len(cols)]:
+                    st.metric(f"{row['exchange']} ({row['mode']})", f"${row['balance']:,.2f}", 
+                              delta=f"Unrealized PnL: ${row['unrealized_pnl']:.2f}")
+
+        if not bots.empty:
+            st.caption("Активні боти (Bot Cards)")
+            bot_cols = st.columns(min(3, len(bots)))
+            for i, row in bots.iterrows():
+                with bot_cols[i % 3]:
+                    st.info(f"**{row['pid']}**\n\nБіржа: {row['exchange']} | Режим: {row['mode']}\n\nОстанній пінг: {row['last_ping']}")
+
+    except Exception as e:
+        st.warning(f"Не вдалося завантажити Multi-exchange KPI: {e}")
+
 with JobStore(DEFAULT_JOBS_PATH) as _js:
     _worker_alive = _js.worker_is_alive()
 if not _worker_alive:

@@ -31,6 +31,7 @@ from scalper_hft.live.fills import both_or_neither, decide_fill
 from scalper_hft.live.reconcile import reconcile_exchange_state
 from scalper_hft.live.risk_gate import CooldownState, correlated_size_mult, decide_entry, open_pair_size_pcts
 from scalper_hft.live.store import PaperStore
+from scalper_hft.live.sync_engine import SyncEngine
 from scalper_hft.live.trader import closed_klines
 from scalper_hft.strategies.base import Strategy
 from scalper_hft.strategies.pairs_arb import PairsArb
@@ -822,6 +823,8 @@ class PairsPaperRunner:
         self.engine = PairsEngine(
             leg1, leg2, self.strategy, self.account, store=store, n_pairs=n_pairs, is_maker=is_maker
         )
+        mode = "paper" if self._dry_run else "live"
+        self.sync_engine = SyncEngine(store=store, exchange_id="binance", mode=mode) if store else None
         self._last_ts: pd.Timestamp | None = None
         if restore and store is not None:
             payload = payload or store.load_runtime()
@@ -892,6 +895,14 @@ class PairsPaperRunner:
         stop: threading.Event | None = None,
         install_signals: bool = True,
     ) -> PairsPaperResult:
+        if self.sync_engine:
+            self.sync_engine.start()
+
+        def _on_stop():
+            if self.sync_engine:
+                self.sync_engine.stop()
+            self.engine.cancel_pending(reason="shutdown")
+
         return _paper_loop(
             self.step,
             self.save_runtime if self.store is not None else None,
@@ -905,7 +916,7 @@ class PairsPaperRunner:
             sleep_sec=sleep_sec,
             stop=stop,
             install_signals=install_signals,
-            on_stop=lambda: self.engine.cancel_pending(reason="shutdown"),
+            on_stop=_on_stop,
         )
 
 
@@ -976,6 +987,9 @@ class PairsPortfolioRunner:
         self.week_start_equity = self.account.equity
         self._last_week: tuple[int, int] | None = None
         self.enable_vol_target = False
+        mode = "paper" if self._dry_run else "live"
+        self.sync_engine = SyncEngine(store=store, exchange_id="binance", mode=mode) if store else None
+
         if payload:
             for r in self.runners:
                 state = (payload.get("runners") or {}).get(r.engine.pid)
@@ -1055,6 +1069,14 @@ class PairsPortfolioRunner:
         stop: threading.Event | None = None,
         install_signals: bool = True,
     ) -> PairsPaperResult:
+        if self.sync_engine:
+            self.sync_engine.start()
+
+        def _on_stop():
+            if self.sync_engine:
+                self.sync_engine.stop()
+            self.cancel_all_pending(reason="shutdown")
+
         return _paper_loop(
             self.step,
             self.save_runtime if self.store is not None else None,
@@ -1068,5 +1090,5 @@ class PairsPortfolioRunner:
             sleep_sec=sleep_sec,
             stop=stop,
             install_signals=install_signals,
-            on_stop=lambda: self.cancel_all_pending(reason="shutdown"),
+            on_stop=_on_stop,
         )
