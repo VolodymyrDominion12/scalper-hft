@@ -83,6 +83,40 @@ class RegimeSupervisor(Strategy):
         self._exp3_bandit: Any = None  # Exp3Bandit
         self._prev_sigs: np.ndarray | None = None  # сигнали минулого бару для hedge update
 
+
+    @classmethod
+    def from_config(cls, config_path: str) -> "RegimeSupervisor":
+        from scalper_hft.live.supervisor_config import SupervisorConfig
+        from scalper_hft.strategies import get_strategy
+        
+        cfg = SupervisorConfig.from_yaml(config_path)
+        
+        # Створюємо базовий Supervisor
+        sup = cls(blend_mode="contextual_hedge")
+        sup._strat_names = []
+        sup._strats = []
+        
+        # Ініціалізуємо суб-стратегії
+        for s in cfg.strategies:
+            strat_cls = get_strategy(s.family, **s.params)  # базове ім'я - це family
+            if not strat_cls:
+                logger.warning(f"Стратегію {s.family} ({s.id}) не знайдено, пропускаємо.")
+                continue
+                
+            inst = strat_cls
+            # Перевизначаємо preferred_regimes з конфігу
+            if s.preferred_regimes:
+                inst.preferred_regimes = frozenset(s.preferred_regimes)
+                
+            sup._strat_names.append(s.id)
+            sup._strats.append(inst)
+            
+        sup.needs_trades = any(s.needs_trades for s in sup._strats)
+        sup.needs_funding = any(s.needs_funding for s in sup._strats)
+        
+        return sup
+
+
     # ────────────────────────────────────────────────────────────────────────
     # Batch (бектест)
     # ────────────────────────────────────────────────────────────────────────

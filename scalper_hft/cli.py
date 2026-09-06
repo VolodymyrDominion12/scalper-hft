@@ -1793,6 +1793,23 @@ def cmd_api(args: argparse.Namespace) -> None:
         print("\nДля доступу додайте заголовок: Authorization: Bearer <token>")
 
 
+
+def cmd_run(args: argparse.Namespace) -> None:
+    from scalper_hft.live.store import PaperStore
+    from scalper_hft.strategies.regime_supervisor import RegimeSupervisor
+    from scalper_hft.live.supervisor_config import SupervisorConfig
+    
+    cfg = SupervisorConfig.from_yaml(args.config)
+    logger.info(f"Запуск LiveTrader з конфігу {args.config} (supervisor: {cfg.name})")
+    
+    sup = RegimeSupervisor.from_config(args.config)
+    
+    # В реальному коді тут буде виклик LiveTrader або PairsPaperRunner
+    # Поки що просто виведемо що ми ініціалізували
+    logger.info(f"Ініціалізовано {len(sup._strats)} суб-стратегій")
+    
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="scalper-hft", description="Високочастотна скальпінг-система (Binance USDT-M)"
@@ -1968,6 +1985,10 @@ def main(argv: list[str] | None = None) -> None:
     )
     p.add_argument("--enqueue", action="store_true", help="Поставити в чергу jobs.sqlite і вийти")
     p.set_defaults(func=cmd_pairs)
+
+    p = sub.add_parser("run", help="Запустити trading engine (live/paper) з YAML конфігу")
+    p.add_argument("--config", required=True, help="Шлях до YAML файлу (напр. configs/strategies/example.yaml)")
+    p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("pairs-portfolio", help="Бектест портфеля валідованих пар")
     add_common(p)

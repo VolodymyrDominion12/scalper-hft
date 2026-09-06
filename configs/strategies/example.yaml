@@ -1,0 +1,38 @@
+name: "Production Regime Supervisor"
+max_total_leverage: 2.0
+risk_regime_filtering: true
+
+families:
+  - name: "pairs_arb"
+    allocation: 0.6
+  - name: "momentum"
+    allocation: 0.4
+
+strategies:
+  - id: "pairs_arb_btcusdt"
+    family: "pairs_arb"
+    preferred_regimes: ["low_vol", "mean_reverting"]
+    allocation_weight: 1.0
+    params:
+      window: 100
+      z_entry: 2.0
+      z_exit: 0.5
+      stop_loss_pct: 0.05
+  
+  - id: "pairs_arb_ethusdt"
+    family: "pairs_arb"
+    preferred_regimes: ["low_vol", "mean_reverting"]
+    allocation_weight: 0.5
+    params:
+      window: 120
+      z_entry: 2.5
+      z_exit: 0.0
+      stop_loss_pct: 0.05
+
+  - id: "mom_doge"
+    family: "momentum"
+    preferred_regimes: ["high_vol", "trending"]
+    allocation_weight: 1.0
+    params:
+      lookback: 20
+      threshold: 0.02
