@@ -294,4 +294,4 @@ benchmark 1/K; як альтернатива Hedge-блендінгу (п. 10) �
 накопичення L2-даних глибини стакана та моніторинг фандінг-режимів.
 
 Кожен підхід — через повний цикл: реалізація → тест → walk-forward + Deflated Sharpe →
-sensitivity → paper (AGENTS.md, `skills/overfitting-audit.md`).
+sensitivity → paper (AGENTS.md, `.agents/skills/overfitting-audit/SKILL.md`).

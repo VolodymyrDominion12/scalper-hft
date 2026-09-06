@@ -12,7 +12,7 @@
    виконання — з бару t+1 (рушій робить lag сам). Тест на це: `tests/test_system.py::test_engine_no_lookahead`.
 3. **Комісії обов'язкові** у бектестах: Binance maker 0.02% / taker 0.05%, slippage з `.env`.
 4. **Анти-перенавчання** перед будь-яким висновком про edge:
-   walk-forward → deflated Sharpe → sensitivity. Скіл: `skills/overfitting-audit.md`.
+ walk-forward → deflated Sharpe → sensitivity. Скіл: `.agents/skills/overfitting-audit/SKILL.md`.
 5. **Перед запуском live**: `DRY_RUN=true` за замовчуванням. Live — лише за явним запитом
    користувача і після paper-валідації.
 6. **Тести**: `uv run pytest tests/ -q` має бути зеленим після будь-яких змін.

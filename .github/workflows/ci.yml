@@ -25,5 +25,12 @@ jobs:
       - name: Ruff
         run: uv run ruff check scalper_hft tests
 
+      - name: Ruff format
+        run: uv run ruff format --check scalper_hft tests
+
+      - name: Mypy (non-blocking)
+        continue-on-error: true
+        run: uv run mypy scalper_hft
+
       - name: Pytest
         run: uv run pytest tests/ -q

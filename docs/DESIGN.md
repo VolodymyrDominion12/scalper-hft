@@ -47,7 +47,7 @@ Research & Validation:
 Сигнал обчислюється на закритті бару t; позиція застосовується з бару t+1
 (`pos = signals.shift(1)`). Комісії — за turnover. Тест: `test_engine_no_lookahead`.
 Обмеження: рушій не може перешкодити стратегії читати майбутні рядки всередині
-`generate_signals` — це відповідальність автора стратегії (див. `skills/strategy-development.md`).
+`generate_signals` — це відповідальність автора стратегії (див. `.agents/skills/strategy-development/SKILL.md`).
 
 ### 3.2. Модель витрат (гл. 5 книги)
 `CostModel`: maker_fee (0.02%) + taker_fee (0.05%) + vol-aware slippage + Square-Root market impact (`k_imp * sigma * sqrt(Q/ADV)`).

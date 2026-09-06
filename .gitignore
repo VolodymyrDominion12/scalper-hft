@@ -21,8 +21,11 @@ results/
 *.sqlite
 
 # звіти та графіки (генеруються)
-docs/reports/
 docs/plots/
+docs/reports/*.csv
+# генеровані бектест-звіти: <strategy>_<SYMBOL>_<tf>.md; куровані аналітичні
+# доки та живі реєстри (oos_usage.md, experiments.md, ...) — трекаємо
+docs/reports/*USDT*.md
 
 # IDE
 .idea/

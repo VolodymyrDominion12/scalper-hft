@@ -20,7 +20,8 @@ scalper_hft/
 ├── validation/  walk-forward · purged CV · Deflated Sharpe + PBO · sensitivity · Optuna · sweep
 ├── ml/          LightGBM walk-forward класифікатор напрямку (FreqAI-стиль)
 ├── live/        paper/testnet/live трейдер, reconciliation, pairs runner
-└── cli.py       35 команд: download / backtest / pairs / paper-run-pairs / overfit / …
+└── cli/         пакет (~40 команд): research.py / pairs.py / paper.py / ops.py + main.py
+                 (download / backtest / pairs / paper-run-pairs / overfit / …)
 ```
 
 ## Кеш даних: parquet або PostgreSQL у Docker
@@ -120,11 +121,17 @@ uv venv .venv && uv pip install -e ".[optim,ml,dev]"
 | `backtest` | бектест стратегії з комісіями та slippage; `--enqueue` — у чергу jobs.sqlite |
 | `plot` | **інтерактивний HTML-графік бектесту**: свічки + індикатори + точки входу/виходу + рівні SL/TP (Plotly, standalone, `--bars/--start/--end/--out`) |
 | `sweep` | **матричний прогон** → `results/sweep.db` (resume за замовч., `--no-resume`, `--enqueue`, `--workers`) |
-| `job` | черга research-задач: `worker` / `list` / `status` / `cancel` / `rerun` / `submit` |
+| `job` | черга research-задач: `worker` / `list` / `status` / `cancel` / `rerun` / `submit` / `prune` |
 | `walkforward` | ковзні IS/OOS вікна — середній OOS Sharpe |
 | `optimize` | Optuna-пошук параметрів з purged CV цільовою функцією |
-| `overfit` | аудит: WF + sensitivity (плато vs пік) + Deflated Sharpe |
-| `cscv` | **PBO через Combinatorial Purged CV** (López de Prado) |
+| `overfit` | аудит: WF + sensitivity (OOS) + DSR (OOS) + CSCV PBO + **вердикт PASS/FAIL**; `--enqueue` |
+| `cscv` | **PBO через Combinatorial Purged CV** (Bailey–López de Prado, logit within-split рангу) |
+| `regime-backtest` | бектест через RegimeSupervisor (blend кількох стратегій за режимом) |
+| `run` | dry-init перевірка YAML конфіга supervisor (торгівлю **не** запускає) |
+| `dashboard` / `dashboard-hash` | Streamlit-дашборд / генерація bcrypt-хеша пароля |
+| `telegram-bot` | `start` — інтерактивний бот керування (whitelist + PIN) |
+| `api` | `start` (FastAPI+JWT, fail-closed на дефолтному ключі поза localhost) / `token` |
+| `migrate-to-parquet` | міграція кешу PostgreSQL → parquet |
 | `ml` | walk-forward LightGBM класифікатор напрямку (`--trades` micro, `--hmm`, `--garch`) |
 | `cohort` | **деградація edge за когортами угод** (Predictive Marketing: silent attrition) |
 | `lift` | **децильний lift-аналіз фіч** — які фічі реально зсувають PnL (uplift-концепт) |
@@ -234,7 +241,7 @@ Round-trip taker ≈ **0.10%** ноціоналу — це ~10 повних уг
 ## Тести
 
 ```bash
-uv run pytest tests/ -q   # 349 passed, 3 skipped (Postgres без TEST_POSTGRES_DSN); 23 файли
+uv run pytest tests/ -q   # ~930 passed, 8 skipped (Postgres без TEST_POSTGRES_DSN); 65 файлів
 ```
 
 ## Аудит стратегій (90 днів 1m-даних, комісії + slippage)
