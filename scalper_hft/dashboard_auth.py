@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import secrets
 
 import bcrypt
@@ -21,13 +22,26 @@ logger = logging.getLogger(__name__)
 _SESSION_TOKEN_KEY = "auth_session_token"
 
 
+def stored_password_hash() -> str:
+    """Хеш пароля дашборду: Settings, інакше змінна середовища.
+
+    Streamlit може тримати старий синглтон `Settings` без поля
+    `dashboard_password_hash`. Тоді читаємо `DASHBOARD_PASSWORD_HASH` напряму,
+    щоб не падати з AttributeError і не відкривати дашборд, якщо хеш уже в .env.
+    """
+    settings = get_settings()
+    raw = getattr(settings, "dashboard_password_hash", None)
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return (os.getenv("DASHBOARD_PASSWORD_HASH") or "").strip()
+
+
 def check_password() -> bool:
     """Повертає `True`, якщо користувач успішно ввійшов.
 
     Якщо DASHBOARD_PASSWORD_HASH не налаштовано (порожній), повертає True одразу.
     """
-    settings = get_settings()
-    stored_hash = settings.dashboard_password_hash.strip()
+    stored_hash = stored_password_hash()
 
     # Якщо хеш не задано — вільний доступ
     if not stored_hash:
@@ -51,10 +65,7 @@ def check_password() -> bool:
 
             try:
                 # Перевіряємо хеш
-                is_valid = bcrypt.checkpw(
-                    password.encode("utf-8"),
-                    stored_hash.encode("utf-8")
-                )
+                is_valid = bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("utf-8"))
                 if is_valid:
                     # Успішний логін
                     st.session_state[_SESSION_TOKEN_KEY] = secrets.token_hex(16)

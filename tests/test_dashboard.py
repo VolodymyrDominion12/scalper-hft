@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -101,3 +102,59 @@ def test_reload_shared_restores_stale_common_names() -> None:
 
     assert refreshed.RESEARCH_SECTION == "research_section_prefill"
     assert "capacity" in refreshed.JOB_KINDS
+
+
+def test_settings_has_dashboard_password_hash() -> None:
+    from scalper_hft.config import Settings
+
+    settings = Settings(dashboard_password_hash=" $2b$12$test ")
+    assert settings.dashboard_password_hash == " $2b$12$test "
+
+
+def test_get_settings_replaces_stale_singleton(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Як після Streamlit-reload: у `_settings` лежить об'єкт без нових полів."""
+    import scalper_hft.config as cfg
+
+    monkeypatch.setattr(cfg, "_settings", SimpleNamespace(dry_run=True))
+    settings = cfg.get_settings()
+    assert isinstance(settings, cfg.Settings)
+    assert hasattr(settings, "dashboard_password_hash")
+
+
+def test_stored_password_hash_empty_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    from scalper_hft.dashboard_auth import stored_password_hash
+
+    monkeypatch.setattr(
+        "scalper_hft.dashboard_auth.get_settings",
+        lambda: SimpleNamespace(),
+    )
+    monkeypatch.delenv("DASHBOARD_PASSWORD_HASH", raising=False)
+    assert stored_password_hash() == ""
+
+
+def test_stored_password_hash_env_fallback_when_settings_stale(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Регресія AttributeError: старий Settings без dashboard_password_hash."""
+    from scalper_hft.dashboard_auth import stored_password_hash
+
+    monkeypatch.setattr(
+        "scalper_hft.dashboard_auth.get_settings",
+        lambda: SimpleNamespace(),
+    )
+    monkeypatch.setenv("DASHBOARD_PASSWORD_HASH", "  $2b$12$examplehash  ")
+    assert stored_password_hash() == "$2b$12$examplehash"
+
+
+def test_check_password_skips_auth_when_hash_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    from scalper_hft.dashboard_auth import check_password
+
+    monkeypatch.setattr("scalper_hft.dashboard_auth.stored_password_hash", lambda: "")
+    assert check_password() is True
+
+
+def test_generate_hash_roundtrip() -> None:
+    import bcrypt
+    from scalper_hft.dashboard_auth import generate_hash
+
+    hashed = generate_hash("secret-pass")
+    assert bcrypt.checkpw(b"secret-pass", hashed.encode("utf-8"))
+    assert not bcrypt.checkpw(b"wrong", hashed.encode("utf-8"))

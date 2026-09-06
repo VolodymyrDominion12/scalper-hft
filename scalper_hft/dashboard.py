@@ -41,6 +41,7 @@ if not check_password():
 
 pages = [
     st.Page("app_pages/overview.py", title="Моніторинг", icon=":material/monitoring:", default=True),
+    st.Page("app_pages/live_monitor.py", title="Live / WebSocket", icon=":material/sensors:"),
     st.Page("app_pages/multi_exchange.py", title="Multi-Exchange", icon=":material/stacked_line_chart:"),
     st.Page("app_pages/backtest.py", title="Бектест", icon=":material/query_stats:"),
     st.Page("app_pages/research.py", title="Дослідження", icon=":material/science:"),

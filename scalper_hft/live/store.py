@@ -359,20 +359,21 @@ class PaperStore:
 
     def log_position(
         self,
-        ts: pd.Timestamp,
-        exchange: str,
-        symbol: str,
-        side: str,
-        size: float,
-        entry_price: float,
+        ts: pd.Timestamp | None = None,
+        exchange: str = "binance",
+        symbol: str = "",
+        side: str = "flat",
+        size: float = 0.0,
+        entry_price: float = 0.0,
         mark_price: float | None = None,
         unrealized_pnl: float | None = None,
         mode: str = "paper",
     ) -> None:
         """Зберегти знімок позиції (append-only; open positions — з останніх записів)."""
+        ts_val = ts if ts is not None else pd.Timestamp.now(tz="UTC")
         self._conn.execute(
             "INSERT INTO positions (ts, exchange, symbol, side, size, entry_price, mark_price, unrealized_pnl, mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (str(ts), exchange, symbol, side, size, entry_price, mark_price, unrealized_pnl, mode),
+            (str(ts_val), exchange, symbol, side, size, entry_price, mark_price, unrealized_pnl, mode),
         )
         self._conn.commit()
 

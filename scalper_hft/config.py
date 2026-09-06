@@ -94,16 +94,17 @@ class Settings:
     telegram_bot_token: str = field(default_factory=lambda: os.getenv("TELEGRAM_BOT_TOKEN", ""))
     telegram_chat_id: str = field(default_factory=lambda: os.getenv("TELEGRAM_CHAT_ID", ""))
     # Telegram Bot — whitelist chat_id через кому; порожнє → лише telegram_chat_id
-    telegram_allowed_chat_ids: str = field(
-        default_factory=lambda: os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", "")
-    )
+    telegram_allowed_chat_ids: str = field(default_factory=lambda: os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", ""))
     # PIN для деструктивних команд (pause/stop/resume); порожнє → команди вимкнені
-    telegram_bot_pin: str = field(
-        default_factory=lambda: os.getenv("TELEGRAM_BOT_PIN", "")
-    )
-    
+    telegram_bot_pin: str = field(default_factory=lambda: os.getenv("TELEGRAM_BOT_PIN", ""))
+
     # Dashboard Auth
     dashboard_password_hash: str = field(default_factory=lambda: os.getenv("DASHBOARD_PASSWORD_HASH", ""))
+
+    # API
+    api_host: str = field(default_factory=lambda: os.getenv("API_HOST", "0.0.0.0"))
+    api_port: int = field(default_factory=lambda: _env_int("API_PORT", 8000))
+    api_secret_key: str = field(default_factory=lambda: os.getenv("API_SECRET_KEY", "scalper_dev_secret_key"))
 
     @property
     def postgres_conninfo(self) -> str:
@@ -114,11 +115,6 @@ class Settings:
             f"host={self.postgres_host} port={self.postgres_port} dbname={self.postgres_db} "
             f"user={self.postgres_user} password={self.postgres_password}"
         )
-
-    # API
-    api_host: str = field(default_factory=lambda: os.getenv("API_HOST", "0.0.0.0"))
-    api_port: int = field(default_factory=lambda: _env_int("API_PORT", 8000))
-    api_secret_key: str = field(default_factory=lambda: os.getenv("API_SECRET_KEY", "scalper_dev_secret_key"))
 
     @property
     def slippage_frac(self) -> float:
@@ -154,8 +150,17 @@ def require_live_credentials(settings: Settings) -> None:
 
 
 def get_settings() -> Settings:
-    """Кешований синглтон Settings (створюється один раз на процес)."""
+    """Кешований синглтон Settings (створюється один раз на процес).
+
+    Streamlit тримає модулі між rerun-ами: після reload `config.py` клас
+    `Settings` новий, а `_settings` може лишитися екземпляром старої версії.
+    """
     global _settings
-    if _settings is None:
+    if _settings is None or type(_settings) is not Settings:
         _settings = Settings()
+        return _settings
+    for name in Settings.__dataclass_fields__:
+        if not hasattr(_settings, name):
+            _settings = Settings()
+            break
     return _settings

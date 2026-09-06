@@ -32,7 +32,7 @@ class ConnectionManager:
             return
         
         payload = json.dumps(message)
-        for connection in self.active_connections:
+        for connection in list(self.active_connections):
             try:
                 await connection.send_text(payload)
             except WebSocketDisconnect:
