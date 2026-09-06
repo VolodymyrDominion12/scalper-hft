@@ -12,8 +12,38 @@
 
 from __future__ import annotations
 
+import threading
+
 import numpy as np
 import pandas as pd
+
+# ── Кеш стандартних фіч ──────────────────────────────────────────────────────
+# sensitivity-сітки і cell_audit проганяють одну й ту саму df через десятки
+# бектестів; фічі від неї не залежать від параметрів стратегії → кешуємо.
+# Ключ: id(df) + межі вмісту (захист від reuse id після GC). Значення
+# повертається КОПІЄЮ, бо callers можуть дописувати колонки.
+_FEATURES_CACHE_MAX = 8
+_features_cache: dict[tuple, pd.DataFrame] = {}
+_features_cache_lock = threading.Lock()
+
+
+def _features_key(df: pd.DataFrame) -> tuple:
+    if len(df) == 0:
+        return (id(df), (0, 0))
+    return (
+        id(df),
+        df.shape,
+        df.index[0],
+        df.index[-1],
+        float(df["close"].iloc[0]),
+        float(df["close"].iloc[-1]),
+    )
+
+
+def clear_features_cache() -> None:
+    """Скинути кеш фіч (тести, зміна даних у процесі)."""
+    with _features_cache_lock:
+        _features_cache.clear()
 
 
 # ── OHLCV-індикатори ─────────────────────────────────────────────────────────
@@ -216,8 +246,18 @@ def add_depth_to_klines(
     return out
 
 
-def add_standard_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Канонічний набір фіч для свічкових стратегій (без lookahead)."""
+def add_standard_features(df: pd.DataFrame, *, use_cache: bool = True) -> pd.DataFrame:
+    """Канонічний набір фіч для свічкових стратегій (без lookahead).
+
+    use_cache: мемоізація за вмістом df (сітки sensitivity/audit); повертається
+    копія — безпечно дописувати власні колонки.
+    """
+    if use_cache:
+        key = _features_key(df)
+        with _features_cache_lock:
+            hit = _features_cache.get(key)
+        if hit is not None:
+            return hit.copy()
     out = df.copy()
     close = out["close"]
     out["rsi_14"] = rsi(close, 14)
@@ -233,4 +273,10 @@ def add_standard_features(df: pd.DataFrame) -> pd.DataFrame:
     out["ret_1"] = close.pct_change(1)
     out["ret_5"] = close.pct_change(5)
     out["vol_ratio"] = out["volume"] / out["volume"].rolling(20, min_periods=20).mean().replace(0, np.nan)
+    if use_cache:
+        with _features_cache_lock:
+            if len(_features_cache) >= _FEATURES_CACHE_MAX:
+                _features_cache.pop(next(iter(_features_cache)))  # FIFO eviction
+            _features_cache[key] = out
+        return out.copy()
     return out

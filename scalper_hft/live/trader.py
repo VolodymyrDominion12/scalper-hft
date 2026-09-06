@@ -241,6 +241,26 @@ class LiveTrader:
         self.use_exit_ladders = getattr(self.settings, "use_exit_ladders", False)
         self.ladder: OneWayTradingLadder | None = None
         self.ws_stream: BinanceUserDataStream | None = None
+        # TTL-кеш довідкових даних live-кроку (funding/aggTrades): без нього
+        # кожен сигнал гребе REST; TTL=300с достатній для барових кроків.
+        self._aux_data_cache: dict[str, tuple[float, pd.DataFrame | None]] = {}
+        # HMM: (n_bars_fitted, model) — refit не частіше ніж раз на 250 барів
+        self._hmm_fit_state: tuple[int, object] | None = None
+
+    _AUX_DATA_TTL_SEC = 300.0
+    _HMM_REFIT_BARS = 250
+
+    def _cached_aux_data(self, key: str, loader) -> pd.DataFrame | None:
+        """TTL-кеш для funding/aggTrades у live-кроці."""
+        import time
+
+        now = time.monotonic()
+        hit = self._aux_data_cache.get(key)
+        if hit is not None and now - hit[0] < self._AUX_DATA_TTL_SEC:
+            return hit[1]
+        data = loader()
+        self._aux_data_cache[key] = (now, data)
+        return data
 
     # ── сигнал ───────────────────────────────────────────────────────────────
     def compute_signal(self, df: pd.DataFrame, now: pd.Timestamp | None = None) -> int:
@@ -248,18 +268,16 @@ class LiveTrader:
         closed = closed_klines(df, self.interval, now=now)
         if closed is None or len(closed) < 50:
             return 0
+        kwargs: dict = {}
         if self.strategy.needs_funding:
             from scalper_hft.data.downloader import download_funding
 
-            funding = download_funding(self.symbol, days=30)
-            signal = self.strategy.generate_signals(closed, funding=funding)
-        elif self.strategy.needs_trades:
+            kwargs["funding"] = self._cached_aux_data("funding", lambda: download_funding(self.symbol, days=30))
+        if self.strategy.needs_trades:
             from scalper_hft.data.downloader import download_agg_trades
 
-            trades = download_agg_trades(self.symbol, days=1)
-            signal = self.strategy.generate_signals(closed, trades=trades)
-        else:
-            signal = self.strategy.generate_signals(closed)
+            kwargs["trades"] = self._cached_aux_data("trades", lambda: download_agg_trades(self.symbol, days=1))
+        signal = self.strategy.generate_signals(closed, **kwargs)
         return int(signal.iloc[-1]) if len(signal) else 0
 
     # ── волатильність-залежний розмір (Спринт 4: GARCH/realized-vol sizing) ──
@@ -321,10 +339,18 @@ class LiveTrader:
             obs = pd.DataFrame({"ret": ret, "abs_ret": ret.abs(), "vol": vol}).iloc[20:]
             if len(obs) < self.hmm_states * 20:
                 return False
-            model = GaussianHMM(n_states=self.hmm_states, seed=42).fit(obs.iloc[:2000].values)
-            if model.covars_ is None:
+            # Refit не частіше ніж раз на _HMM_REFIT_BARS барів: fit на 2000
+            # барів — CPU-вартісний; filtered_proba лишається per-call (каузально).
+            model = None
+            if self._hmm_fit_state is not None and len(obs) - self._hmm_fit_state[0] < self._HMM_REFIT_BARS:
+                model = self._hmm_fit_state[1]
+            if model is None:
+                model = GaussianHMM(n_states=self.hmm_states, seed=42).fit(obs.iloc[:2000].values)
+                self._hmm_fit_state = (len(obs), model)
+            covars = getattr(model, "covars_", None)
+            if covars is None:
                 return False
-            calm = int(np.argmin(model.covars_[:, 2]))  # стан з найменшою vol
+            calm = int(np.argmin(covars[:, 2]))  # стан з найменшою vol
             post = model.filtered_proba(obs.values)
             return bool(post[-1, calm] < self.hmm_threshold)
         except Exception:

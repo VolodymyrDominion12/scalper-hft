@@ -61,16 +61,16 @@ class MeanReversionScalper(Strategy):
 
         f = add_standard_features(df)
         # bb_period з param_space реально впливає на сигнали (раніше смуги
-        # завжди рахувались з періодом 20 — параметр був мертвим для Optuna)
+        # завжди рахувались з періодом 20 — параметр був мертвим для Optuna).
+        # Смуги — окремий фрейм (без мутації кешованого f).
         bb = bollinger(f["close"], int(self.get("bb_period", 20)), 2.0)
-        f["bb_mid"], f["bb_up"], f["bb_low"] = bb["bb_mid"], bb["bb_up"], bb["bb_low"]
         rsi_val = rsi(f["close"], int(self.get("rsi_period", 14)))
         close = f["close"]
-        mid = f["bb_mid"]
+        mid = bb["bb_mid"]
         atr_pct = f["atr_14"] / close.replace(0, float("nan"))
 
-        long_entry = (rsi_val < self.get("oversold", 30.0)) & (close < f["bb_low"])
-        short_entry = (rsi_val > self.get("overbought", 70.0)) & (close > f["bb_up"])
+        long_entry = (rsi_val < self.get("oversold", 30.0)) & (close < bb["bb_low"])
+        short_entry = (rsi_val > self.get("overbought", 70.0)) & (close > bb["bb_up"])
         vol_ok = atr_pct >= self.get("min_atr_pct", 0.001)
 
         # ── regime-фільтри (гл. 4/10 книги; features/regimes.py) ────────────
@@ -109,18 +109,19 @@ class MeanReversionScalper(Strategy):
         Для кожного бару, де raw-логіка генерує long_entry або short_entry,
         перевіряємо всі фільтри окремо і записуємо які саме заблокували угоду.
         """
-        from scalper_hft.features.indicators import rsi
+        from scalper_hft.features.indicators import bollinger, rsi
         from scalper_hft.features.regimes import trend_strength, volatility_regime
         from scalper_hft.research.filter_trace import FilterTrace, SignalEvent
 
         f = add_standard_features(df)
+        bb = bollinger(f["close"], int(self.get("bb_period", 20)), 2.0)
         rsi_val = rsi(f["close"], int(self.get("rsi_period", 14)))
         close = f["close"]
-        mid = f["bb_mid"]
+        mid = bb["bb_mid"]
         atr_pct = f["atr_14"] / close.replace(0, float("nan"))
 
-        long_entry = (rsi_val < self.get("oversold", 30.0)) & (close < f["bb_low"])
-        short_entry = (rsi_val > self.get("overbought", 70.0)) & (close > f["bb_up"])
+        long_entry = (rsi_val < self.get("oversold", 30.0)) & (close < bb["bb_low"])
+        short_entry = (rsi_val > self.get("overbought", 70.0)) & (close > bb["bb_up"])
 
         # Обчислюємо кожен фільтр окремо для трейсингу
         vol_filter = atr_pct >= self.get("min_atr_pct", 0.001)
@@ -189,13 +190,14 @@ class MeanReversionScalper(Strategy):
         входить глибоко за bb_low/bb_up, тому sl може опинитись вище входу
         (лонг) — це чесна картина фактичної логіки виходу, не баг.
         """
-        from scalper_hft.features.indicators import add_standard_features
+        from scalper_hft.features.indicators import add_standard_features, bollinger
 
         f = add_standard_features(df)
+        bb = bollinger(f["close"], int(self.get("bb_period", 20)), 2.0)
         stop = f["atr_14"] * self.get("stop_atr_mult", 2.0)
         out = pd.DataFrame(index=df.index, dtype=float)
-        out["sl_long"] = f["bb_mid"] - stop
-        out["tp_long"] = f["bb_mid"]
-        out["sl_short"] = f["bb_mid"] + stop
-        out["tp_short"] = f["bb_mid"]
+        out["sl_long"] = bb["bb_mid"] - stop
+        out["tp_long"] = bb["bb_mid"]
+        out["sl_short"] = bb["bb_mid"] + stop
+        out["tp_short"] = bb["bb_mid"]
         return out
