@@ -1447,6 +1447,39 @@ def cmd_hedge_ratio(args: argparse.Namespace) -> None:
     print(res.summary())
 
 
+def cmd_migrate_to_parquet(args: argparse.Namespace) -> None:
+    """Міграція всіх даних з PostgreSQL у Parquet-файли (data/).
+
+    Читає klines / aggTrades / funding з PostgresStore і зберігає їх
+    у ParquetStore без змін формату. Ідемпотентно: вже наявні файли
+    пропускаються (без --overwrite). Після успішного завершення треба
+    змінити DATA_BACKEND=parquet у .env.
+    """
+    import importlib.util
+    from pathlib import Path as _Path
+
+    script = _Path(__file__).resolve().parent.parent / "scripts" / "migrate_postgres_to_parquet.py"
+    spec = importlib.util.spec_from_file_location("migrate_pg", script)
+    mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+
+    symbols = (
+        [s.strip().upper() for s in args.symbol.split(",") if s.strip()]
+        if getattr(args, "symbol", None)
+        else None
+    )
+    data_dir = _Path(args.data_dir) if getattr(args, "data_dir", None) else None
+
+    mod.migrate(
+        symbols=symbols,
+        overwrite=getattr(args, "overwrite", False),
+        skip_trades=getattr(args, "skip_trades", False),
+        skip_funding=getattr(args, "skip_funding", False),
+        data_dir=data_dir,
+        dry_run=getattr(args, "dry_run", False),
+    )
+
+
 def cmd_mcp(args: argparse.Namespace) -> None:
     """Запуск MCP-сервера для трейдінгу (stdio, JSON-RPC)."""
     from scalper_hft.mcp_trading import run_stdio
@@ -2046,6 +2079,25 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--leg2", default="ETHUSDT")
     p.add_argument("--lookback", type=int, default=240)
     p.set_defaults(func=cmd_hedge_ratio, interval="1h")
+
+    p = sub.add_parser(
+        "migrate-to-parquet",
+        help="Мігрувати всі дані з PostgreSQL у Parquet-файли (data/) і вимкнути postgres-бекенд",
+    )
+    p.add_argument(
+        "--symbol", default=None,
+        help="Символи через кому (за замовч. — всі з Postgres). Приклад: BTCUSDT,ETHUSDT",
+    )
+    p.add_argument("--overwrite", action="store_true", help="Перезаписати вже наявні Parquet-файли")
+    p.add_argument("--skip-trades", action="store_true", dest="skip_trades",
+                   help="Не мігрувати aggTrades (великі таблиці)")
+    p.add_argument("--skip-funding", action="store_true", dest="skip_funding",
+                   help="Не мігрувати funding rates")
+    p.add_argument("--data-dir", default=None, dest="data_dir",
+                   help="Директорія для Parquet (за замовч. DATA_DIR з .env)")
+    p.add_argument("--dry-run", action="store_true", dest="dry_run",
+                   help="Показати план міграції без запису файлів")
+    p.set_defaults(func=cmd_migrate_to_parquet)
 
     p = sub.add_parser("mcp", help="Запуск MCP-сервера для трейдінгу (stdio)")
     p.set_defaults(func=cmd_mcp)
