@@ -729,6 +729,25 @@ def cmd_regime_backtest(args: argparse.Namespace) -> None:
         print(f"\nЗбережено: {out_path}")
 
 
+def cmd_telegram_bot(args: argparse.Namespace) -> None:
+    """Запустити інтерактивний Telegram Bot."""
+    from scalper_hft.live.telegram_bot import TelegramBotServer
+
+    store_path = getattr(args, "store", None) or Path("results") / "paper_pairs.sqlite"
+    control_path = getattr(args, "control", None) or Path("results") / "control.json"
+
+    server = TelegramBotServer(
+        store_path=Path(store_path),
+        control_path=Path(control_path),
+    )
+    logger.info("Telegram Bot стартує (Ctrl+C для зупинки)")
+    try:
+        server.run_polling()
+    except KeyboardInterrupt:
+        server.stop()
+        logger.info("Telegram Bot зупинено")
+
+
 def cmd_record_bookticker(args: argparse.Namespace) -> None:
     """Запис bookTicker у реальному часі (для OB-стратегій)."""
     from scalper_hft.live.bookticker_recorder import record_bookticker, record_depth
@@ -2162,6 +2181,25 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--no-resume", dest="resume", action="store_false", help="Перерахувати всі клітинки")
     p.add_argument("--enqueue", action="store_true", help="Поставити sweep у чергу jobs.sqlite і вийти")
     p.set_defaults(func=cmd_sweep)
+
+    # ─── telegram-bot ─────────────────────────────────────────────────────────
+    tg_p = sub.add_parser(
+        "telegram-bot",
+        help="Інтерактивний Telegram Bot (команди + push-сповіщення)",
+    )
+    tg_sub = tg_p.add_subparsers(dest="tg_action", required=True)
+    tg_start = tg_sub.add_parser("start", help="Запустити бота (blocking)")
+    tg_start.add_argument(
+        "--store",
+        default=None,
+        help="Шлях до SQLite store (за замовч. results/paper_pairs.sqlite)",
+    )
+    tg_start.add_argument(
+        "--control",
+        default=None,
+        help="Шлях до control.json (за замовч. results/control.json)",
+    )
+    tg_p.set_defaults(func=cmd_telegram_bot)
 
     args = parser.parse_args(argv)
     args.param_dict = _parse_param_dict(getattr(args, "param", []))

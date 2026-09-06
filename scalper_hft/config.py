@@ -93,6 +93,14 @@ class Settings:
     # Telegram (опційно; без ключів send — no-op)
     telegram_bot_token: str = field(default_factory=lambda: os.getenv("TELEGRAM_BOT_TOKEN", ""))
     telegram_chat_id: str = field(default_factory=lambda: os.getenv("TELEGRAM_CHAT_ID", ""))
+    # Telegram Bot — whitelist chat_id через кому; порожнє → лише telegram_chat_id
+    telegram_allowed_chat_ids: str = field(
+        default_factory=lambda: os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", "")
+    )
+    # PIN для деструктивних команд (pause/stop/resume); порожнє → команди вимкнені
+    telegram_bot_pin: str = field(
+        default_factory=lambda: os.getenv("TELEGRAM_BOT_PIN", "")
+    )
 
     @property
     def postgres_conninfo(self) -> str:

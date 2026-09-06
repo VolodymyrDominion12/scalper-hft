@@ -9,6 +9,7 @@
 from scalper_hft.live.account import PaperAccount
 from scalper_hft.live.exit_ladders import LadderRung, OneWayTradingLadder
 from scalper_hft.live.pairs_runner import PairsPaperRunner, replay_pairs
+from scalper_hft.live.telegram_bot import TelegramBotServer, start_bot_thread
 from scalper_hft.live.trader import LiveTrader, SilentAttritionKillSwitch, closed_klines, run_trader_once
 
 __all__ = [
@@ -21,4 +22,6 @@ __all__ = [
     "OneWayTradingLadder",
     "LadderRung",
     "SilentAttritionKillSwitch",
+    "TelegramBotServer",
+    "start_bot_thread",
 ]

@@ -64,3 +64,50 @@ def notify_trade(symbol: str, action: str, price: float | None = None, pnl: floa
 
 def notify_error(symbol: str, error: str) -> bool:
     return send_telegram(f"⚠️ *{symbol}* помилка: {error[:500]}")
+
+
+def notify_regime_change(
+    symbol: str,
+    old_regime: str,
+    new_regime: str,
+    weights: dict[str, float] | None = None,
+) -> bool:
+    """💛 REGIME_CHANGE: symbol → new_regime з вагами стратегій."""
+    emoji = {"trend_up": "📈", "trend_down": "📉", "range": "↔️"}.get(new_regime, "❓")
+    text = f"💛 *REGIME* {symbol}: {old_regime} → {emoji} {new_regime}"
+    if weights:
+        w_str = " | ".join(f"{k}={v:.2f}" for k, v in weights.items())
+        text += f"\nВаги: {w_str}"
+    return send_telegram(text)
+
+
+def notify_heartbeat(
+    exchange: str,
+    mode: str,
+    equity: float,
+    equity_pct: float,
+    n_positions: int,
+    uptime_hours: float,
+) -> bool:
+    """❤️ HEARTBEAT: бот живий + стан рахунку."""
+    sign = "+" if equity_pct >= 0 else ""
+    text = (
+        f"❤️ *HEARTBEAT* | {mode.upper()} | {exchange}\n"
+        f"Equity: `${equity:.2f}` ({sign}{equity_pct:.2f}%)\n"
+        f"Позицій: `{n_positions}` | Uptime: `{uptime_hours:.1f}h`"
+    )
+    return send_telegram(text)
+
+
+def notify_risk_block(
+    exchange: str,
+    reason: str,
+    dd_pct: float | None = None,
+) -> bool:
+    """⚠️ RISK: ризик-ліміт спрацював, нові входи заблоковано."""
+    text = f"⚠️ *RISK BLOCK* | {exchange}\n{reason}"
+    if dd_pct is not None:
+        text += f"\nDrawdown: `{dd_pct:.2f}%`"
+    text += "\n/resume <PIN> для відновлення"
+    return send_telegram(text)
+
