@@ -44,7 +44,9 @@ def _apply_use_kalman(args: argparse.Namespace, params: dict) -> dict:
     return out
 
 
-def _load_klines(symbol: str, interval: str, days: int, base: str | None = None, derive: bool = True, exchange_id: str | None = None) -> pd.DataFrame:
+def _load_klines(
+    symbol: str, interval: str, days: int, base: str | None = None, derive: bool = True, exchange_id: str | None = None
+) -> pd.DataFrame:
     """Хелпер для CLI: завантажити/ресемплити дані або впасти з помилкою."""
     from scalper_hft.data.access import ensure_klines
 
@@ -225,7 +227,12 @@ def cmd_walkforward(args: argparse.Namespace) -> None:
     settings = get_settings()
     exchange_id = getattr(args, "exchange", settings.exchange)
     df = _load_klines(
-        args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", True), exchange_id=exchange_id
+        args.symbol,
+        args.interval,
+        args.days,
+        base=getattr(args, "base", None),
+        derive=getattr(args, "derive", True),
+        exchange_id=exchange_id,
     )
     strategy = get_strategy(args.strategy, **_apply_use_kalman(args, args.param_dict))
     trades = None
@@ -1522,7 +1529,7 @@ def cmd_dashboard_hash(args: argparse.Namespace) -> None:
     if pwd1 != pwd2:
         print("❌ Паролі не співпадають.")
         sys.exit(1)
-    
+
     if not pwd1:
         print("❌ Пароль не може бути порожнім.")
         sys.exit(1)
@@ -1770,6 +1777,21 @@ def _parse_param_dict(args: list[str]) -> dict:
     return out
 
 
+def _api_bind(
+    host: str | None,
+    port: int | None,
+    *,
+    default_host: str,
+    default_port: int,
+) -> tuple[str, int]:
+    """CLI `--host`/`--port` override settings; omit them to keep API_HOST/API_PORT."""
+    bind_host = host or default_host
+    bind_port = default_port if port is None else port
+    if not 1 <= bind_port <= 65535:
+        raise ValueError(f"API port must be 1-65535, got {bind_port}")
+    return bind_host, bind_port
+
+
 def cmd_api(args: argparse.Namespace) -> None:
     if args.api_action == "start":
         try:
@@ -1777,37 +1799,44 @@ def cmd_api(args: argparse.Namespace) -> None:
         except ImportError:
             sys.exit("API server requires 'api' extras: uv pip install -e \".[api]\"")
         from scalper_hft.config import get_settings
+
         settings = get_settings()
-        logger.info(f"Запуск FastAPI сервера на {settings.api_host}:{settings.api_port}...")
-        uvicorn.run("scalper_hft.api.server:app", host=settings.api_host, port=settings.api_port, reload=False)
-    
+        try:
+            host, port = _api_bind(
+                args.host,
+                args.port,
+                default_host=settings.api_host,
+                default_port=settings.api_port,
+            )
+        except ValueError as exc:
+            sys.exit(str(exc))
+        logger.info(f"Запуск FastAPI сервера на {host}:{port}...")
+        uvicorn.run("scalper_hft.api.server:app", host=host, port=port, reload=False)
+
     elif args.api_action == "token":
         try:
             from scalper_hft.api.auth import create_access_token
         except ImportError:
             sys.exit("API server requires 'api' extras: uv pip install -e \".[api]\"")
         token = create_access_token({"sub": "admin"}, expires_delta_hours=args.hours)
-        print(f"eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9... [TOKEN GENERATED]")
+        print("eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9... [TOKEN GENERATED]")
         print("\nJWT Token (keep it secret!):")
         print(token)
         print("\nДля доступу додайте заголовок: Authorization: Bearer <token>")
 
 
-
 def cmd_run(args: argparse.Namespace) -> None:
-    from scalper_hft.live.store import PaperStore
-    from scalper_hft.strategies.regime_supervisor import RegimeSupervisor
     from scalper_hft.live.supervisor_config import SupervisorConfig
-    
+    from scalper_hft.strategies.regime_supervisor import RegimeSupervisor
+
     cfg = SupervisorConfig.from_yaml(args.config)
     logger.info(f"Запуск LiveTrader з конфігу {args.config} (supervisor: {cfg.name})")
-    
+
     sup = RegimeSupervisor.from_config(args.config)
-    
+
     # В реальному коді тут буде виклик LiveTrader або PairsPaperRunner
     # Поки що просто виведемо що ми ініціалізували
     logger.info(f"Ініціалізовано {len(sup._strats)} суб-стратегій")
-    
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -2282,13 +2311,25 @@ def main(argv: list[str] | None = None) -> None:
     # API
     api_p = sub.add_parser("api", help="FastAPI Server")
     api_sub = api_p.add_subparsers(dest="api_action", required=True)
-    api_sub.add_parser("start", help="Запустити FastAPI сервер (uvicorn)")
+    api_start = api_sub.add_parser("start", help="Запустити FastAPI сервер (uvicorn)")
+    api_start.add_argument(
+        "--host",
+        default=None,
+        help="Хост (за замовч. API_HOST з .env, 0.0.0.0)",
+    )
+    api_start.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Порт (за замовч. API_PORT з .env, 8000)",
+    )
     api_token = api_sub.add_parser("token", help="Згенерувати JWT токен для API")
     api_token.add_argument("--hours", type=int, default=24, help="Термін дії токена (годин)")
     api_p.set_defaults(func=cmd_api)
 
     args = parser.parse_args(argv)
     from scalper_hft.config import get_settings
+
     settings = get_settings()
     if hasattr(args, "exchange") and args.exchange:
         settings.exchange = args.exchange
