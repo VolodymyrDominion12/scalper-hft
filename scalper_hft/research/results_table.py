@@ -116,8 +116,12 @@ SWEEP_DISPLAY_KEYS: tuple[str, ...] = (
 )
 
 TRADE_COLUMNS: tuple[ColumnHint, ...] = (
-    ColumnHint("Вхід", "Вхід", "Час заповнення входу (бар t+1 після сигналу на закритті t).", "datetime"),
-    ColumnHint("Вихід", "Вихід", "Час закриття позиції (сигнал 0 / SL / TP / кінець даних).", "datetime"),
+    ColumnHint(
+        "Вхід", "Вхід", "Час заповнення входу (бар t+1 після сигналу на закритті t).", "datetime", "DD.MM.YYYY HH:mm"
+    ),
+    ColumnHint(
+        "Вихід", "Вихід", "Час закриття позиції (сигнал 0 / SL / TP / кінець даних).", "datetime", "DD.MM.YYYY HH:mm"
+    ),
     ColumnHint("Сторона", "Сторона", "Лонг = +1, шорт = −1.", "text"),
     ColumnHint(
         "Ціна входу",

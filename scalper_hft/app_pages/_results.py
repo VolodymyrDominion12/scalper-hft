@@ -38,7 +38,9 @@ def _hint_config(hint: ColumnHint) -> object:
     if hint.kind == "text":
         return st.column_config.TextColumn(hint.label, help=hint.help, pinned=hint.pinned or None)
     if hint.kind == "datetime":
-        return st.column_config.DatetimeColumn(hint.label, help=hint.help, format="YYYY-MM-DD HH:mm")
+        return st.column_config.DatetimeColumn(
+            hint.label, help=hint.help, format=hint.number_format or "YYYY-MM-DD HH:mm"
+        )
     if hint.kind == "int":
         return st.column_config.NumberColumn(
             hint.label, help=hint.help, format=hint.number_format or "%d", pinned=hint.pinned or None

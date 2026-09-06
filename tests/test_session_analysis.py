@@ -92,3 +92,25 @@ def test_sharpe_is_mean_over_std_of_trade_returns() -> None:
     assert out.loc["low", "sharpe"] == pytest.approx(expected)
     assert out.loc["normal", "n_trades"] == 0
     assert np.isnan(out.loc["normal", "sharpe"])
+
+
+def test_mae_mfe_falls_back_to_close_when_entry_price_missing() -> None:
+    from scalper_hft.research.session_analysis import mae_mfe_analysis
+
+    idx = pd.date_range("2025-01-01", periods=5, freq="1h")
+    bars = pd.DataFrame(
+        {"open": 100.0, "high": [101, 103, 102, 100, 99], "low": [99, 100, 98, 97, 96], "close": 100.0},
+        index=idx,
+    )
+    trades = pd.DataFrame(
+        {
+            "entry_ts": [idx[1]],
+            "exit_ts": [idx[3]],
+            "side": [1],
+            "ret": [0.01],
+        }
+    )
+    out = mae_mfe_analysis(trades, bars)
+    assert len(out) == 1
+    assert out.iloc[0]["mfe"] == pytest.approx(0.03)
+    assert out.iloc[0]["mae"] == pytest.approx(-0.03)

@@ -213,7 +213,7 @@ if section == "Sweep matrix":
                 view = view[view["mode"] == filter_mode]
 
             if view.empty:
-                st.warning("Немає даних після фільтру")
+                st.warning("Немає даних після фільтру heatmap")
             else:
                 view["sym_iv"] = view.get("symbol", "") + " " + view.get("interval", "")
                 pivot = view.pivot_table(index="strategy", columns="sym_iv", values=metric, aggfunc="mean")
@@ -228,8 +228,8 @@ if section == "Sweep matrix":
                 )
                 fig.update_layout(height=max(300, 50 * len(pivot)), font=dict(size=11))
                 st.plotly_chart(fig, width="stretch")
-                st.subheader("Таблиця результатів")
-                render_sweep_explorer(df_all, key_prefix="sw_all")
+            st.subheader("Таблиця результатів")
+            render_sweep_explorer(df_all, key_prefix="sw_all")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
