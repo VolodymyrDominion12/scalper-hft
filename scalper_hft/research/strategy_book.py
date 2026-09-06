@@ -31,39 +31,35 @@ class StrategyRecord:
 
 
 # Порядок = пріоритет сканування дослідником (валідовані зверху).
+# Перевалідація 2026-09-07 (поточний код, 3y 1h maker, 49 WF-вікон):
+# документовані 2026-08-30 цифри отримані до фіксів моделі виконання.
 STRATEGY_BOOK: tuple[StrategyRecord, ...] = (
     StrategyRecord(
         "pairs_arb",
         "validated",
-        "+15.9%/рік, 28 угод, maxDD −6.5%, WF OOS>0",
-        "1h, maker, z=2.0 / lb=480",
-        pair="XRPUSDT/BTCUSDT",
-    ),
-    StrategyRecord(
-        "pairs_arb",
-        "validated",
-        "+12.9%/рік, 46 угод, maxDD −4.6%",
-        "1h, maker, z=2.0 / lb=240",
+        "LINK/BTC 3y +55% (PF 1.95; z2/lb120: +86%, WF pos 71%)",
+        "1h, maker, z=2.0 / lb=120–240",
         pair="LINKUSDT/BTCUSDT",
     ),
     StrategyRecord(
         "pairs_arb",
-        "validated",
-        "+14.9%/рік, 51 угода, maxDD −5.7%",
-        "1h, maker, z=2.0 / lb=240",
-        pair="LINKUSDT/ETHUSDT",
+        "research",
+        "XRP/BTC 3y <0 на поточному коді; позитивний лише у свіжому 400д-вікні",
+        "моніторинг (повернути в ядро, якщо 3y знову позитивний)",
+        pair="XRPUSDT/BTCUSDT",
     ),
     StrategyRecord(
         "pairs_arb",
-        "validated",
-        "+8.3%/рік, 47 угод, maxDD −4%",
-        "1h, maker, z=2.0 / lb=240",
-        pair="BTCUSDT/ETHUSDT",
+        "research",
+        "BTC/ETH та LINK/ETH на 3y від'ємні після фіксів виконання",
+        "research, maker",
+        pair="LINKUSDT/ETHUSDT",
     ),
     StrategyRecord(
         "sparse_basket",
         "research",
-        "Lasso + PCA кошик; потрібен OOS на 5+ монетах",
+        "Lasso + PCA кошик; multi-asset контур не підключений до рушія — "
+        "backtest = single-series z-score MR fallback (попередження в коді)",
         "мульти-актив, maker",
     ),
     StrategyRecord(
@@ -77,6 +73,19 @@ STRATEGY_BOOK: tuple[StrategyRecord, ...] = (
         "research",
         "LightGBM meta-labeling; обов'язковий DSR",
         "triple-barrier + bet sizing",
+    ),
+    StrategyRecord(
+        "supertrend",
+        "rejected",
+        "1d: OOS +0.50 на 3y, але −0.15 на 5y (2021–26) — edge період-специфічний; "
+        "1h/4h — від'ємні після комісій",
+        "трендовий sleeve",
+    ),
+    StrategyRecord(
+        "regime_supervisor",
+        "research",
+        "не б'є кращий сингл на 1h (iter1–3); корисний як regime-шар експозиції",
+        "мета-модель, 1h+",
     ),
     StrategyRecord(
         "mean_reversion",

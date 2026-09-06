@@ -39,10 +39,15 @@ from scalper_hft.strategies.pairs_arb import PairsArb
 
 logger = logging.getLogger(__name__)
 
+# Пари за замовчуванням для paper-портфеля — перевалідація 2026-09-07
+# (поточний код, 3y 2023-09..2026-09, 1h maker, 49 WF-вікон; див.
+# docs/reports/iter5_pairs_revalidate / STRATEGY_STATUS.md):
+#   LINK/BTC  з=2.0/lb=120: 3y +86.5% (PF 1.74), WF OOS>0 у 71% вікон, 400д +0.4%  ✅ ядро
+#   LINK/BTC  з=2.0/lb=240: 3y +54.9% (PF 1.95), WF pos 65%                        альтернатива
+# XRP/BTC, BTC/ETH, LINK/ETH на 3y від'ємні (XRP/BTC — лише моніторинг);
+# раніше «валідовані» цифри (2026-08-30) отримані до фіксів моделі виконання.
 VALIDATED_PAIRS: tuple[dict, ...] = (
-    {"leg1": "XRPUSDT", "leg2": "BTCUSDT", "entry_z": 2.0, "exit_z": 0.3, "lookback": 480},
-    {"leg1": "BTCUSDT", "leg2": "ETHUSDT", "entry_z": 2.0, "exit_z": 0.3, "lookback": 240},
-    {"leg1": "LINKUSDT", "leg2": "BTCUSDT", "entry_z": 2.0, "exit_z": 0.3, "lookback": 240},
+    {"leg1": "LINKUSDT", "leg2": "BTCUSDT", "entry_z": 2.0, "exit_z": 0.3, "lookback": 120},
 )
 
 _RECENT_BARS = 800
