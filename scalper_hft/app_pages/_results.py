@@ -271,7 +271,10 @@ def render_sweep_explorer(
 
     cols = display_columns(view)
     shown = view[cols].copy()
-    shown["open"] = [row_actions(str(r["mode"]) if "mode" in shown.columns else None) for _, r in shown.iterrows()]
+    shown["open"] = [
+        (acts if len(acts) > 1 else acts[0])
+        for acts in (row_actions(str(r["mode"]) if "mode" in shown.columns else None) for _, r in shown.iterrows())
+    ]
     payloads = [row.to_dict() for _, row in view.iterrows()]
     st.session_state[f"{key_prefix}_row_payloads"] = payloads
     st.dataframe(
