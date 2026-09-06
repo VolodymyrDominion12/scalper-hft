@@ -36,8 +36,8 @@ _ROOT = _HERE.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from scalper_hft.config import get_settings
-from scalper_hft.data.storage import (
+from scalper_hft.config import get_settings  # noqa: E402
+from scalper_hft.data.storage import (  # noqa: E402
     funding_path,
     klines_path,
     save_funding,
@@ -45,7 +45,7 @@ from scalper_hft.data.storage import (
     save_trades,
     trades_path,
 )
-from scalper_hft.data.store import PostgresStore
+from scalper_hft.data.store import PostgresStore  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,

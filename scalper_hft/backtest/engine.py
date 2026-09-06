@@ -35,6 +35,18 @@ class BacktestResult:
     def summary(self) -> str:
         return self.metrics.summary()
 
+    @property
+    def bar_returns(self) -> pd.Series:
+        return self.equity.pct_change().fillna(0.0)
+
+    @property
+    def sharpe(self) -> float:
+        return self.metrics.sharpe
+
+    @property
+    def profit_factor(self) -> float:
+        return self.metrics.profit_factor
+
 
 def _fill_price(prev_close: pd.Series, close: pd.Series, ts) -> float:
     """Ціна виконання за моделлю рушія: закриття бару, що передує бару позиції.

@@ -1,6 +1,5 @@
 """WebSocket ConnectionManager для реал-тайм розсилки оновлень (Push)."""
 
-import asyncio
 import json
 import logging
 from typing import Any

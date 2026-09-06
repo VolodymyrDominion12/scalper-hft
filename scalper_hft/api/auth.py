@@ -6,7 +6,6 @@ from typing import Any
 import jwt
 from fastapi import HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-
 from scalper_hft.config import get_settings
 
 security = HTTPBearer()

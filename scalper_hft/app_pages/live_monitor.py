@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import httpx
 import streamlit as st
 
 from scalper_hft.api.auth import create_access_token
 from scalper_hft.config import get_settings
-from scalper_hft.live.control import ControlState, load_control, save_control
+from scalper_hft.live.control import load_control, save_control
 from scalper_hft.live.store import PaperStore
 from scalper_hft.visualization.ws_component import ws_live_monitor_component
 
@@ -236,11 +235,11 @@ with st.container(border=True):
                 if resp.status_code == 200:
                     st.success(f"✅ Позицію {selected_symbol} закрито.")
                 else:
-                    store.log_position(settings.exchange, selected_symbol, "flat", 0.0, 0.0, 0.0, 0.0, "paper")
+                    store.log_position(exchange=settings.exchange, symbol=selected_symbol, side="flat", size=0.0, entry_price=0.0, mark_price=0.0, unrealized_pnl=0.0, mode="paper")
                     st.info(f"Оновлено локально: позицію {selected_symbol} закрито.")
                 st.rerun()
-            except Exception as exc:
-                store.log_position(settings.exchange, selected_symbol, "flat", 0.0, 0.0, 0.0, 0.0, "paper")
+            except Exception:
+                store.log_position(exchange=settings.exchange, symbol=selected_symbol, side="flat", size=0.0, entry_price=0.0, mark_price=0.0, unrealized_pnl=0.0, mode="paper")
                 st.info(f"Закрито в локальному сховищі: {selected_symbol}.")
                 st.rerun()
 
@@ -268,10 +267,10 @@ with st.expander("🧪 Симуляція тестових сигналів (Ш�
                     timeout=3.0,
                 )
                 st.toast("Створено LONG BTCUSDT!", icon=":material/trending_up:")
-            except Exception as exc:
+            except Exception:
                 # Прямий запис у базу, якщо REST офлайн
                 store = PaperStore()
-                store.log_position("binance", "BTCUSDT", "long", 0.25, 64500.0, 64700.0, 42.50, "paper")
+                store.log_position(exchange="binance", symbol="BTCUSDT", side="long", size=0.25, entry_price=64500.0, mark_price=64700.0, unrealized_pnl=42.50, mode="paper")
                 st.toast("Записано в локальний PaperStore!", icon=":material/database:")
 
     with col_d2:
@@ -290,9 +289,9 @@ with st.expander("🧪 Симуляція тестових сигналів (Ш�
                     timeout=3.0,
                 )
                 st.toast("Створено SHORT ETHUSDT!", icon=":material/trending_down:")
-            except Exception as exc:
+            except Exception:
                 store = PaperStore()
-                store.log_position("binance", "ETHUSDT", "short", 2.5, 3450.0, 3470.0, -15.80, "paper")
+                store.log_position(exchange="binance", symbol="ETHUSDT", side="short", size=2.5, entry_price=3450.0, mark_price=3470.0, unrealized_pnl=-15.80, mode="paper")
                 st.toast("Записано в локальний PaperStore!", icon=":material/database:")
 
     with col_d3:
@@ -311,9 +310,9 @@ with st.expander("🧪 Симуляція тестових сигналів (Ш�
                     timeout=3.0,
                 )
                 st.toast("Створено LONG XRPUSDT!", icon=":material/trending_up:")
-            except Exception as exc:
+            except Exception:
                 store = PaperStore()
-                store.log_position("binance", "XRPUSDT", "long", 1500.0, 0.58, 0.60, 18.20, "paper")
+                store.log_position(exchange="binance", symbol="XRPUSDT", side="long", size=1500.0, entry_price=0.58, mark_price=0.60, unrealized_pnl=18.20, mode="paper")
                 st.toast("Записано в локальний PaperStore!", icon=":material/database:")
 
 

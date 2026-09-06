@@ -81,7 +81,10 @@ def cmd_download(args: argparse.Namespace) -> None:
                 checkpoint_batches=checkpoint_batches,
                 exchange_id=exchange_id,
             )
-            logger.info("klines %s %s: %d свічок (%s … %s)", sym, iv, len(df), df.index[0], df.index[-1])
+            if df is not None and not df.empty:
+                logger.info("klines %s %s: %d свічок (%s … %s)", sym, iv, len(df), df.index[0], df.index[-1])
+            else:
+                logger.info("klines %s %s: 0 свічок", sym, iv)
         if args.trades:
             tr = download_agg_trades(
                 sym,
@@ -100,8 +103,6 @@ def cmd_download(args: argparse.Namespace) -> None:
                 force=args.force,
                 retries=retries,
                 batch_delay=batch_delay,
-                checkpoint_batches=checkpoint_batches,
-                exchange_id=exchange_id,
             )
             logger.info("funding %s: %d точок", sym, len(fu) if fu is not None else 0)
         if getattr(args, "vision", False):
@@ -244,7 +245,7 @@ def cmd_walkforward(args: argparse.Namespace) -> None:
     if strategy.needs_funding:
         from scalper_hft.data.downloader import download_funding
 
-        funding = download_funding(args.symbol, args.days, exchange_id=exchange_id)
+        funding = download_funding(args.symbol, args.days)
     settings = get_settings()
     res = run_walk_forward(
         df,
@@ -652,7 +653,7 @@ def cmd_regime_backtest(args: argparse.Namespace) -> None:
     cost = CostModel(
         maker_fee=settings.maker_fee,
         taker_fee=settings.taker_fee,
-        slippage=settings.slippage,
+        slippage_frac=settings.slippage_frac,
     )
 
     strat_names = [s.strip() for s in args.strategies.split(",") if s.strip()]
@@ -661,14 +662,13 @@ def cmd_regime_backtest(args: argparse.Namespace) -> None:
         return
 
     # ── Бектест базових стратегій ────────────────────────────────────────
-    from scalper_hft.backtest.engine import BacktestEngine
+    from scalper_hft.backtest.engine import run_backtest
 
     baseline_returns: dict[str, pd.Series] = {}
     for name in strat_names:
         try:
             strat = get_strategy(name)
-            engine = BacktestEngine(df, strat, cost_model=cost)
-            result = engine.run()
+            result = run_backtest(df, strat, cost=cost)
             baseline_returns[name] = result.bar_returns
             print(f"  ✓ {name}: Sharpe={result.sharpe:.2f}  PF={result.profit_factor:.2f}")
         except Exception as exc:
@@ -690,8 +690,7 @@ def cmd_regime_backtest(args: argparse.Namespace) -> None:
                 n_hmm_states=int(args.n_hmm_states),
                 hmm_fit_bars=int(args.hmm_fit_bars),
             )
-            engine = BacktestEngine(df, sup, cost_model=cost)
-            result = engine.run()
+            result = run_backtest(df, sup, cost=cost)
             key = f"supervisor_{mode}"
             supervisor_results[key] = result.bar_returns
             print(f"  ✓ supervisor[{mode}]: Sharpe={result.sharpe:.2f}  PF={result.profit_factor:.2f}")
@@ -2328,11 +2327,16 @@ def main(argv: list[str] | None = None) -> None:
     api_p.set_defaults(func=cmd_api)
 
     args = parser.parse_args(argv)
-    from scalper_hft.config import get_settings
+    import dataclasses
+    import os
+
+    from scalper_hft.config import get_settings, set_settings
 
     settings = get_settings()
     if hasattr(args, "exchange") and args.exchange:
-        settings.exchange = args.exchange
+        os.environ["EXCHANGE"] = str(args.exchange)
+        settings = dataclasses.replace(settings, exchange=str(args.exchange))
+        set_settings(settings)
     args.param_dict = _parse_param_dict(getattr(args, "param", []))
     args.func(args)
 

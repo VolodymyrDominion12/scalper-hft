@@ -10,7 +10,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from scalper_hft.config import get_settings
 from scalper_hft.app_pages._common import (
     BT_INTERVALS,
     RESEARCH_AUDIT_PREFILL,
@@ -27,6 +26,7 @@ from scalper_hft.app_pages._common import (
     single_backtest_payload,
     submit_research_job,
 )
+from scalper_hft.config import get_settings
 from scalper_hft.research.job_artifacts import load_backtest_result, load_cell_audit
 from scalper_hft.research.jobs import DEFAULT_JOBS_PATH, artifacts_dir
 from scalper_hft.research.sweep_store import SweepStore

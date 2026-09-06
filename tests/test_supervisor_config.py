@@ -1,7 +1,8 @@
-import pytest
 from pathlib import Path
-from scalper_hft.live.supervisor_config import SupervisorConfig, StrategyConfig, FamilyConfig
+
+from scalper_hft.live.supervisor_config import SupervisorConfig
 from scalper_hft.strategies.regime_supervisor import RegimeSupervisor
+
 
 def test_supervisor_config_parsing(tmp_path: Path):
     yaml_content = """

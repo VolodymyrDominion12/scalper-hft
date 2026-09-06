@@ -28,7 +28,7 @@ class CacheManager:
         if not self.index_path.exists():
             return {"version": 1, "exchanges": {}}
         try:
-            with open(self.index_path, "r", encoding="utf-8") as f:
+            with open(self.index_path, encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
             return {"version": 1, "exchanges": {}}

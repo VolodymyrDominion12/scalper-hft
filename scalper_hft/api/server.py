@@ -9,14 +9,13 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-
 from scalper_hft.api.auth import verify_token
 from scalper_hft.api.broadcaster import manager
 from scalper_hft.config import get_settings
-from scalper_hft.live.control import ControlState, load_control, save_control
+from scalper_hft.live.control import load_control, save_control
 from scalper_hft.live.store import PaperStore
 
 logger = logging.getLogger(__name__)
@@ -136,7 +135,7 @@ async def sqlite_watcher() -> None:
                     "type": "positions_update",
                     "data": positions,
                     "count": len(positions),
-                    "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    "ts": datetime.datetime.now(datetime.UTC).isoformat(),
                 })
 
                 # Кожні 2 секунди: акаунти та боти
@@ -154,7 +153,7 @@ async def sqlite_watcher() -> None:
                                 "flatten": ctrl.flatten,
                             },
                         },
-                        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                        "ts": datetime.datetime.now(datetime.UTC).isoformat(),
                     })
         except asyncio.CancelledError:
             break
@@ -202,7 +201,7 @@ async def get_status(token_payload: dict[str, Any] = Depends(verify_token)) -> d
             "no_new_entries": ctrl.no_new_entries,
             "flatten": ctrl.flatten,
         },
-        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "ts": datetime.datetime.now(datetime.UTC).isoformat(),
     }
 
 
@@ -236,7 +235,7 @@ async def update_control(
             "no_new_entries": ctrl.no_new_entries,
             "flatten": ctrl.flatten,
         },
-        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "ts": datetime.datetime.now(datetime.UTC).isoformat(),
     })
     return {
         "status": "ok",
@@ -306,7 +305,7 @@ async def close_position(
         "type": "positions_update",
         "data": positions,
         "count": len(positions),
-        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "ts": datetime.datetime.now(datetime.UTC).isoformat(),
     })
     return {"status": "ok", "message": f"Позицію {req.symbol} закрито"}
 
@@ -337,7 +336,7 @@ async def emergency_flatten(token_payload: dict[str, Any] = Depends(verify_token
         "type": "positions_update",
         "data": positions,
         "count": len(positions),
-        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "ts": datetime.datetime.now(datetime.UTC).isoformat(),
     })
     await manager.broadcast({
         "type": "control_update",
@@ -346,7 +345,7 @@ async def emergency_flatten(token_payload: dict[str, Any] = Depends(verify_token
             "no_new_entries": ctrl.no_new_entries,
             "flatten": ctrl.flatten,
         },
-        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "ts": datetime.datetime.now(datetime.UTC).isoformat(),
     })
     return {
         "status": "ok",
@@ -377,7 +376,7 @@ async def create_mock_position(
         "type": "positions_update",
         "data": positions,
         "count": len(positions),
-        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "ts": datetime.datetime.now(datetime.UTC).isoformat(),
     })
     return {"status": "ok", "message": f"Створено тестову позицію {req.symbol}", "data": req.model_dump()}
 
@@ -414,7 +413,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     "flatten": ctrl.flatten,
                 },
             },
-            "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "ts": datetime.datetime.now(datetime.UTC).isoformat(),
         }
         await websocket.send_json(initial_payload)
     except Exception as e:

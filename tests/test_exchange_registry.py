@@ -1,7 +1,6 @@
-import pytest
 import ccxt
-
-from scalper_hft.data.exchange_registry import ExchangeRegistry, ExchangeMeta
+import pytest
+from scalper_hft.data.exchange_registry import ExchangeMeta, ExchangeRegistry
 
 
 def test_registry_has_defaults() -> None:

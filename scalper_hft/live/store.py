@@ -369,7 +369,7 @@ class PaperStore:
 
     def log_position(
         self,
-        ts: pd.Timestamp | None = None,
+        ts: pd.Timestamp | str | None = None,
         exchange: str = "binance",
         symbol: str = "",
         side: str = "flat",
@@ -379,11 +379,28 @@ class PaperStore:
         unrealized_pnl: float | None = None,
         mode: str = "paper",
     ) -> None:
-        """Зберегти знімок позиції (append-only; open positions — з останніх записів)."""
-        ts_val = ts if ts is not None else pd.Timestamp.now(tz="UTC")
+        """Зберегти знімок позиції (append-only; open positions — з останніх записів).
+
+        Підтримує як явні keyword arguments, так і виклики з/без ts (захист від зсуву аргументів).
+        """
+        # Захист: якщо перший аргумент — біржа (наприклад, "binance", а ts пропущено),
+        # а side отримав числове значення (розмір), нормалізуємо позиційні параметри
+        if isinstance(side, (int, float)) and isinstance(symbol, str) and symbol in ("long", "short", "flat"):
+            mode = str(unrealized_pnl) if isinstance(unrealized_pnl, str) else mode
+            unrealized_pnl = float(mark_price) if mark_price is not None else None
+            mark_price = float(entry_price) if entry_price != 0.0 else None
+            entry_price = float(size)
+            size = float(side)
+            side = str(symbol)
+            symbol = str(exchange)
+            exchange = str(ts) if ts is not None else "binance"
+            ts_val = pd.Timestamp.now(tz="UTC")
+        else:
+            ts_val = ts if ts is not None else pd.Timestamp.now(tz="UTC")
+
         self._conn.execute(
             "INSERT INTO positions (ts, exchange, symbol, side, size, entry_price, mark_price, unrealized_pnl, mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (str(ts_val), exchange, symbol, side, size, entry_price, mark_price, unrealized_pnl, mode),
+            (str(ts_val), str(exchange), str(symbol), str(side), float(size), float(entry_price), mark_price, unrealized_pnl, str(mode)),
         )
         self._conn.commit()
 

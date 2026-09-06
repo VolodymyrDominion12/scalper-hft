@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from scalper_hft.api.auth import create_access_token, verify_token
+from scalper_hft.live.control import load_control, save_control
 from scalper_hft.visualization.ws_component import ws_live_monitor_component
-from scalper_hft.live.control import save_control, load_control
 
 
 def test_ws_component_callable():

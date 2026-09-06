@@ -85,7 +85,7 @@ class RegimeSupervisor(Strategy):
 
 
     @classmethod
-    def from_config(cls, config_path: str) -> "RegimeSupervisor":
+    def from_config(cls, config_path: str) -> RegimeSupervisor:
         from scalper_hft.live.supervisor_config import SupervisorConfig
         from scalper_hft.strategies import get_strategy
         
@@ -166,7 +166,6 @@ class RegimeSupervisor(Strategy):
         from scalper_hft.strategies.taxonomy import regime_capital_weight
 
         unfavorable = float(self.get("unfavorable_weight", DEFAULT_UNFAVORABLE_WEIGHT))
-        n = len(self._strats)
         result = pd.Series(0.0, index=sig_df.index)
 
         for i, (idx, row) in enumerate(sig_df.iterrows()):

@@ -2,7 +2,6 @@
 
 import pytest
 from fastapi.testclient import TestClient
-
 from scalper_hft.api.auth import create_access_token
 from scalper_hft.api.server import app
 from scalper_hft.live.control import load_control

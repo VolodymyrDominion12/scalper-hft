@@ -104,7 +104,9 @@ class Settings:
     # API
     api_host: str = field(default_factory=lambda: os.getenv("API_HOST", "0.0.0.0"))
     api_port: int = field(default_factory=lambda: _env_int("API_PORT", 8000))
-    api_secret_key: str = field(default_factory=lambda: os.getenv("API_SECRET_KEY", "scalper_dev_secret_key"))
+    api_secret_key: str = field(
+        default_factory=lambda: os.getenv("API_SECRET_KEY", "scalper_dev_secret_key_minimum_32_bytes_long_jwt")
+    )
 
     @property
     def postgres_conninfo(self) -> str:
@@ -120,6 +122,11 @@ class Settings:
     def slippage_frac(self) -> float:
         """Slippage як частка ціни (bps / 10_000)."""
         return self.slippage_bps / 10_000.0
+
+    @property
+    def slippage(self) -> float:
+        """Аліас для slippage_frac для сумісності з модулями бектесту."""
+        return self.slippage_frac
 
     def fee(self, is_maker: bool) -> float:
         return self.maker_fee if is_maker else self.taker_fee
@@ -147,6 +154,12 @@ def require_live_credentials(settings: Settings) -> None:
     secret = (settings.binance_api_secret or "").strip()
     if not key or not secret:
         raise RuntimeError("Live режим (DRY_RUN=false) потребує BINANCE_API_KEY і BINANCE_API_SECRET")
+
+
+def set_settings(settings: Settings) -> None:
+    """Оновити кешований синглтон Settings."""
+    global _settings
+    _settings = settings
 
 
 def get_settings() -> Settings:
