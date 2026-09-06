@@ -121,6 +121,35 @@ def test_regime_detector_step_basic(synthetic_close: pd.Series) -> None:
     assert state.label == f"{state.structure}|{state.vol}"
 
 
+def test_apply_min_dwell_suppresses_flapping() -> None:
+    """Гістерезис гасить фліпи A→B→A без підтвердження."""
+    from scalper_hft.features.regimes import apply_min_dwell
+
+    idx = pd.date_range("2025-01-01", periods=8, freq="1h")
+    flappy = pd.Series(["A", "B", "A", "B", "A", "B", "A", "B"], index=idx, dtype=object)
+    # min_dwell=1 — без змін (кожен фліп миттєвий)
+    assert list(apply_min_dwell(flappy, 1)) == list(flappy)
+    # min_dwell=2 — жоден B не тримається 2 бари підряд → лишаємось у A
+    assert list(apply_min_dwell(flappy, 2).unique()) == ["A"]
+    # підтверджений перехід: B,B після A → перемикаємось на 2-му барі B
+    series = pd.Series(["A", "A", "B", "B", "B", "A"], index=idx[:6], dtype=object)
+    out = apply_min_dwell(series, 2)
+    assert list(out) == ["A", "A", "A", "B", "B", "B"]
+
+
+def test_regime_detector_dwell_reduces_switches(synthetic_close: pd.Series) -> None:
+    """min_dwell_bars у детекторі не збільшує кількість змін структури."""
+    from scalper_hft.features.regime_detector import RegimeDetector
+
+    det0 = RegimeDetector(n_hmm_states=3, hmm_fit_bars=200, min_dwell_bars=0)
+    det4 = RegimeDetector(n_hmm_states=3, hmm_fit_bars=200, min_dwell_bars=4)
+    s0 = det0.detect(synthetic_close)["structure"]
+    s4 = det4.detect(synthetic_close)["structure"]
+    changes0 = int((s0 != s0.shift(1)).sum())
+    changes4 = int((s4 != s4.shift(1)).sum())
+    assert changes4 <= changes0, f"dwell мав би зменшити зміни: {changes4} > {changes0}"
+
+
 def test_regime_detector_step_fits_after_warmup(synthetic_close: pd.Series) -> None:
     """HMM автоматично навчається після hmm_fit_bars барів у step()."""
     from scalper_hft.features.regime_detector import RegimeDetector
@@ -228,7 +257,7 @@ def test_regime_supervisor_registry() -> None:
     assert sup.name == "regime_supervisor"
 
 
-@pytest.mark.parametrize("blend_mode", ["regime_soft", "contextual_hedge", "exp3"])
+@pytest.mark.parametrize("blend_mode", ["regime_soft", "contextual_hedge", "exp3", "best_prior"])
 def test_regime_supervisor_signals_shape(blend_mode: str, synthetic_df: pd.DataFrame) -> None:
     """generate_signals() повертає Series правильної форми для всіх blend_mode."""
     from scalper_hft.strategies import get_strategy
@@ -239,6 +268,7 @@ def test_regime_supervisor_signals_shape(blend_mode: str, synthetic_df: pd.DataF
         blend_mode=blend_mode,
         n_hmm_states=3,
         hmm_fit_bars=200,
+        min_dwell_bars=2,
     )
     sigs = sup.generate_signals(synthetic_df)
 
@@ -247,6 +277,9 @@ def test_regime_supervisor_signals_shape(blend_mode: str, synthetic_df: pd.DataF
     assert sigs.index.equals(synthetic_df.index)
     assert sigs.isna().sum() == 0, "Сигнали не мають містити NaN"
     assert (sigs >= -1.0).all() and (sigs <= 1.0).all(), "Сигнали мають бути в [-1, 1]"
+    if blend_mode == "best_prior":
+        uniq = set(sigs.dropna().unique())
+        assert uniq <= {-1.0, 0.0, 1.0}, "best_prior має повертати нативні сигнали {-1, 0, 1}"
 
 
 def test_regime_supervisor_no_lookahead(synthetic_df: pd.DataFrame) -> None:

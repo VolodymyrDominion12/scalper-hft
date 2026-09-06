@@ -49,6 +49,9 @@ class RegimeSupervisor(Strategy):
         unfavorable_weight: вага в несприятливому режимі для regime_soft (default 0.25).
         hedge_eta:          параметр швидкості навчання Hedge (default: адаптивний).
         exp3_gamma:         exploration rate для Exp3 (default 0.05).
+        min_dwell_bars:     гістерезис structure-режиму: новий режим приймається
+                            лише після N послідовних барів (default 0 = вимкнено).
+                            Зменшує churn ваг на фліпах range↔trend.
     """
 
     name = "regime_supervisor"
@@ -57,6 +60,7 @@ class RegimeSupervisor(Strategy):
     param_space: dict[str, tuple[float, float, float]] = {
         "hmm_fit_bars": (500.0, 5000.0, 500.0),
         "unfavorable_weight": (0.1, 0.5, 0.05),
+        "min_dwell_bars": (0.0, 12.0, 1.0),
     }
 
     def __init__(self, **params: Any) -> None:
@@ -76,6 +80,7 @@ class RegimeSupervisor(Strategy):
         self._detector = RegimeDetector(
             n_hmm_states=int(self.get("n_hmm_states", 3)),
             hmm_fit_bars=int(self.get("hmm_fit_bars", 2000)),
+            min_dwell_bars=int(self.get("min_dwell_bars", 0)),
         )
 
         # Стан онлайн-блендера НЕ кешується між викликами generate_signals:
@@ -131,8 +136,11 @@ class RegimeSupervisor(Strategy):
             1. Детектуємо режим для всього ряду (RegimeDetector.detect).
             2. Отримуємо сигнали від кожної суб-стратегії.
             3. Зважуємо за обраним blend_mode:
-               - regime_soft: static prior із taxonomy.
+               - regime_soft: static prior із taxonomy (зважена сума).
                - contextual_hedge: HedgeBlend per-regime (барне оновлення).
+               - best_prior: жорсткий вибір ОДНІЄЇ суб-стратегії з найвищим
+                 taxonomy-пріором у поточному режимі (ніякого дробового churn;
+                 «сутність перемикає стратегію за режимом»).
                - exp3: Exp3 вибирає одну стратегію per-bar.
         """
         if not self._strats:
@@ -147,6 +155,8 @@ class RegimeSupervisor(Strategy):
         # 3. Зважування
         if self.blend_mode == "regime_soft":
             return self._blend_regime_soft(sig_df, regime_df)
+        elif self.blend_mode == "best_prior":
+            return self._blend_best_prior(sig_df, regime_df)
         elif self.blend_mode == "exp3":
             return self._blend_exp3(sig_df, df["close"])
         else:  # contextual_hedge (default)
@@ -185,6 +195,48 @@ class RegimeSupervisor(Strategy):
                 result.iloc[i] = float(np.dot(row.values, weights / total_w))
 
         return result.clip(-1.0, 1.0)
+
+    def _blend_best_prior(self, sig_df: pd.DataFrame, regime_df: pd.DataFrame) -> pd.Series:
+        """Жорсткий вибір суб-стратегії за режимом (taxonomy prior).
+
+        На кожному барі обирається ОДНА суб-стратегія з найвищою вагою
+        regime_capital_weight у поточному (structure, vol)-режимі; повертається
+        її нативний сигнал {-1, 0, 1}. Перемикання відбувається лише коли
+        режим реально змінився (згладжений `min_dwell_bars` у детекторі) —
+        це і є «перемикання стратегії за типом ринку» без дробових позицій.
+        Тай-брейк: перша стратегія за порядком; стратегії з нульовим
+        пріором у режимі (вага = unfavorable × вага) — останні.
+        """
+        from scalper_hft.strategies.taxonomy import regime_capital_weight
+
+        unfavorable = float(self.get("unfavorable_weight", DEFAULT_UNFAVORABLE_WEIGHT))
+        n = len(sig_df)
+        out = np.zeros(n, dtype=float)
+        sigs = sig_df.values
+        w_rows: list[np.ndarray] = []
+        structures = regime_df.reindex(sig_df.index)["structure"].fillna("range").values
+        vols = regime_df.reindex(sig_df.index)["vol"].fillna("normal").values
+
+        for s in self._strats:
+            row_w = np.array(
+                [
+                    regime_capital_weight(
+                        frozenset(s.preferred_regimes),
+                        str(structures[t]),
+                        str(vols[t]),
+                        unfavorable=unfavorable,
+                    )
+                    for t in range(n)
+                ]
+            )
+            w_rows.append(row_w)
+        W = np.vstack(w_rows)  # (n_strats, n_bars)
+
+        for t in range(n):
+            best = int(np.argmax(W[:, t]))
+            out[t] = sigs[t, best]
+
+        return pd.Series(out, index=sig_df.index)
 
     def _blend_contextual_hedge(
         self,

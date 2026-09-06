@@ -89,9 +89,7 @@ def halt_if_drift(
     """У live: кинути KillSwitch при розходженні. Paper — no-op."""
     if dry_run:
         return
-    ok, reason = reconcile_positions(
-        account, parse_exchange_positions(raw_positions), scope=scope
-    )
+    ok, reason = reconcile_positions(account, parse_exchange_positions(raw_positions), scope=scope)
     if not ok:
         raise KillSwitch(reason)
 

@@ -1,5 +1,5 @@
 name: regime_supervisor
-version: "1.0"
+version: "1.1"
 status: candidate
 family: meta
 
@@ -9,7 +9,9 @@ hypothesis: >
   відповідності поточному режиму. Онлайн-адаптація ваг (ContextualHedgeBlend)
   швидше реагує на концепт-дрейф ніж статичне blending. Комбінований Sharpe
   перевищує будь-яку суб-стратегію у всіх режимах — не через кращий signal,
-  а через кращий режим-гейтинг.
+  а через кращий режим-гейтинг. Гістерезис структури (min_dwell_bars) і
+  жорсткий per-regime вибір (best_prior) зменшують churn ваг на фліпах
+  range↔trend (дослідження: min-dwell ріже режимний churn на ~68%).
 
 edge_conditions:
   - name: regime_detection_accuracy
@@ -20,6 +22,10 @@ edge_conditions:
     description: >
       ContextualHedgeBlend показує >= 10% вищий Sharpe vs рівних ваг (equal_weight)
       у >= 2 з 3 walk-forward вікон.
+  - name: dwell_reduces_turnover
+    description: >
+      min_dwell_bars>0 зменшує кількість змін режиму і turnover сигналу без
+      погіршення avg OOS Sharpe у walk-forward (порівняно з min_dwell_bars=0).
 
 # regime_supervisor використовує **kwargs — параметри передаються рядком.
 # Параметри задекларовані як документація, але НЕ перевіряються у param_space.
@@ -29,7 +35,7 @@ params_doc:
     description: Список суб-стратегій через кому (name:param1=val1:param2=val2).
   blend_mode:
     default: "contextual_hedge"
-    description: regime_soft | contextual_hedge | exp3
+    description: regime_soft | contextual_hedge | best_prior | exp3
   n_hmm_states:
     default: 3
     description: Кількість HMM-станів.
@@ -45,17 +51,28 @@ params_doc:
     max: 0.5
     step: 0.05
     description: Мінімальна вага суб-стратегії у несприятливому режимі.
+  min_dwell_bars:
+    default: 0
+    min: 0
+    max: 12
+    step: 1
+    description: >
+      Гістерезис structure-режиму: новий режим приймається лише після N
+      послідовних барів (0 = вимкнено). Зменшує churn ваг/стратегій на
+      фліпах range↔trend.
 
 invariants:
   no_lookahead: true
   signal_values: [-1, 0, 1]  # ціль після clip; мета-стратегія може повертати float
-  continuous_output_possible: true  # contextual_hedge повертає зважені float
+  continuous_output_possible: true  # regime_soft/contextual_hedge повертають float
   no_nan_output: true
 
 preferred_regimes: []
 
 notes: >
   RegimeSupervisor є розширеним EnsembleStrategy з явним RegimeDetector.
-  Три blend_mode: "regime_soft" (статичні ваги за taxonomy), "contextual_hedge"
-  (онлайн per-regime Hedge), "exp3" (Exp3Bandit — вибирає одну найкращу стратегію).
+  Чотири blend_mode: "regime_soft" (статичні ваги за taxonomy), "contextual_hedge"
+  (онлайн per-regime Hedge), "best_prior" (жорсткий вибір ОДНІЄЇ стратегії з
+  найвищим taxonomy-пріором у поточному режимі — нативний сигнал {-1,0,1}),
+  "exp3" (Exp3Bandit — вибирає одну найкращу стратегію).
   Потребує спільного аудиту з суб-стратегіями (тест: чи supervisor > best sub-strategy).

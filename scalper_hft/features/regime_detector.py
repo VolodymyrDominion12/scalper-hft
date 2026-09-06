@@ -34,6 +34,7 @@ import pandas as pd
 from scalper_hft.features.hmm_regime import GaussianHMM
 from scalper_hft.features.regimes import (
     DEFAULT_TREND_THRESHOLD,
+    apply_min_dwell,
     named_market_state,
 )
 
@@ -106,6 +107,10 @@ class RegimeDetector:
         vol_lookback:   вікно реалізованої волатильності в барах (default 60).
         vol_percentile_window: вікно для процентилю vol (default 500).
         hmm_seed:       seed для відтворюваності HMM (default 42).
+        min_dwell_bars: гістерезис структури: новий structure-режим приймається
+                        лише після N послідовних барів (default 0 = без змін).
+                        Зменшує regime churn для мета-стратегій (дослідження:
+                        min-dwell ~2 дні ріже churn на ~68%).
     """
 
     def __init__(
@@ -118,6 +123,7 @@ class RegimeDetector:
         vol_lookback: int = 60,
         vol_percentile_window: int = 500,
         hmm_seed: int = 42,
+        min_dwell_bars: int = 0,
     ) -> None:
         self.n_hmm_states = n_hmm_states
         self.hmm_fit_bars = hmm_fit_bars
@@ -127,6 +133,7 @@ class RegimeDetector:
         self.vol_lookback = vol_lookback
         self.vol_percentile_window = vol_percentile_window
         self.hmm_seed = hmm_seed
+        self.min_dwell_bars = int(min_dwell_bars)
 
         # Стан після fit()
         self._hmm: GaussianHMM | None = None
@@ -202,6 +209,11 @@ class RegimeDetector:
             vol_lookback=self.vol_lookback,
             vol_percentile_window=self.vol_percentile_window,
         )
+        # Гістерезис структури (опційний) — після формування label/vol:
+        # label перераховується під згладжену structure.
+        if self.min_dwell_bars > 0:
+            state_df["structure"] = apply_min_dwell(state_df["structure"], self.min_dwell_bars)
+            state_df["label"] = state_df["structure"].astype(str) + "|" + state_df["vol"].astype(str)
 
         # HMM filtered proba (без lookahead)
         hmm_cols: dict[str, pd.Series] = {}
@@ -361,6 +373,7 @@ class RegimeDetector:
                         "vol_lookback": self.vol_lookback,
                         "vol_percentile_window": self.vol_percentile_window,
                         "hmm_seed": self.hmm_seed,
+                        "min_dwell_bars": self.min_dwell_bars,
                     },
                 },
                 f,

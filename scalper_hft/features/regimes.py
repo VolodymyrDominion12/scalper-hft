@@ -100,6 +100,45 @@ def composite_regime_label(structure: pd.Series, vol: pd.Series) -> pd.Series:
     return structure.astype(str) + "|" + vol.astype(str)
 
 
+def apply_min_dwell(series: pd.Series, min_dwell: int) -> pd.Series:
+    """Гістерезис категоріального ряду: зміна значення приймається лише після
+    `min_dwell` послідовних барів нового значення.
+
+    Мета (дослідження: Krishhiv HMM_TR_Alg; Kiploks guide) — режимний churn:
+    без гістерезису швидкі фліпи range↔trend змушують мета-стратегію постійно
+    міняти ваги суб-стратегій (зайві комісії, втрата трендового edge).
+    Приклад: min_dwell=2 для 1h барів = перемикання щонайменше через 2 год
+    стабільного нового режиму. min_dwell=0 → оригінальний ряд без змін.
+    Каузальний: рішення на барі t використовує лише значення ≤ t.
+    """
+    if min_dwell <= 0 or len(series) < 2:
+        return series.copy()
+    vals = series.to_numpy()
+    out = np.empty(len(vals), dtype=object)
+    out[0] = vals[0]
+    cur = vals[0]
+    cand: object | None = None
+    run = 0
+    for i in range(1, len(vals)):
+        v = vals[i]
+        if v == cur:
+            cand = None
+            run = 0
+            out[i] = cur
+            continue
+        if cand is None or v != cand:
+            cand = v
+            run = 1
+        else:
+            run += 1
+        if run >= min_dwell:
+            cur = cand
+            cand = None
+            run = 0
+        out[i] = cur
+    return pd.Series(out, index=series.index, dtype=object)
+
+
 def named_market_state(
     close: pd.Series,
     *,
