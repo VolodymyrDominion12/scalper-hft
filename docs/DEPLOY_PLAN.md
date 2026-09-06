@@ -55,7 +55,7 @@ hotfix від running tag, drain між барами). Цей документ �
   `step` (`pause` / `no_new_entries` / `flatten` — flatten лише явний)
 - `scalper_hft/live/pairs_runner.py` — restore на `__init__`, save після успішного
   `step`, SIGTERM → save + вихід 0, daemon-цикл до наступного bar close
-- `scalper_hft/cli.py` — `paper-run-pairs --daemon` (ігнорує скінченні iterations)
+- `scalper_hft/cli/paper.py` — `paper-run-pairs --daemon` (ігнорує скінченні iterations)
 - `tests/test_store.py` / `tests/test_live.py` — restore після «рестарту» в тесті;
   control flag блокує entry, не exit
 

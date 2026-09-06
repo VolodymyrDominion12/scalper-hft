@@ -37,7 +37,7 @@ Research & Validation:
 | `mcp_trading.py` | MCP (Model Context Protocol) сервер для AI-асистентів | `mcp_trading.py` |
 | `research` | Sweep store, черга дослідницьких задач (SQLite + worker-процеси, без брокера) | `jobs.py`, `job_worker.py`, `job_handlers.py`, `sweep_store.py` |
 | `dashboard.py` | Streamlit аналітичний та моніторинговий дашборд | `dashboard.py` |
-| `cli.py` | Повний CLI-інтерфейс (30+ команд) | `cli.py` |
+| `cli/` | Повний CLI-інтерфейс (~40 команд), пакет за доменами | `cli/main.py`, `cli/research.py`, `cli/pairs.py`, `cli/paper.py`, `cli/ops.py` |
 
 ---
 

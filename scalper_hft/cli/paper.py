@@ -8,15 +8,16 @@ from pathlib import Path
 from scalper_hft.cli._common import (
     _plot_equity,
 )
-from scalper_hft.config import get_settings
 
 
 def cmd_paper(args: argparse.Namespace) -> None:
+    # call-time імпорт: тести патчать scalper_hft.config.get_settings
+    import scalper_hft.config as _cfg
     from scalper_hft.cli import _load_klines  # call-time (patchable)
     from scalper_hft.live.trader import LiveTrader, run_trader_once
     from scalper_hft.strategies import get_strategy
 
-    if not get_settings().dry_run:
+    if not _cfg.get_settings().dry_run:
         raise SystemExit(
             "paper — paper-only команда: при DRY_RUN=false відмова. Реальні ордери — лише через свідомий live-запуск."
         )
@@ -35,10 +36,12 @@ def cmd_paper(args: argparse.Namespace) -> None:
 
 def cmd_paper_run(args: argparse.Namespace) -> None:
     """Циклічний paper-прогін: кілька кроків з паузою, збереження угод."""
+    # call-time імпорт: тести патчать scalper_hft.config.get_settings
+    import scalper_hft.config as _cfg
     from scalper_hft.live.paper_runner import PaperRunner
     from scalper_hft.strategies import get_strategy
 
-    if not get_settings().dry_run:
+    if not _cfg.get_settings().dry_run:
         raise SystemExit(
             "paper-run — paper-only команда: при DRY_RUN=false відмова. "
             "Реальні ордери — лише через свідомий live-запуск."
