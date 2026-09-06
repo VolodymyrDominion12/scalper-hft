@@ -51,9 +51,32 @@ split = supertrend,cross_momentum,stoch_rsi (тренд vs рейндж за tax
 4. Це узгоджується з research: «спершу підтверди edge кожного sleeve, потім
    диверсифікуй»; на цьому таймфреймі підтвердженого напрямкового edge поки немає.
 
-## Експеримент 2 — режимні гейти (running)
+## Експеримент 2 — режимні гейти (завершено)
 sup (official/split) × (regime_soft/best_prior, dwell=3) × гейти {none, vhv, tdg, both},
-5 символів, maker. Результати: `results/iter2_gates.csv` (запущено).
+5 символів (XRP/AVAX/UNI/LINK/AAVE), maker, 365д WF. CSV: `results/iter2_gates.csv`.
+Середній по 5 символах avg OOS SR:
+
+| variant | base | vhv | tdg | both |
+|---|---|---|---|---|
+| official:regime_soft:d3 | −0.177 | −0.203 | −0.367 | −0.427 |
+| official:best_prior:d3 | −0.210 | −0.226 | −0.427 | −0.465 |
+| split:regime_soft:d3 | −0.120 | −0.138 | −0.230 | −0.326 |
+| split:best_prior:d3 | −0.285 | −0.317 | −0.436 | −0.480 |
+
+**Висновок 2:** гейти на 1h-структурі НЕ допомагають (vhv ≈ нейтральний-гірший,
+tdg/both суттєво гірші). Причина (див. діагностику): 1h EMA-структура запізнюється
+відносно старшого тренду, тож direction-gate ріже правильні лонги у хибних
+«trend_down»-мітках. Висновок підсилює ітерацію 3: напрямковий фільтр має жити
+на СТАРШОМУ ТФ.
+
+## Статус на кінець ітерації 2 (чесний)
+- Напрямковий 1h-шар (maker, без overlay) на alts НЕ має підтвердженого OOS edge:
+  найкращий single supertrend −0.027 avg (AAVE/LINK/UNI/XRP додатні), supervisor
+  не б'є свого кращого сингла; гейти не рятують.
+- Підтверджений позитивний напрямок у системі — pairs_arb 1h maker (relative value).
+- Наступний цикл (ітерація 3): multi-timeframe сутність (4h/1d тренд-фільтр +
+  1h режим), горизонти 4h/1d, per-symbol режимні профілі з OOS/DSR-валідацією
+  (n_trials = кількість перебраних (режим×стратегія×інструмент×ТФ) клітинок).
 
 ## Діагностика per-regime (maker, 365д, IS-орієнтовна)
 Повна таблиця: stdout jobs (XRPUSDT/AVAXUSDT/LINKUSDT/AAVEUSDT). Інсайти:

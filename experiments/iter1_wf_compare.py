@@ -64,6 +64,28 @@ def _variants() -> list[tuple[str, dict]]:
                         },
                     )
                 )
+    # Ітерація 2: режимні гейти (vol_high_veto / trend_direction_gate) на
+    # найбільш перспективних конфігураціях.
+    for cset, children in CHILDREN_SETS.items():
+        for mode in ("regime_soft", "best_prior"):
+            for dwell in (0, 3):
+                for tag, gates in (
+                    ("vhv", {"vol_high_veto": True}),
+                    ("tdg", {"trend_direction_gate": True}),
+                    ("both", {"vol_high_veto": True, "trend_direction_gate": True}),
+                ):
+                    v.append(
+                        (
+                            f"sup:{cset}:{mode}:d{dwell}:{tag}",
+                            {
+                                "name": "regime_supervisor",
+                                "children": children,
+                                "blend_mode": mode,
+                                "min_dwell_bars": dwell,
+                                **gates,
+                            },
+                        )
+                    )
     return v
 
 
@@ -79,6 +101,8 @@ def _build_strategy(variant: dict):
             min_dwell_bars=variant["min_dwell_bars"],
             n_hmm_states=3,
             hmm_fit_bars=2000,
+            vol_high_veto=variant.get("vol_high_veto", False),
+            trend_direction_gate=variant.get("trend_direction_gate", False),
         )
     return get_strategy(variant["name"])
 
