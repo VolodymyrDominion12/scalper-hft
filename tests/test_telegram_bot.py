@@ -16,6 +16,7 @@ import pandas as pd
 
 # ─── Хелпери ──────────────────────────────────────────────────────────────────
 
+
 def _make_update(chat_id: int = 123456789, text: str = "/status") -> MagicMock:
     """Створити мок telegram.Update з потрібним chat_id."""
     update = MagicMock()
@@ -44,14 +45,18 @@ def _make_server(
     store_path = tmp_path / "test_store.sqlite"
     control_path = tmp_path / "control.json"
 
-    with patch.dict(os.environ, {
-        "TELEGRAM_BOT_TOKEN": "test_token",
-        "TELEGRAM_CHAT_ID": "123456789",
-        "TELEGRAM_ALLOWED_CHAT_IDS": allowed_ids,
-        "TELEGRAM_BOT_PIN": pin,
-    }):
+    with patch.dict(
+        os.environ,
+        {
+            "TELEGRAM_BOT_TOKEN": "test_token",
+            "TELEGRAM_CHAT_ID": "123456789",
+            "TELEGRAM_ALLOWED_CHAT_IDS": allowed_ids,
+            "TELEGRAM_BOT_PIN": pin,
+        },
+    ):
         # Скинути синглтон щоб Settings перечиталась
         import scalper_hft.config as cfg_module
+
         cfg_module._settings = None
         server = TelegramBotServer(
             store_path=store_path,
@@ -68,17 +73,23 @@ def _run(coro: object) -> object:
 
 # ─── Тести whitelist ───────────────────────────────────────────────────────────
 
+
 def test_allowed_ids_from_env(tmp_path: Path) -> None:
     """TELEGRAM_ALLOWED_CHAT_IDS парсується правильно."""
-    with patch.dict(os.environ, {
-        "TELEGRAM_BOT_TOKEN": "t",
-        "TELEGRAM_CHAT_ID": "111",
-        "TELEGRAM_ALLOWED_CHAT_IDS": "222, 333",
-        "TELEGRAM_BOT_PIN": "",
-    }):
+    with patch.dict(
+        os.environ,
+        {
+            "TELEGRAM_BOT_TOKEN": "t",
+            "TELEGRAM_CHAT_ID": "111",
+            "TELEGRAM_ALLOWED_CHAT_IDS": "222, 333",
+            "TELEGRAM_BOT_PIN": "",
+        },
+    ):
         import scalper_hft.config as cfg_module
+
         cfg_module._settings = None
         from scalper_hft.live.telegram_bot import TelegramBotServer
+
         server = TelegramBotServer(tmp_path / "s.sqlite", tmp_path / "c.json")
         ids = server._allowed_ids()
         assert 111 in ids
@@ -96,21 +107,27 @@ def test_unknown_chat_id_rejected(tmp_path: Path) -> None:
 
 def test_empty_whitelist_rejects_all(tmp_path: Path) -> None:
     """Порожній whitelist → всі відхиляються."""
-    with patch.dict(os.environ, {
-        "TELEGRAM_BOT_TOKEN": "t",
-        "TELEGRAM_CHAT_ID": "",
-        "TELEGRAM_ALLOWED_CHAT_IDS": "",
-        "TELEGRAM_BOT_PIN": "",
-    }):
+    with patch.dict(
+        os.environ,
+        {
+            "TELEGRAM_BOT_TOKEN": "t",
+            "TELEGRAM_CHAT_ID": "",
+            "TELEGRAM_ALLOWED_CHAT_IDS": "",
+            "TELEGRAM_BOT_PIN": "",
+        },
+    ):
         import scalper_hft.config as cfg_module
+
         cfg_module._settings = None
         from scalper_hft.live.telegram_bot import TelegramBotServer
+
         server = TelegramBotServer(tmp_path / "s.sqlite", tmp_path / "c.json")
         assert not server._is_allowed(123456789)
         cfg_module._settings = None
 
 
 # ─── Тести PIN ─────────────────────────────────────────────────────────────────
+
 
 def test_check_pin_correct(tmp_path: Path) -> None:
     server = _make_server(tmp_path, pin="1234")
@@ -131,8 +148,10 @@ def test_check_pin_empty_disables(tmp_path: Path) -> None:
 
 # ─── Тести rate limiter ────────────────────────────────────────────────────────
 
+
 def test_rate_limiter_allows_under_limit() -> None:
     from scalper_hft.live.telegram_bot import _RateLimiter
+
     rl = _RateLimiter(max_calls=5, window_sec=60)
     for _ in range(5):
         assert rl.is_allowed(1)
@@ -140,6 +159,7 @@ def test_rate_limiter_allows_under_limit() -> None:
 
 def test_rate_limiter_blocks_over_limit() -> None:
     from scalper_hft.live.telegram_bot import _RateLimiter
+
     rl = _RateLimiter(max_calls=5, window_sec=60)
     for _ in range(5):
         rl.is_allowed(1)
@@ -149,14 +169,16 @@ def test_rate_limiter_blocks_over_limit() -> None:
 
 def test_rate_limiter_different_chats_independent() -> None:
     from scalper_hft.live.telegram_bot import _RateLimiter
+
     rl = _RateLimiter(max_calls=2, window_sec=60)
     rl.is_allowed(1)
     rl.is_allowed(1)
-    assert not rl.is_allowed(1)   # chat 1 заблокований
-    assert rl.is_allowed(2)       # chat 2 незалежний
+    assert not rl.is_allowed(1)  # chat 1 заблокований
+    assert rl.is_allowed(2)  # chat 2 незалежний
 
 
 # ─── Тести команд ─────────────────────────────────────────────────────────────
+
 
 def test_cmd_status_no_data(tmp_path: Path) -> None:
     """/status без даних → повідомлення 'Даних ще немає'."""
@@ -199,13 +221,19 @@ def test_cmd_trades_with_data(tmp_path: Path) -> None:
     server = _make_server(tmp_path)
     ts = pd.Timestamp.now(tz="UTC")
     for i in range(5):
-        server._store.log_trade(ts, "XRP/BTC", {
-            "symbol": "XRPUSDT", "side": "buy",
-            "size": 100.0, "entry_price": 0.5,
-            "exit_price": 0.51 if i % 2 == 0 else None,
-            "pnl": 1.0 if i % 2 == 0 else None,
-            "type": "trade",
-        })
+        server._store.log_trade(
+            ts,
+            "XRP/BTC",
+            {
+                "symbol": "XRPUSDT",
+                "side": "buy",
+                "size": 100.0,
+                "entry_price": 0.5,
+                "exit_price": 0.51 if i % 2 == 0 else None,
+                "pnl": 1.0 if i % 2 == 0 else None,
+                "type": "trade",
+            },
+        )
 
     update = _make_update(chat_id=123456789)
     ctx = _make_ctx(args=["3"])
@@ -279,16 +307,15 @@ def test_cmd_help_returns_text(tmp_path: Path) -> None:
 
 # ─── Тести нових push-функцій telegram.py ────────────────────────────────────
 
+
 def test_notify_regime_change_formats_text() -> None:
     """notify_regime_change формує текст без помилок."""
     from scalper_hft.live.telegram import notify_regime_change
+
     with patch("scalper_hft.live.telegram._creds", return_value=("tok", "123")):
         with patch("scalper_hft.live.telegram.requests.post") as mock_post:
             mock_post.return_value = MagicMock(status_code=200, json=lambda: {"ok": True})
-            notify_regime_change(
-                "BTCUSDT", "range", "trend_up",
-                weights={"supertrend": 0.45, "mean_reversion": 0.30}
-            )
+            notify_regime_change("BTCUSDT", "range", "trend_up", weights={"supertrend": 0.45, "mean_reversion": 0.30})
             assert mock_post.called
             payload = mock_post.call_args[1]["json"]["text"]
             assert "BTCUSDT" in payload
@@ -298,6 +325,7 @@ def test_notify_regime_change_formats_text() -> None:
 def test_notify_heartbeat_formats_text() -> None:
     """notify_heartbeat формує текст без помилок."""
     from scalper_hft.live.telegram import notify_heartbeat
+
     with patch("scalper_hft.live.telegram._creds", return_value=("tok", "123")):
         with patch("scalper_hft.live.telegram.requests.post") as mock_post:
             mock_post.return_value = MagicMock(status_code=200, json=lambda: {"ok": True})
@@ -311,6 +339,7 @@ def test_notify_heartbeat_formats_text() -> None:
 def test_notify_risk_block_formats_text() -> None:
     """notify_risk_block формує текст без помилок."""
     from scalper_hft.live.telegram import notify_risk_block
+
     with patch("scalper_hft.live.telegram._creds", return_value=("tok", "123")):
         with patch("scalper_hft.live.telegram.requests.post") as mock_post:
             mock_post.return_value = MagicMock(status_code=200, json=lambda: {"ok": True})
@@ -321,8 +350,8 @@ def test_notify_risk_block_formats_text() -> None:
             assert "8.5" in payload
 
 
-
 # ─── Інтеграційний тест: control.json взаємодія ───────────────────────────────
+
 
 def test_write_and_read_control(tmp_path: Path) -> None:
     """_write_control + _read_control — round-trip."""

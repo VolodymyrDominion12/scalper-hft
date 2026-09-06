@@ -56,7 +56,6 @@ def test_user_data_stream_custom_backoff():
     assert stream.backoff is custom_backoff
 
 
-
 def test_parse_order_trade_update():
     payload = {
         "e": "ORDER_TRADE_UPDATE",
@@ -192,6 +191,5 @@ def test_user_data_stream_handles_bytes_and_non_dict() -> None:
     ev_str = stream.handle_raw_message('"pong"')
     assert ev_str is None
 
-    ev_bytes_num = stream.handle_raw_message(b'123')
+    ev_bytes_num = stream.handle_raw_message(b"123")
     assert ev_bytes_num is None
-

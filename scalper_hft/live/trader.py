@@ -31,6 +31,7 @@ from scalper_hft.backtest.execution import CostModel
 from scalper_hft.config import get_settings, require_live_credentials
 from scalper_hft.data.client import ExchangeClient
 from scalper_hft.live.account import PaperAccount
+from scalper_hft.live.control import ControlState, load_control
 from scalper_hft.live.exit_ladders import OneWayTradingLadder
 from scalper_hft.live.risk_gate import CooldownState, decide_entry
 from scalper_hft.live.ws_user_stream import BinanceUserDataStream, OrderTradeEvent
@@ -52,6 +53,19 @@ def _interval_seconds(interval: str) -> float:
     num = int(interval[:-1])
     per_unit = {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
     return float(num * per_unit)
+
+
+def _is_duplicate_order_id(exc: Exception) -> bool:
+    """Чи є виняток помилкою 'такий clientOrderId вже існує' (ccxt/Binance -4116)."""
+    try:
+        import ccxt
+
+        if isinstance(exc, ccxt.DuplicateOrderId):
+            return True
+    except ImportError:
+        pass
+    msg = str(exc).lower()
+    return "duplicate" in msg and "order" in msg
 
 
 def closed_klines(
@@ -217,6 +231,8 @@ class LiveTrader:
         self._entry_size_mult = 1.0
         # C2: live maker-ордери, що ще не заповнились (clientOrderId → PendingOrder)
         self.pending_orders: dict[str, PendingOrder] = {}
+        # Ідемпотентність submit: намір → coid, що пережив таймаут (retry з тим самим id)
+        self._intent_coids: dict[str, str] = {}
         self._last_market_fill_price: float | None = None
         # M4: live-базис equity з біржі (замість фіктивного депозиту)
         self._live_equity_seeded = False
@@ -532,10 +548,16 @@ class LiveTrader:
         params: dict = {}
         if reduce_only:
             params["reduceOnly"] = True
-        try:
-            from scalper_hft.live.orders import next_client_order_id
+        from scalper_hft.live.orders import next_client_order_id
 
-            coid = next_client_order_id("sh")
+        # Ідемпотентність retry: намір (symbol/side/kind/reduceOnly) тримає свій
+        # coid після таймауту. Повторна відправка йде з ТИМ САМИМ id — біржа
+        # дедуплікує (DuplicateOrderId), а ми відновлюємо існуючий ордер
+        # замість розміщення дубля. Персистентність між рестартами процесу
+        # забезпечує reconcile з біржею (KillSwitch при розбіжності).
+        intent = f"{self.symbol}:{side}:{kind}:{int(reduce_only)}"
+        coid = self._intent_coids.get(intent) or next_client_order_id("sh")
+        try:
             if self.settings.maker_execution:
                 resp = self.client.create_order(
                     self.symbol,
@@ -547,6 +569,7 @@ class LiveTrader:
                     post_only=True,
                     client_order_id=coid,
                 )
+                self._intent_coids.pop(intent, None)
                 oid = str((resp or {}).get("id") or coid)
                 self.pending_orders[coid] = PendingOrder(
                     client_order_id=coid,
@@ -562,10 +585,25 @@ class LiveTrader:
                 )
                 return True, "pending"
             resp = self.client.create_order(self.symbol, "market", side, size, params=params, client_order_id=coid)
+            self._intent_coids.pop(intent, None)
             fill_px = float((resp or {}).get("average") or (resp or {}).get("price") or price)
             self._last_market_fill_price = fill_px
             return True, "filled"
         except Exception as exc:
+            if _is_duplicate_order_id(exc):
+                status = self._recover_duplicate_intent(
+                    intent,
+                    coid,
+                    side=side,
+                    size=size,
+                    price=price,
+                    reduce_only=reduce_only,
+                    kind=kind,
+                    pos_side=pos_side,
+                )
+                if status is not None:
+                    return True, status
+            self._intent_coids[intent] = coid  # наступний retry — з тим самим id
             logger.error(
                 "Ордер відхилено (стан рахунку не змінено): %s %s %s reduce_only=%s err=%s",
                 side,
@@ -575,6 +613,55 @@ class LiveTrader:
                 exc,
             )
             return False, "failed"
+
+    def _recover_duplicate_intent(
+        self,
+        intent: str,
+        coid: str,
+        *,
+        side: str,
+        size: float,
+        price: float,
+        reduce_only: bool,
+        kind: str,
+        pos_side: str,
+    ) -> str | None:
+        """Ордер з цим coid уже існує на біржі (минулий таймаут після accept).
+
+        Знаходимо його серед відкритих і реєструємо локально замість дубля.
+        Якщо серед відкритих немає — уже заповнений/скасований: розбіжність
+        підхопить reconcile (fail-closed). None — відновлення не вдалося.
+        """
+        fetch_open = getattr(self.client, "fetch_open_orders", None)
+        if not callable(fetch_open):
+            return None
+        try:
+            open_orders = fetch_open(self.symbol) or []
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("recover %s: fetch_open_orders помилка: %s", coid, exc)
+            return None
+        for o in open_orders:
+            if str((o or {}).get("clientOrderId") or "") != coid:
+                continue
+            oid = str(o.get("id") or coid)
+            self.pending_orders[coid] = PendingOrder(
+                client_order_id=coid,
+                order_id=oid,
+                symbol=self.symbol,
+                side=side,
+                size=float(o.get("amount") or size),
+                price=float(o.get("price") or price),
+                reduce_only=reduce_only,
+                kind=kind,
+                pos_side=pos_side,
+                placed_ts=pd.Timestamp.now(tz="UTC").tz_localize(None),
+            )
+            self._intent_coids.pop(intent, None)
+            logger.warning("Відновлено існуючий ордер %s замість дубля (id=%s)", coid, oid)
+            return "pending"
+        self._intent_coids.pop(intent, None)
+        logger.warning("Дубль %s не серед відкритих (заповнений/скасований) — звірка підхопить", coid)
+        return None
 
     def _cancel_pending(self, po: PendingOrder, reason: str = "") -> None:
         """Скасувати resting-ордер на біржі та прибрати з журналу (best effort)."""
@@ -903,8 +990,10 @@ def execute_signal(
         if have != 0:
             parts.append(trader.execute(TradeDecision("close", trader.symbol, 0.0, "реверс"), close, ts))
             trader.ladder = None
+        if block_new_entries:
+            parts.append("blocked:no_new_entries")
         # HMM-режимний блок: нові входи лише у «спокійному» стані
-        if trader.hmm_blocked(closed):
+        elif trader.hmm_blocked(closed):
             parts.append("blocked:hmm_regime")
         else:
             base_size = trader.settings.position_pct * trader.account.equity / close
@@ -920,10 +1009,17 @@ def execute_signal(
     return " | ".join(parts)
 
 
-def run_trader_once(trader: LiveTrader, df: pd.DataFrame, now: pd.Timestamp | None = None) -> str:
-    """Один крок циклу: філи live maker-ордерів → звірка (live) → сигнал на
-    закритому барі → виконання за close.
+def run_trader_once(
+    trader: LiveTrader,
+    df: pd.DataFrame,
+    now: pd.Timestamp | None = None,
+    control: ControlState | None = None,
+) -> str:
+    """Один крок циклу: control plane → філи live maker-ордерів → звірка
+    (live) → сигнал на закритому барі → виконання за close.
 
+    Control plane (control.json): pause — повний стоп кроку; flatten —
+    примусовий сигнал 0 (закриття); no_new_entries — лише закриття.
     Poll ПЕРЕД звіркою: щойно заповнені ордери одразу відображаються в
     локальному рахунку, тож звірка з біржею не дає хибний KillSwitch.
     Live: перед сигналом синхронізуємо РЕАЛЬНИЙ equity біржі (M4), щоб
@@ -931,9 +1027,14 @@ def run_trader_once(trader: LiveTrader, df: pd.DataFrame, now: pd.Timestamp | No
     """
     from scalper_hft.live.reconcile import reconcile_exchange_state
 
+    ctrl = control if control is not None else load_control(trader.control_path)
+    if ctrl.pause:
+        return "hold:paused"
     trader.poll_pending_orders(now=now)
     reconcile_exchange_state(trader.account, trader.client, dry_run=trader.settings.dry_run)
     if not trader.settings.dry_run:
         trader.sync_live_equity(now=now)
     signal = trader.compute_signal(df, now=now)
-    return execute_signal(trader, signal, df, now=now)
+    if ctrl.flatten:
+        signal = 0
+    return execute_signal(trader, signal, df, now=now, block_new_entries=ctrl.no_new_entries)

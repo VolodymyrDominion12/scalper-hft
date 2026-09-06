@@ -47,6 +47,9 @@ class WalkForwardResult:
     positive_windows_frac: float
     degradation: float
     details: dict = field(default_factory=dict)
+    # Конкатеновані OOS бар-дохідності (лише якщо collect_oos_returns=True) —
+    # для чесного DSR/PBO на OOS, без IS-забруднення повної вибірки.
+    oos_returns: pd.Series | None = None
 
     def summary(self) -> str:
         lines = [
@@ -94,13 +97,19 @@ def run_walk_forward(
     overlay: CellPolicy | None = None,
     interval: str = "1m",
     is_maker: bool = False,
+    collect_oos_returns: bool = False,
 ) -> WalkForwardResult:
     """Walk-forward: параметри фіксовані (або оптимізовані вручну зовні),
-    стратегія оцінюється на кожному OOS вікні."""
+    стратегія оцінюється на кожному OOS вікні.
+
+    collect_oos_returns: зібрати конкатеновані OOS бар-дохідності у
+    результат (для DSR/PBO на OOS без IS-забруднення).
+    """
     if len(df) < train_bars + test_bars:
         raise ValueError(f"Дані ({len(df)}) коротші за train+test ({train_bars + test_bars})")
 
     windows: list[WalkForwardWindow] = []
+    oos_ret_parts: list[pd.Series] = []
     idx = 0
     start = 0
     while start + train_bars + test_bars <= len(df):
@@ -153,6 +162,8 @@ def run_walk_forward(
                 n_trades=res_oos.metrics.n_trades,
             )
         )
+        if collect_oos_returns:
+            oos_ret_parts.append(res_oos.equity.pct_change().fillna(0.0))
         idx += 1
         start += test_bars  # крок = розмір OOS (non-overlapping)
 
@@ -171,4 +182,5 @@ def run_walk_forward(
         positive_windows_frac=positive,
         degradation=degradation,
         details={"train_bars": train_bars, "test_bars": test_bars},
+        oos_returns=pd.concat(oos_ret_parts).sort_index() if collect_oos_returns else None,
     )

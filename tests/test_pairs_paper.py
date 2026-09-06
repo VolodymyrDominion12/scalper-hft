@@ -216,4 +216,3 @@ def test_paper_loop_cleanup_on_stop():
     )
     assert len(on_stop_called) == 1
     assert "step_action" in res.actions
-

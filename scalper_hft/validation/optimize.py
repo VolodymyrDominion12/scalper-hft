@@ -46,6 +46,21 @@ class OptimizationResult:
         )
 
 
+def _effective_purge(space: dict, purge: int | None) -> int:
+    """Purge для CV: явний аргумент або з найдовшого горизонту в param_space.
+
+    Параметри виду holding_bars/lookback/period задають горизонт, протягом
+    якого лейбл/позиція може заходити у сусіднє вікно.
+    """
+    if purge is not None:
+        return int(purge)
+    horizon_hi = 0
+    for pname, (lo, hi, _step) in space.items():
+        if any(k in pname for k in ("holding", "lookback", "period", "window", "horizon")):
+            horizon_hi = max(horizon_hi, int(hi))
+    return max(50, horizon_hi)
+
+
 def _default_objective(
     df: pd.DataFrame,
     strategy_cls: type[Strategy],
@@ -56,16 +71,21 @@ def _default_objective(
     n_splits: int,
     embargo: int,
     position_pct: float,
+    purge: int = 50,
 ) -> float:
-    """Середній Sharpe по purged K-fold на OOS-зрізах."""
+    """Середній Sharpe по purged K-fold на OOS-зрізах.
+
+    trades/funding ріжуться за ЧАСОМ test-вікна (їхній індекс — час подій,
+    не позиції барів); purge — з максимального горизонту лейблів/утримання.
+    """
     oos_sharpes: list[float] = []
-    for _train_idx, test_idx in purged_kfold_indices(len(df), n_splits, purge=50, embargo=embargo):
+    for _train_idx, test_idx in purged_kfold_indices(len(df), n_splits, purge=purge, embargo=embargo):
         te = df.iloc[test_idx]
-        trades_tr = trades.iloc[_train_idx] if trades is not None else None
-        funding_tr = _slice_funding(funding, te.index[0], te.index[-1]) if funding is not None else None
+        trades_te = _slice_funding(trades, te.index[0], te.index[-1]) if trades is not None else None
+        funding_te = _slice_funding(funding, te.index[0], te.index[-1]) if funding is not None else None
         try:
             res = run_backtest(
-                te, strategy_cls(**params), cost=cost, trades=trades_tr, funding=funding_tr, position_pct=position_pct
+                te, strategy_cls(**params), cost=cost, trades=trades_te, funding=funding_te, position_pct=position_pct
             )
             sharpe = res.metrics.sharpe
         except Exception:  # noqa: BLE001
@@ -77,7 +97,7 @@ def _default_objective(
 
 
 def _slice_funding(funding: pd.DataFrame, t0: pd.Timestamp, t1: pd.Timestamp) -> pd.DataFrame:
-    """Зріз funding за часовим вікном (індекс funding ≠ індекс барів)."""
+    """Часовий зріз [t0, t1] для рядів з власним індексом (funding, aggTrades)."""
     mask = (funding.index >= t0) & (funding.index <= t1)
     return funding[mask]
 
@@ -93,10 +113,14 @@ def optimize_params(
     embargo: int = 30,
     position_pct: float = 0.01,
     sampler: str = "tpe",
+    purge: int | None = None,
 ) -> OptimizationResult:
     """Оптимізація параметрів з param_space стратегії.
 
     sampler: 'tpe' (байєсівський) або 'random'.
+    purge: барів purge на межі train/test у CV. None → max(50, верхня межа
+        holding_bars/lookback-параметрів з param_space) — purge має покривати
+        найдовший горизонт лейбла/утримання серед усіх trial-ів.
     """
     if not _HAS_OPTUNA:
         raise ImportError("Встановіть optuna: uv add --optional optim optuna")
@@ -104,6 +128,7 @@ def optimize_params(
     cost = cost or CostModel()
     strategy_cls = type(strategy)
     space = strategy.param_space
+    purge_eff = _effective_purge(space, purge)
 
     def objective(trial: optuna.Trial) -> float:
         params: dict = {}
@@ -113,7 +138,9 @@ def optimize_params(
                 params[pname] = trial.suggest_int(pname, int(lo), int(hi))
             else:
                 params[pname] = trial.suggest_float(pname, float(lo), float(hi))
-        return _default_objective(df, strategy_cls, params, cost, trades, funding, n_splits, embargo, position_pct)
+        return _default_objective(
+            df, strategy_cls, params, cost, trades, funding, n_splits, embargo, position_pct, purge=purge_eff
+        )
 
     study = optuna.create_study(
         direction="maximize",
@@ -124,9 +151,10 @@ def optimize_params(
     # CV-оцінки найкращого варіанта (перезапуск objective з фіксованими параметрами)
     cv_scores: list[float] = []
     if study.best_params:
-        for train_idx, test_idx in purged_kfold_indices(len(df), n_splits, purge=50, embargo=embargo):
+        for train_idx, test_idx in purged_kfold_indices(len(df), n_splits, purge=purge_eff, embargo=embargo):
             te = df.iloc[test_idx]
-            trades_te = trades.iloc[test_idx] if trades is not None else None
+            # часові зрізи: індекс trades/funding ≠ позиції барів
+            trades_te = _slice_funding(trades, te.index[0], te.index[-1]) if trades is not None else None
             funding_te = _slice_funding(funding, te.index[0], te.index[-1]) if funding is not None else None
             try:
                 res = run_backtest(
@@ -198,7 +226,6 @@ def optimize_ml_params(
         raise ImportError("Встановіть lightgbm: uv add --optional ml lightgbm") from e
 
     from scalper_hft.ml.features import build_labeled_dataset
-    from scalper_hft.ml.labeling import label_from_ohlcv
     from scalper_hft.validation.cv import PurgedKFold
 
     pkf = PurgedKFold(n_splits=n_splits, embargo_pct=embargo_pct)
@@ -209,7 +236,7 @@ def optimize_ml_params(
         holding_bars = trial.suggest_int("holding_bars", 5, 30, step=5)
 
         try:
-            X, y, w = build_labeled_dataset(
+            X, y, w, t1 = build_labeled_dataset(
                 df=df,
                 trades=trades,
                 mode="triple_barrier",
@@ -219,16 +246,13 @@ def optimize_ml_params(
                 decay=decay,
                 frac_d=frac_d,
                 add_frac_diff=add_frac_diff,
+                return_t1=True,
             )
         except ValueError:
             return -1.0 if scoring == "accuracy" else -10.0
 
         if len(X) < n_splits * 30:
             return -1.0 if scoring == "accuracy" else -10.0
-
-        # t1 для PurgedKFold purging
-        events = label_from_ohlcv(df, pt=pt, sl=sl, holding_bars=holding_bars)
-        t1 = events.loc[events.index.intersection(X.index), "t1"]
 
         model = LGBMClassifier(
             n_estimators=100,
@@ -263,7 +287,7 @@ def optimize_ml_params(
     cv_scores: list[float] = []
     if study.best_params:
         try:
-            X_best, y_best, w_best = build_labeled_dataset(
+            X_best, y_best, w_best, t1_best = build_labeled_dataset(
                 df=df,
                 trades=trades,
                 mode="triple_barrier",
@@ -273,16 +297,8 @@ def optimize_ml_params(
                 decay=decay,
                 frac_d=frac_d,
                 add_frac_diff=add_frac_diff,
+                return_t1=True,
             )
-            from scalper_hft.ml.labeling import label_from_ohlcv as _lfo
-
-            ev = _lfo(
-                df,
-                pt=study.best_params["pt"],
-                sl=study.best_params["sl"],
-                holding_bars=study.best_params["holding_bars"],
-            )
-            t1_best = ev.loc[ev.index.intersection(X_best.index), "t1"]
 
             model_final = LGBMClassifier(
                 n_estimators=200,

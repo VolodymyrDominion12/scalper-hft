@@ -133,8 +133,7 @@ def migrate(
     for i, (sym, iv) in enumerate(all_klines, start=1):
         path = klines_path(out_dir, sym, iv)
         if path.exists() and not overwrite:
-            logger.info("[%d/%d] klines %s %s: вже є (%s) — пропускаю",
-                        i, len(all_klines), sym, iv, path.name)
+            logger.info("[%d/%d] klines %s %s: вже є (%s) — пропускаю", i, len(all_klines), sym, iv, path.name)
             skipped_klines += 1
             continue
 
@@ -163,8 +162,7 @@ def migrate(
         for i, sym in enumerate(all_symbols, start=1):
             path = trades_path(out_dir, sym)
             if path.exists() and not overwrite:
-                logger.info("[%d/%d] aggTrades %s: вже є (%s) — пропускаю",
-                            i, len(all_symbols), sym, path.name)
+                logger.info("[%d/%d] aggTrades %s: вже є (%s) — пропускаю", i, len(all_symbols), sym, path.name)
                 continue
 
             logger.info("[%d/%d] aggTrades %s: читаю з Postgres...", i, len(all_symbols), sym)
@@ -188,8 +186,7 @@ def migrate(
         for i, sym in enumerate(all_symbols, start=1):
             path = funding_path(out_dir, sym)
             if path.exists() and not overwrite:
-                logger.info("[%d/%d] funding %s: вже є (%s) — пропускаю",
-                            i, len(all_symbols), sym, path.name)
+                logger.info("[%d/%d] funding %s: вже є (%s) — пропускаю", i, len(all_symbols), sym, path.name)
                 continue
 
             logger.info("[%d/%d] funding %s: читаю з Postgres...", i, len(all_symbols), sym)
@@ -223,10 +220,7 @@ def migrate(
         logger.info("  DATA_BACKEND=parquet   (замість postgres)")
         logger.info("")
         logger.info("Після цього:")
-        logger.info(
-            "  uv run python -m scalper_hft.cli download "
-            "--symbol BTCUSDT --interval 1m --days 7"
-        )
+        logger.info("  uv run python -m scalper_hft.cli download --symbol BTCUSDT --interval 1m --days 7")
         logger.info("  -> побачиш: 'кеш покрито — нічого докачувати'")
 
     return stats
@@ -238,27 +232,33 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument(
-        "--symbol", default=None,
+        "--symbol",
+        default=None,
         help="Символи через кому (за замовч. — всі з Postgres). Приклад: BTCUSDT,ETHUSDT",
     )
     p.add_argument(
-        "--overwrite", action="store_true",
+        "--overwrite",
+        action="store_true",
         help="Перезаписати вже наявні Parquet-файли",
     )
     p.add_argument(
-        "--skip-trades", action="store_true",
+        "--skip-trades",
+        action="store_true",
         help="Не мігрувати aggTrades (великі таблиці)",
     )
     p.add_argument(
-        "--skip-funding", action="store_true",
+        "--skip-funding",
+        action="store_true",
         help="Не мігрувати funding rates",
     )
     p.add_argument(
-        "--data-dir", default=None,
+        "--data-dir",
+        default=None,
         help="Директорія для Parquet (за замовч. DATA_DIR з .env)",
     )
     p.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Показати план міграції без запису файлів",
     )
     return p.parse_args(argv)
@@ -266,10 +266,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
-    symbols = (
-        [s.strip().upper() for s in args.symbol.split(",") if s.strip()]
-        if args.symbol else None
-    )
+    symbols = [s.strip().upper() for s in args.symbol.split(",") if s.strip()] if args.symbol else None
     data_dir = Path(args.data_dir) if args.data_dir else None
 
     migrate(

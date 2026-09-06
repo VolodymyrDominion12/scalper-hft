@@ -43,20 +43,21 @@ description: >-
 import pandas as pd
 import numpy as np
 
+
 def generate_signals(self, df: pd.DataFrame, trades: pd.DataFrame | None = None) -> pd.Series:
     sig = pd.Series(np.nan, index=df.index, dtype=float)
-    
+
     # Умови входу
     sig[entry_long] = 1.0
     sig[entry_short] = -1.0
-    
+
     # Позиція на попередньому барі
     prev_pos = sig.ffill().shift(1).fillna(0.0)
-    
+
     # Умови виходу тільки з активної відповідної позиції
     sig[(prev_pos == 1.0) & exit_long_cond] = 0.0
     sig[(prev_pos == -1.0) & exit_short_cond] = 0.0
-    
+
     # Заповнюємо стан утримання і повертаємо цілі числа
     return sig.ffill().fillna(0.0).astype(int)
 ```

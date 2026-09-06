@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from scalper_hft.features.indicators import add_standard_features, cvd_from_trades
@@ -136,7 +137,8 @@ def build_labeled_dataset(
     cusum_threshold: float = 0.005,
     bar_type: str = "time",
     bar_threshold: float = 100_000.0,
-) -> tuple[pd.DataFrame, pd.Series, pd.Series | None]:
+    return_t1: bool = False,
+) -> tuple[pd.DataFrame, pd.Series, pd.Series | None] | tuple[pd.DataFrame, pd.Series, pd.Series | None, pd.Series]:
     """Будує (X, y, sample_weights) для ML навчання.
 
     Args:
@@ -158,10 +160,11 @@ def build_labeled_dataset(
         hmm_states: кількість HMM-станів (якщо add_hmm).
 
     Returns:
-        (X, y, w):
+        (X, y, w) або (X, y, w, t1) при return_t1=True:
             X — матриця фіч (pd.DataFrame)
             y — лейбли {-1, +1} (pd.Series)
             w — sample_weights (pd.Series або None для 'horizon' режиму)
+            t1 — час завершення лейбла кожного зразка (для AFML purge у CV/WF)
     """
     if holding_bars is None:
         holding_bars = horizon
@@ -188,7 +191,7 @@ def build_labeled_dataset(
     )
 
     if mode == "triple_barrier":
-        return _build_triple_barrier(
+        X, y, w, t1 = _build_triple_barrier(
             df=df,
             f=f,
             pt=pt,
@@ -200,9 +203,12 @@ def build_labeled_dataset(
             cusum_threshold=cusum_threshold,
         )
     elif mode == "horizon":
-        return _build_horizon(df=df, f=f, horizon=horizon, noise_threshold=noise_threshold)
+        X, y, w, t1 = _build_horizon(df=df, f=f, horizon=horizon, noise_threshold=noise_threshold)
     else:
         raise ValueError(f"mode має бути 'triple_barrier' або 'horizon', отримано: {mode!r}")
+    if return_t1:
+        return X, y, w, t1
+    return X, y, w
 
 
 # ── Triple Barrier (AFML) ────────────────────────────────────────────────────
@@ -218,7 +224,7 @@ def _build_triple_barrier(
     decay: float,
     event_filter: str = "all",
     cusum_threshold: float = 0.005,
-) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
+) -> tuple[pd.DataFrame, pd.Series, pd.Series, pd.Series]:
     close = df["close"]
     events = label_from_ohlcv(
         df,
@@ -248,12 +254,14 @@ def _build_triple_barrier(
     X = X.loc[common]
     y = events.loc[common, "label"].astype(int)
     w = w.reindex(common).fillna(0.0)
+    # t1 (час завершення лейбла) — для AFML purge у walk-forward/CV
+    t1 = events.loc[common, "t1"]
 
     # нормалізуємо ваги до [0, 1]
     if w.sum() > 0:
         w = w / w.sum()
 
-    return X, y, w
+    return X, y, w, t1
 
 
 # ── Horizon (legacy) ─────────────────────────────────────────────────────────
@@ -264,7 +272,7 @@ def _build_horizon(
     f: pd.DataFrame,
     horizon: int,
     noise_threshold: float,
-) -> tuple[pd.DataFrame, pd.Series, None]:
+) -> tuple[pd.DataFrame, pd.Series, None, pd.Series]:
     close = df["close"]
     fwd = close.shift(-horizon) / close - 1.0
     y = pd.Series(0, index=df.index, dtype=int)
@@ -275,7 +283,10 @@ def _build_horizon(
     X = f[feat_cols].iloc[:-horizon]
     y = y.iloc[:-horizon]
     mask = y != 0
-    return X[mask], y[mask], None
+    # t1: бар, на якому завершується forward-горизонт (для purge)
+    pos = np.arange(len(df) - horizon) + horizon
+    t1 = pd.Series(df.index[pos], index=df.index[:-horizon])
+    return X[mask], y[mask], None, t1.reindex(X[mask].index)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

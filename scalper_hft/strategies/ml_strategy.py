@@ -121,9 +121,9 @@ class MLStrategy(Strategy):
         add_garch = bool(self.get("add_garch", False))
         hmm_states = int(self.get("hmm_states", 3))
 
-        # Будуємо labeled dataset
+        # Будуємо labeled dataset (з t1 для AFML purge у walk-forward)
         try:
-            X, y, w = build_labeled_dataset(
+            X, y, w, t1 = build_labeled_dataset(
                 df=df,
                 trades=trades,
                 mode="triple_barrier",
@@ -136,6 +136,7 @@ class MLStrategy(Strategy):
                 add_hmm=add_hmm,
                 add_garch=add_garch,
                 hmm_states=hmm_states,
+                return_t1=True,
             )
         except ValueError as e:
             logger.warning("MLStrategy: %s — повертаю нульові сигнали", e)
@@ -157,6 +158,7 @@ class MLStrategy(Strategy):
                 train_size=train_bars,
                 test_size=test_bars,
                 sample_weights=w,
+                t1=t1,
             )
             size = meta_size(p_meta.values) * meta_scale
             signals = side.astype(float) * size
@@ -169,6 +171,7 @@ class MLStrategy(Strategy):
                 test_size=test_bars,
                 sample_weights=w,
                 close=df["close"],
+                t1=t1,
             )
             side = result.predictions  # {-1, +1} на OOS-індексах
             p_side = result.probabilities  # P(клас +1)

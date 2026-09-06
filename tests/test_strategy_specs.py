@@ -93,6 +93,7 @@ def make_pair_ohlcv(n: int = 600, seed: int = 42) -> pd.DataFrame:
 
 # ── Phase 1: Валідація схеми ──────────────────────────────────────────────
 
+
 @pytest.mark.parametrize("name,spec", ALL_SPECS, ids=SPEC_IDS)
 def test_spec_schema_valid(name: str, spec: dict[str, Any]) -> None:
     """Кожна специфікація відповідає _schema.yaml."""
@@ -105,6 +106,7 @@ def test_spec_schema_valid(name: str, spec: dict[str, Any]) -> None:
 
 
 # ── Phase 2: Відповідність реєстру ────────────────────────────────────────
+
 
 @pytest.mark.parametrize("name,spec", ALL_SPECS, ids=SPEC_IDS)
 def test_spec_name_in_registry(name: str, spec: dict[str, Any]) -> None:
@@ -130,9 +132,7 @@ def test_spec_family_matches_class(name: str, spec: dict[str, Any]) -> None:
     cls = REGISTRY[spec_name]
     spec_family = spec.get("family", "")
     assert cls.family == spec_family, (
-        f"{spec_name}: spec.family='{spec_family}', "
-        f"але {cls.__name__}.family='{cls.family}'. "
-        f"Оновіть spec або клас."
+        f"{spec_name}: spec.family='{spec_family}', але {cls.__name__}.family='{cls.family}'. Оновіть spec або клас."
     )
 
 
@@ -157,6 +157,7 @@ def test_spec_preferred_regimes_match_class(name: str, spec: dict[str, Any]) -> 
 
 
 # ── Phase 3: Param space consistency ─────────────────────────────────────
+
 
 @pytest.mark.parametrize("name,spec", ALL_SPECS, ids=SPEC_IDS)
 def test_spec_params_in_param_space(name: str, spec: dict[str, Any]) -> None:
@@ -187,8 +188,11 @@ def test_spec_params_in_param_space(name: str, spec: dict[str, Any]) -> None:
     try:
         sig = inspect.signature(cls.__init__)
         init_params = {
-            p for p, v in sig.parameters.items()
-            if p != "self" and v.kind not in (
+            p
+            for p, v in sig.parameters.items()
+            if p != "self"
+            and v.kind
+            not in (
                 inspect.Parameter.VAR_POSITIONAL,
                 inspect.Parameter.VAR_KEYWORD,
             )
@@ -212,6 +216,7 @@ def test_spec_params_in_param_space(name: str, spec: dict[str, Any]) -> None:
 
 
 # ── Phase 4: Behavioral assertions ────────────────────────────────────────
+
 
 def _get_validated_or_candidate(specs: list[tuple[str, dict]]) -> list[tuple[str, dict]]:
     """Фільтрує лише validated та candidate стратегії для behavioral тестів."""
@@ -260,8 +265,7 @@ def test_signals_domain(name: str, spec: dict[str, Any]) -> None:
     actual_values = set(signals.dropna().unique())
     invalid = actual_values - valid_values
     assert not invalid, (
-        f"{spec_name}: generate_signals() повернув неочікувані значення {invalid}. "
-        f"Дозволені: {valid_values}"
+        f"{spec_name}: generate_signals() повернув неочікувані значення {invalid}. Дозволені: {valid_values}"
     )
 
 
@@ -292,8 +296,7 @@ def test_no_nan_output(name: str, spec: dict[str, Any]) -> None:
 
     nan_count = signals.isna().sum()
     assert nan_count == 0, (
-        f"{spec_name}: generate_signals() повернув {nan_count} NaN значень. "
-        f"Spec гарантує no_nan_output: true."
+        f"{spec_name}: generate_signals() повернув {nan_count} NaN значень. Spec гарантує no_nan_output: true."
     )
 
 
@@ -311,9 +314,7 @@ def test_no_lookahead(name: str, spec: dict[str, Any]) -> None:
         pytest.skip(f"'{spec_name}' відсутній у REGISTRY")
 
     invariants = spec.get("invariants") or {}
-    assert invariants.get("no_lookahead", False), (
-        f"{spec_name}: spec.invariants.no_lookahead має бути true"
-    )
+    assert invariants.get("no_lookahead", False), f"{spec_name}: spec.invariants.no_lookahead має бути true"
 
     cls = REGISTRY[spec_name]
     strategy = cls()
@@ -378,13 +379,11 @@ def test_signals_length_matches_df(name: str, spec: dict[str, Any]) -> None:
     except Exception as exc:  # noqa: BLE001
         pytest.skip(f"{spec_name}: generate_signals() кинув виняток: {exc}")
 
-    assert len(signals) == len(df), (
-        f"{spec_name}: signals має {len(signals)} елементів, "
-        f"очікується {len(df)} (як df)."
-    )
+    assert len(signals) == len(df), f"{spec_name}: signals має {len(signals)} елементів, очікується {len(df)} (як df)."
 
 
 # ── Phase 5: Spec coverage (registry vs specs) ────────────────────────────
+
 
 def test_all_registry_strategies_have_spec() -> None:
     """Кожна стратегія з REGISTRY має spec у specs/strategies/."""

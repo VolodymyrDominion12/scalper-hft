@@ -1,13 +1,14 @@
 """Combinatorial Purged Cross-Validation (CSCV) та PBO (López de Prado).
 
 Повна методологія оцінки імовірності перенавчання (Probability of Backtest
-Overfitting): замість одного train/test — ВСІ комбінації блоків:
+Overfitting, Bailey–Borwein–López de Prado–Zhu): замість одного train/test —
+ВСІ комбінації блоків:
     - ряди прибутковостей розбиваються на N блоків;
     - для кожної комбінації N/2 блоків як "train" обчислюється, який варіант
       стратегії найкращий на train;
-    - той самий варіант оцінюється на комплементарних (OOS) блоках;
-    - PBO = частка комбінацій, де IS-кращий варіант на OOS гірший за медіану
-      всіх варіантів (або нижчий за поріг).
+    - OOS-ранг IS-кращого варіанта серед усіх варіантів ЦЬОГО Ж спліту
+      переводиться у logit λ_c;
+    - PBO = частка комбінацій з λ_c < 0 (IS-кращий нижче медіани OOS).
 
 Вхід: матриця прибутковостей (S варіантів × N спостережень) — кожен рядок —
 результат однієї комбінації параметрів на одному часовому ряду.
@@ -35,6 +36,7 @@ class CscvResult:
     n_blocks: int
     is_best_oos_sharpes: np.ndarray
     oos_sharpe_median: float
+    logits: np.ndarray = field(default_factory=lambda: np.array([]))
     details: dict = field(default_factory=dict)
 
     def summary(self) -> str:
@@ -119,14 +121,30 @@ def pbo_cscv(
     n_train_blocks: int | None = None,
     threshold: float = 0.0,
     max_combos: int = 200,
+    purge_bars: int = 0,
+    embargo_bars: int = 0,
 ) -> CscvResult:
-    """PBO за методом CSCV.
+    """PBO за методом CSCV (Bailey, Borwein, López de Prado, Zhu).
+
+    Для кожної комбінації train/test блоків:
+      1. IS-кращий варіант n* = argmax Sharpe на train-блоках;
+      2. ω_c — зростаючий ранг OOS Sharpe варіанта n* серед OOS Sharpe УСІХ
+         варіантів цього ж спліту, нормований на (S+1): ω→1, коли IS-кращий
+         також OOS-кращий;
+      3. λ_c = logit(ω_c); λ_c < 0 ⟺ IS-кращий нижче медіани OOS.
+
+    PBO = частка комбінацій з λ_c < 0.
 
     strategy_returns: (S × N) — кожен рядок — прибутковості варіанта стратегії
     на спільному часовому ряду (однакові дати по колонках).
-    threshold: поріг "хорошого" OOS Sharpe (0 за замовч.).
+    threshold: лише для details["frac_below_threshold"] (частка IS-кращих
+        OOS Sharpe нижче порога); на PBO не впливає.
     max_combos: обмеження кількості комбінацій (при великих C(n,k)).
+    purge_bars: скільки барів ПЕРЕД кожним test-блоком викинути з train
+        (overlap лейблів/фіч); embargo_bars — скільки барів ПІСЛЯ test-блоку.
     """
+    from scipy.stats import rankdata
+
     arr = np.asarray(strategy_returns, dtype=float)
     if arr.ndim != 2:
         raise ValueError("strategy_returns має бути (S × N)")
@@ -144,10 +162,20 @@ def pbo_cscv(
     block_idx = np.arange(n) // block_size
     block_idx = np.minimum(block_idx, n_blocks - 1)
 
-    is_best_oos = []
+    is_best_oos: list[float] = []
+    logits: list[float] = []
     for train_blocks, test_blocks in splits:
         train_mask = np.isin(block_idx, train_blocks)
         test_mask = np.isin(block_idx, test_blocks)
+        if purge_bars > 0 or embargo_bars > 0:
+            # межі train↔test: purge перед test-блоком, embargo після нього
+            for b in test_blocks:
+                b_start = int(b) * block_size
+                b_end = min((int(b) + 1) * block_size, n)
+                if purge_bars > 0:
+                    train_mask[max(0, b_start - purge_bars) : b_start] = False
+                if embargo_bars > 0:
+                    train_mask[b_end : min(n, b_end + embargo_bars)] = False
         if train_mask.sum() == 0 or test_mask.sum() == 0:
             continue
         # IS Sharpe по кожному варіанту
@@ -155,8 +183,15 @@ def pbo_cscv(
         if np.all(np.isnan(is_sharpes)):
             continue
         best_i = int(np.nanargmax(is_sharpes))
-        oos_sharpe = _sharpe(arr[best_i, test_mask])
-        is_best_oos.append(oos_sharpe)
+        # OOS Sharpe УСІХ варіантів → відносний ранг IS-кращого.
+        # Зростаючий ранг (1 = найгірший OOS, S = найкращий): ω→1, коли
+        # IS-кращий також OOS-кращий; ω<0.5 (λ<0) — нижче медіани OOS.
+        oos_sharpes = np.array([_sharpe(arr[i, test_mask]) for i in range(s)])
+        ranks = rankdata(oos_sharpes, method="average")
+        omega = float(ranks[best_i]) / (s + 1.0)
+        omega = min(max(omega, 1e-9), 1.0 - 1e-9)
+        logits.append(float(np.log(omega / (1.0 - omega))))
+        is_best_oos.append(float(oos_sharpes[best_i]))
 
     if not is_best_oos:
         return CscvResult(
@@ -169,11 +204,9 @@ def pbo_cscv(
         )
 
     oos_arr = np.array(is_best_oos)
+    logits_arr = np.array(logits)
     median = float(np.median(oos_arr))
-    # PBO: частка комбінацій, де IS-кращий гірший за медіану або нижче порогу
-    pbo = (
-        float(np.mean(oos_arr < min(median, threshold))) if median > threshold else float(np.mean(oos_arr < threshold))
-    )
+    pbo = float(np.mean(logits_arr < 0.0))
     return CscvResult(
         pbo=pbo,
         n_combos=len(oos_arr),
@@ -181,4 +214,6 @@ def pbo_cscv(
         n_blocks=n_blocks,
         is_best_oos_sharpes=oos_arr,
         oos_sharpe_median=median,
+        logits=logits_arr,
+        details={"frac_below_threshold": float(np.mean(oos_arr < threshold))},
     )

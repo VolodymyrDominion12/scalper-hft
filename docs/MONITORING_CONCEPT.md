@@ -106,10 +106,11 @@ SUPPORTED_EXCHANGES = {
 ```python
 # scalper_hft/data/client.py (додати підтримку exchange=)
 
+
 def fetch_klines(
     symbol: str,
     interval: str,
-    exchange: str = "binance",    # ← новий параметр
+    exchange: str = "binance",  # ← новий параметр
     days: int = 90,
     use_cache: bool = True,
 ) -> pd.DataFrame:
@@ -239,17 +240,18 @@ CREATE TABLE IF NOT EXISTS bots (
 ```python
 # scalper_hft/live/sync_engine.py  ← НОВИЙ
 
+
 class SyncEngine:
     """Синхронізує локальний TradeStore з реальною біржею."""
-    
+
     def sync_account(self, exchange: str) -> None:
         """Оновити баланс, маржу і PnL."""
         ...
-    
+
     def sync_positions(self, exchange: str) -> None:
         """Зрівняти відкриті позиції. KillSwitch якщо drift."""
         ...
-    
+
     def sync_fills(self, exchange: str) -> None:
         """Завантажити нові заповнення через REST або WS."""
         ...
@@ -303,18 +305,17 @@ class SyncEngine:
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
+
 class TelegramBotServer:
     """Async Telegram Bot для управління та моніторингу."""
-    
-    def __init__(self, store: UnifiedTradeStore, token: str,
-                 allowed_chat_ids: list[int]):
+
+    def __init__(self, store: UnifiedTradeStore, token: str, allowed_chat_ids: list[int]):
         self.store = store
         self.allowed_chat_ids = allowed_chat_ids  # whitelist security
         self.app = Application.builder().token(token).build()
         self._register_handlers()
-    
-    async def cmd_status(self, update: Update,
-                         ctx: ContextTypes.DEFAULT_TYPE) -> None:
+
+    async def cmd_status(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_allowed(update):
             return
         account = self.store.latest_account()
@@ -358,11 +359,12 @@ dashboard.py (точка входу, захищена паролем)
 import hashlib, secrets
 import streamlit as st
 
+
 def check_password() -> bool:
     """Захист паролем з session tokens."""
     if "auth_token" in st.session_state:
         return _validate_token(st.session_state["auth_token"])
-    
+
     with st.form("login"):
         pwd = st.text_input("Пароль", type="password")
         if st.form_submit_button("Увійти"):
@@ -384,20 +386,21 @@ DASHBOARD_PASSWORD_HASH=bcrypt_hash  # у .env
 ```python
 # scalper_hft/app_pages/multi_exchange.py
 
+
 def render_multi_exchange() -> None:
     exchanges = st.multiselect("Біржі", ["binance", "bybit", "okx"])
     symbol = st.text_input("Символ", "BTCUSDT")
     interval = st.selectbox("Таймфрейм", ["1m", "5m", "15m", "1h", "4h"])
-    
+
     # Порівняльний графік цін (Plotly subplots)
     dfs = {ex: load_klines(ex, symbol, interval) for ex in exchanges}
     fig = plot_price_comparison(dfs)
     st.plotly_chart(fig)
-    
+
     # Funding rate comparison
     fig2 = plot_funding_rates(exchanges, symbol)
     st.plotly_chart(fig2)
-    
+
     # Correlation matrix між біржами
     render_correlation_heatmap(dfs)
 ```
@@ -409,21 +412,22 @@ def render_multi_exchange() -> None:
 ```python
 # scalper_hft/api/server.py
 
+
 @app.get("/api/v1/account/{exchange}")
-async def get_account(exchange: str, token: str = Depends(verify_token)):
-    ...
+async def get_account(exchange: str, token: str = Depends(verify_token)): ...
+
 
 @app.get("/api/v1/positions")
-async def get_positions(exchange: str | None = None):
-    ...
+async def get_positions(exchange: str | None = None): ...
+
 
 @app.get("/api/v1/trades")
-async def get_trades(limit: int = 50, exchange: str | None = None):
-    ...
+async def get_trades(limit: int = 50, exchange: str | None = None): ...
+
 
 @app.post("/api/v1/bots/{bot_id}/pause")
-async def pause_bot(bot_id: str, token: str = Depends(verify_token)):
-    ...
+async def pause_bot(bot_id: str, token: str = Depends(verify_token)): ...
+
 
 @app.websocket("/ws/live")
 async def websocket_live(websocket: WebSocket):
@@ -447,6 +451,7 @@ async def websocket_live(websocket: WebSocket):
 ```python
 # scalper_hft/data/cache_manager.py
 
+
 class CacheManager:
     def get_klines(self, exchange: str, symbol: str, interval: str) -> pd.DataFrame:
         """
@@ -455,9 +460,8 @@ class CacheManager:
         3. Повертає DataFrame.
         """
         ...
-    
-    def invalidate_if_stale(self, max_age_hours: int = 2) -> None:
-        ...
+
+    def invalidate_if_stale(self, max_age_hours: int = 2) -> None: ...
 ```
 
 ---

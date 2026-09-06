@@ -1,8 +1,9 @@
-"""Аудит однієї комірки (стратегія × символ × ТФ): WF + sensitivity + DSR.
+"""Аудит однієї комірки (стратегія × символ × ТФ): WF + sensitivity + DSR (+ CSCV).
 
 Критерії PASS — overfitting-audit skill:
-    avg_oos_sharpe > 0.3, oos_pos_frac >= 0.5, DSR > 0.95,
-    smoothness > 0.30, n_trades >= поріг таймфрейму.
+    avg_oos_sharpe > 0.3, oos_pos_frac >= 0.5, DSR > 0.95 (на OOS-вікнах),
+    smoothness > 0.30 (сітка на OOS-регіоні), n_trades_oos >= поріг таймфрейму,
+    PBO < 0.5 (якщо CSCV запущено — with_cscv=True).
 """
 
 from __future__ import annotations
@@ -39,7 +40,9 @@ OOS_SHARPE_MIN = 0.3
 OOS_POS_FRAC_MIN = 0.5
 DSR_MIN = 0.95
 SMOOTHNESS_MIN = 0.30
+PBO_MAX = 0.5
 DSR_BACKTESTS_PER_COMBO = 50
+CSCV_VARIANTS = 20  # варіантів параметрів для PBO у audit_cell (with_cscv=True)
 
 _SUMMARY_KEYS = (
     "symbol",
@@ -59,6 +62,7 @@ _SUMMARY_KEYS = (
     "sens_error",
     "dsr",
     "n_trials_dsr",
+    "pbo",
     "bt_total_return",
     "bt_sharpe",
     "bt_max_dd",
@@ -151,6 +155,7 @@ class CellAudit:
     sens_error: str | None = None
     dsr: float | None = None
     n_trials_dsr: int | None = None
+    pbo: float | None = None  # CSCV PBO (лише якщо audit_cell з with_cscv=True)
     bt_total_return: float | None = None
     bt_sharpe: float | None = None
     bt_max_dd: float | None = None
@@ -195,6 +200,7 @@ class CellAudit:
             sens_error=str(raw["sens_error"]) if raw.get("sens_error") else None,
             dsr=_as_float(raw.get("dsr")),
             n_trials_dsr=_as_int(raw.get("n_trials_dsr")),
+            pbo=_as_float(raw.get("pbo")),
             bt_total_return=_as_float(raw.get("bt_total_return")),
             bt_sharpe=_as_float(raw.get("bt_sharpe")),
             bt_max_dd=_as_float(raw.get("bt_max_dd")),
@@ -233,11 +239,18 @@ def cell_verdict(audit: CellAudit | Mapping[str, Any]) -> tuple[VerdictLabel, st
         shown = "nan" if sm is None else f"{sm:.2f}"
         reasons.append(f"smoothness={shown}≤{SMOOTHNESS_MIN}")
 
-    nt = _as_int(row.get("bt_n_trades"))
+    # Гейт на OOS-активність (не full-sample бектест): комірка не може
+    # пройти з "тонкою" OOS-торгівлею
+    nt = _as_int(row.get("n_trades_oos"))
     min_nt = min_trades_for(interval)
     if nt is None or nt < min_nt:
         shown = "nan" if nt is None else str(nt)
-        reasons.append(f"n_trades={shown}<{min_nt}")
+        reasons.append(f"n_trades_oos={shown}<{min_nt}")
+
+    # PBO перевіряється лише якщо CSCV дійсно запускався (pbo is not None)
+    pbo = _as_float(row.get("pbo"))
+    if pbo is not None and pbo > PBO_MAX:
+        reasons.append(f"PBO={pbo:.2f}>{PBO_MAX}")
 
     if not reasons:
         return "PASS", ""
@@ -252,8 +265,16 @@ def audit_cell(
     *,
     train_bars: int | None = None,
     test_bars: int | None = None,
+    with_cscv: bool = False,
+    strategy_params: dict[str, Any] | None = None,
 ) -> CellAudit:
-    """Повний аудит комірки. Помилки даних/рахунку — status=error, без raise."""
+    """Повний аудит комірки. Помилки даних/рахунку — status=error, без raise.
+
+    with_cscv: додатково рахувати CSCV PBO (~CSCV_VARIANTS додаткових
+    бектестів — дорого для матричних прогонів, вмикати для фінального
+    вердикту комірки, напр. CLI `overfit`).
+    strategy_params: параметри конструктора стратегії (напр. use_kalman).
+    """
     from scalper_hft.backtest.engine import run_backtest
     from scalper_hft.backtest.execution import CostModel
     from scalper_hft.config import get_settings
@@ -271,7 +292,7 @@ def audit_cell(
             taker_fee=settings.taker_fee,
             slippage_frac=settings.slippage_frac,
         )
-        strategy = get_strategy(strategy_name)
+        strategy = get_strategy(strategy_name, **(strategy_params or {}))
         df = ensure_klines(symbol, interval, days)
         if df is None or df.empty:
             return CellAudit(
@@ -298,8 +319,15 @@ def audit_cell(
             trades=trades,
             funding=funding,
             position_pct=settings.position_pct,
+            collect_oos_returns=True,
         )
         windows = tuple(_window_to_dict(w) for w in wf.windows)
+
+        # Sensitivity на OOS-регіоні (від початку першого test-вікна):
+        # сітка на повній історії забруднена IS-частиною
+        df_oos = df.iloc[wf.windows[0].test_start :] if wf.windows else df
+        if len(df_oos) < 200:
+            df_oos = df
 
         smoothness: float | None = None
         sens_n = 0
@@ -314,7 +342,7 @@ def audit_cell(
             n_vals = min(int((float(hi) - float(lo)) / step_f) + 1, 15)
             values = [float(lo) + i * step_f for i in range(max(n_vals, 2))][:15]
             try:
-                sres = parameter_sensitivity(df, strategy, pname, values, cost=cost, trades=trades, funding=funding)
+                sres = parameter_sensitivity(df_oos, strategy, pname, values, cost=cost, trades=trades, funding=funding)
                 smoothness = float(sres.smoothness)
                 if smoothness != smoothness:
                     smoothness = None
@@ -335,7 +363,9 @@ def audit_cell(
         m = res_full.metrics
         dsr: float | None = None
         n_trials: int | None = None
-        ret = res_full.equity.pct_change().dropna()
+        # DSR на конкатенованих OOS-дохідностях walk-forward (не full-sample
+        # equity — та забруднена IS-вікнами і завищує DSR)
+        ret = wf.oos_returns.dropna() if wf.oos_returns is not None else pd.Series(dtype=float)
         if len(ret) >= 2:
             combos = 1
             for _lo, _hi, _s in ps.values():
@@ -344,6 +374,25 @@ def audit_cell(
             combos = min(max(combos, 1), 100_000)
             n_trials = int(estimate_n_trials(param_combinations=combos, backtests_per_combo=DSR_BACKTESTS_PER_COMBO))
             dsr = float(deflated_sharpe_ratio(ret.to_numpy(dtype=float), n_trials=n_trials))
+
+        # CSCV PBO (опційно): чи не є IS-кращий варіант перенавченим
+        pbo: float | None = None
+        if with_cscv and ps:
+            from scalper_hft.validation.cscv import pbo_cscv, variant_returns
+
+            try:
+                vr = variant_returns(
+                    df,
+                    strategy,
+                    n_variants=CSCV_VARIANTS,
+                    cost=cost,
+                    trades=trades,
+                    funding=funding,
+                    position_pct=settings.position_pct,
+                )
+                pbo = float(pbo_cscv(vr, n_blocks=8).pbo)
+            except Exception:  # noqa: BLE001
+                pbo = None
 
         return CellAudit(
             symbol=symbol,
@@ -362,6 +411,7 @@ def audit_cell(
             sens_error=sens_error,
             dsr=dsr,
             n_trials_dsr=n_trials,
+            pbo=pbo,
             bt_total_return=float(m.total_return),
             bt_sharpe=float(m.sharpe),
             bt_max_dd=float(m.max_drawdown),

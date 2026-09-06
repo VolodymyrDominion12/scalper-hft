@@ -18,7 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from scalper_hft.live.ws_urls import KEEPALIVE_INTERVAL_SEC, private_user_stream_url
+from scalper_hft.live.ws_urls import KEEPALIVE_INTERVAL_SEC, mask_listen_key, private_user_stream_url
 
 logger = logging.getLogger(__name__)
 

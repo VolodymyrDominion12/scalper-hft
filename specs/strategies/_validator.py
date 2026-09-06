@@ -43,8 +43,8 @@ VALID_SIGNAL_VALUES = frozenset({-1, 0, 1})
 REQUIRED_BY_STATUS: dict[str, list[str]] = {
     "validated": ["name", "version", "status", "family", "hypothesis", "edge_conditions", "params", "invariants"],
     "candidate": ["name", "version", "status", "family", "hypothesis", "params", "invariants"],
-    "pending":   ["name", "version", "status", "family", "hypothesis"],
-    "rejected":  ["name", "version", "status", "family", "rejection_reason"],
+    "pending": ["name", "version", "status", "family", "hypothesis"],
+    "rejected": ["name", "version", "status", "family", "rejection_reason"],
 }
 
 MIN_EDGE_CONDITIONS: dict[str, int] = {
@@ -104,7 +104,6 @@ def validate_spec(spec: dict[str, Any], *, path: str = "<unknown>") -> list[str]
             continue
         if field not in spec:
             errors.append(f"[{ctx}] status='{status}' вимагає поле '{field}'")
-
 
     # ── 4. Перевірка edge_conditions ─────────────────────────────────────
     min_ec = MIN_EDGE_CONDITIONS.get(status, 0)
@@ -170,9 +169,7 @@ def validate_spec(spec: dict[str, Any], *, path: str = "<unknown>") -> list[str]
     if path != "<unknown>":
         file_stem = Path(path).stem
         if not file_stem.startswith("_") and spec.get("name") != file_stem:
-            errors.append(
-                f"[{ctx}] spec.name='{spec.get('name')}' не збігається з назвою файлу '{file_stem}.yaml'"
-            )
+            errors.append(f"[{ctx}] spec.name='{spec.get('name')}' не збігається з назвою файлу '{file_stem}.yaml'")
 
     return errors
 

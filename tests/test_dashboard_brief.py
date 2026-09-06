@@ -197,7 +197,6 @@ def test_sweep_highlights_handles_object_dtype_and_all_none_oos() -> None:
     assert top.iloc[1]["strategy"] == "mean_reversion"
 
 
-
 def test_strategy_book_pairs_arb_validated() -> None:
     assert lane_for("pairs_arb") == "validated"
     assert lane_for("mean_reversion") == "rejected"

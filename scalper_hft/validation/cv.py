@@ -44,8 +44,8 @@ def purged_kfold_indices(
 ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
     """K-fold з purging (видалення перекриття train/test) та embargo.
 
-    purge: скільки рядків на межі train/test викинути з train.
-    embargo: додатковий буфер після test (для ковзних індикаторів).
+    purge: скільки рядків ПЕРЕД test викинути з train (overlap лейблів, AFML).
+    embargo: буфер ПІСЛЯ test (серіальна кореляція у post-test train, AFML).
     """
     indices = np.arange(n)
     fold_size = n // n_splits
@@ -53,7 +53,7 @@ def purged_kfold_indices(
         test_start = k * fold_size
         test_end = min(test_start + fold_size, n)
         test = indices[test_start:test_end]
-        train = np.concatenate([indices[: max(0, test_start - purge - embargo)], indices[test_end + embargo :]])
+        train = np.concatenate([indices[: max(0, test_start - purge)], indices[test_end + embargo :]])
         if len(train) == 0:
             continue
         yield train, test

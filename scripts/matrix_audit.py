@@ -278,12 +278,14 @@ def stage_report() -> str:
             nt = r.get("bt_n_trades")
             ret = r.get("bt_total_return")
             sh = r.get("bt_sharpe")
+
             def fmt(x, d=2, suf=""):
                 if suf == "s":
                     return f"{x:+.3f}"
                 if suf == "pct":
                     return f"{x:+.2%}"
                 return f"{x:.0f}" if x is not None and pd.notna(x) else "-"
+
             lines.append(
                 f"| {r['symbol']} | {r['interval']} | {r['strategy']} | **{v}** | "
                 f"{fmt(oos, suf='s')} | {fmt(frac, suf='pct') if frac is not None and pd.notna(frac) else '-'} | "

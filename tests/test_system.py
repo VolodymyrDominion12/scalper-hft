@@ -205,6 +205,53 @@ def test_combinatorial_splits_cover_all():
         assert len(tr) == 3 and len(te) == 3
 
 
+def test_cscv_pbo_exact_rank_math():
+    """Точне визначення Bailey–López de Prado: λ_c = logit(ω_c), де ω_c —
+    зростаючий ранг OOS IS-кращого серед усіх варіантів спліту; PBO = P(λ<0)."""
+    import numpy as np
+    from scalper_hft.validation.cscv import pbo_cscv
+
+    rng = np.random.default_rng(3)
+    # 3 варіанти × 20 барів (2 блоки по 10). Спільний шум (однакова std у
+    # всіх варіантів) → ранги Sharpe = ранги дрейфів, детерміновано.
+    # Блок 0: A>B>C; блок 1: C>B>A.
+    noise = rng.normal(0, 1e-4, 20)
+    rets = np.tile(noise, (3, 1))
+    rets[0, :10] += 0.03
+    rets[1, :10] += 0.02
+    rets[2, :10] += 0.01
+    rets[0, 10:] += -0.03
+    rets[1, 10:] += 0.02
+    rets[2, 10:] += 0.03
+
+    res = pbo_cscv(rets, n_blocks=2, n_train_blocks=1)
+    assert res.n_combos == 2
+    # у обох сплітах IS-кращий — найгірший OOS → ω=1/4 → λ<0 → PBO=1
+    assert res.pbo == 1.0
+    assert (res.logits < 0).all()
+
+    # однаковий порядок варіантів у обох блоках → IS-кращий = OOS-кращий
+    cons = np.tile(noise, (3, 1))
+    cons[0] += 0.03
+    cons[1] += 0.02
+    cons[2] += 0.01
+    res2 = pbo_cscv(cons, n_blocks=2, n_train_blocks=1)
+    assert res2.pbo == 0.0
+    assert (res2.logits > 0).all()
+
+
+def test_cscv_purge_embargo_empty_train():
+    """purge+embargo ≥ розміру блоку → train-маска порожня → комбо пропускається."""
+    import numpy as np
+    from scalper_hft.validation.cscv import pbo_cscv
+
+    rng = np.random.default_rng(5)
+    rets = rng.normal(0, 0.01, (3, 20))
+    res = pbo_cscv(rets, n_blocks=2, n_train_blocks=1, purge_bars=10, embargo_bars=10)
+    assert res.n_combos == 0
+    assert res.pbo == 1.0  # fail-closed: без валідних комбо — PBO максимальний
+
+
 def test_utc_now_helper():
     """_utc_now має повертати naive UTC (збігається з індексами кешу)."""
     from scalper_hft.data.downloader import _utc_now

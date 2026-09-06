@@ -186,20 +186,32 @@ CREATE TABLE IF NOT EXISTS schema_version (version INTEGER);
 
 **Нові методи `PaperStore`:**
 ```python
-def log_account(self, ts, exchange: str, mode: str,
-                balance: float, unrealized_pnl: float,
-                margin_used: float, available: float) -> None: ...
+def log_account(
+    self, ts, exchange: str, mode: str, balance: float, unrealized_pnl: float, margin_used: float, available: float
+) -> None: ...
 
-def log_position(self, ts, exchange: str, symbol: str,
-                 side: str, size: float, entry_price: float,
-                 mark_price: float | None, unrealized_pnl: float | None,
-                 mode: str) -> None: ...
 
-def upsert_bot(self, bot_id: str, exchange: str, symbol: str,
-               interval: str, strategy: str, mode: str,
-               status: str, config: dict) -> None: ...
+def log_position(
+    self,
+    ts,
+    exchange: str,
+    symbol: str,
+    side: str,
+    size: float,
+    entry_price: float,
+    mark_price: float | None,
+    unrealized_pnl: float | None,
+    mode: str,
+) -> None: ...
+
+
+def upsert_bot(
+    self, bot_id: str, exchange: str, symbol: str, interval: str, strategy: str, mode: str, status: str, config: dict
+) -> None: ...
+
 
 def update_bot_heartbeat(self, bot_id: str) -> None: ...
+
 
 def open_positions(self, exchange: str | None = None) -> pd.DataFrame: ...
 def latest_account(self, exchange: str = "binance") -> dict | None: ...
@@ -218,9 +230,9 @@ Paper mode: sync_account і sync_positions — no-op (симуляція).
 Live mode: реальні запити через ccxt.
 """
 
+
 class SyncEngine:
-    def __init__(self, store: PaperStore, exchange_id: str,
-                 mode: str = "paper", interval_sec: int = 30): ...
+    def __init__(self, store: PaperStore, exchange_id: str, mode: str = "paper", interval_sec: int = 30): ...
 
     def sync_account(self) -> None:
         """REST /account → store.log_account()"""
@@ -306,9 +318,11 @@ class SyncEngine:
     uv run python -m scalper_hft.cli dashboard-hash <пароль>
 """
 
+
 def check_password() -> bool:
     """Повертає True якщо сесія авторизована."""
     ...
+
 
 def render_login_form() -> None:
     """Форма входу: пароль + кнопка Увійти."""
@@ -406,23 +420,26 @@ uv run python -m scalper_hft.cli dashboard-hash <пароль>
 ```python
 """Реєстр підтримуваних бірж і їх параметрів."""
 
+
 @dataclass(frozen=True)
 class ExchangeSpec:
     ccxt_id: str
-    exchange_type: str          # futures_usdt | linear | swap
+    exchange_type: str  # futures_usdt | linear | swap
     maker_fee: float
     taker_fee: float
     has_funding: bool
     has_agg_trades: bool
-    kline_limit: int = 1000     # макс свічок за запит
+    kline_limit: int = 1000  # макс свічок за запит
     funding_interval_h: int = 8
+
 
 REGISTRY: dict[str, ExchangeSpec] = {
     "binance": ExchangeSpec(...),
-    "bybit":   ExchangeSpec(...),
-    "okx":     ExchangeSpec(...),
-    "gateio":  ExchangeSpec(...),
+    "bybit": ExchangeSpec(...),
+    "okx": ExchangeSpec(...),
+    "gateio": ExchangeSpec(...),
 }
+
 
 def get_exchange(name: str) -> ExchangeSpec: ...
 def list_exchanges() -> list[str]: ...
@@ -460,12 +477,11 @@ data/_meta/cache_index.json:
 }
 """
 
-class CacheManager:
-    def is_fresh(self, exchange, symbol, interval,
-                 max_age_hours=2) -> bool: ...
 
-    def mark_updated(self, exchange, symbol, interval,
-                     last_ts: str, rows: int) -> None: ...
+class CacheManager:
+    def is_fresh(self, exchange, symbol, interval, max_age_hours=2) -> bool: ...
+
+    def mark_updated(self, exchange, symbol, interval, last_ts: str, rows: int) -> None: ...
 
     def list_available(self, exchange: str | None = None) -> dict: ...
 ```
@@ -552,6 +568,7 @@ Endpoints:
 ```python
 """JWT Bearer token аутентифікація для API."""
 
+
 def create_token(secret: str, expires_hours: int = 24) -> str: ...
 def verify_token(token: str = Depends(security)) -> dict: ...
 ```
@@ -566,10 +583,12 @@ ConnectionManager: зберігає активні WS-з'єднання.
 SyncEngine та PairsPaperRunner надсилають події через broadcast().
 """
 
+
 class ConnectionManager:
     async def connect(self, ws: WebSocket) -> None: ...
     def disconnect(self, ws: WebSocket) -> None: ...
     async def broadcast(self, event: dict) -> None: ...
+
 
 manager = ConnectionManager()  # singleton
 ```
@@ -670,16 +689,19 @@ YAML-схема:
         weight_boost: 1.5
 """
 
+
 @dataclass
 class RiskConfig:
     notional_pct: float = 0.05
     max_dd: float = 0.10
     daily_loss_limit: float = 0.02
 
+
 @dataclass
 class RegimeOverride:
     preferred: list[str]
     weight_boost: float = 1.0
+
 
 @dataclass
 class SupervisorConfig:

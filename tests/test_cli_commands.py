@@ -36,7 +36,9 @@ def test_cli_download_funding_keyword_args(monkeypatch: pytest.MonkeyPatch) -> N
     """Перевірка, що download --funding викликає download_funding з правильними kwargs."""
     called_args: dict[str, object] = {}
 
-    def fake_download_funding(symbol: str, days: int, force: bool = False, retries: int | None = None, batch_delay: float | None = None) -> pd.DataFrame:
+    def fake_download_funding(
+        symbol: str, days: int, force: bool = False, retries: int | None = None, batch_delay: float | None = None
+    ) -> pd.DataFrame:
         called_args["symbol"] = symbol
         called_args["days"] = days
         return pd.DataFrame()
@@ -74,15 +76,22 @@ def test_cli_regime_backtest_execution() -> None:
         mock_load.return_value = mock_df
 
         # Запуск regime-backtest з двома базовими стратегіями
-        main([
-            "regime-backtest",
-            "--symbol", "BTCUSDT",
-            "--strategies", "mean_reversion,supertrend",
-            "--days", "10",
-            "--interval", "1h",
-            "--blend-mode", "exp3",
-            "--no-regime-table",
-        ])
+        main(
+            [
+                "regime-backtest",
+                "--symbol",
+                "BTCUSDT",
+                "--strategies",
+                "mean_reversion,supertrend",
+                "--days",
+                "10",
+                "--interval",
+                "1h",
+                "--blend-mode",
+                "exp3",
+                "--no-regime-table",
+            ]
+        )
 
 
 def test_paper_store_log_position_alignment() -> None:

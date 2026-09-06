@@ -19,6 +19,7 @@ def test_jwt_token_generation_and_verification():
     assert len(token) > 20
 
     from fastapi.security import HTTPAuthorizationCredentials
+
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
     payload = verify_token(creds)
     assert payload["sub"] == "dashboard_admin"

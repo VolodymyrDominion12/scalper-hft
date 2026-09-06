@@ -315,4 +315,3 @@ def test_apply_research_prefill_max_days_730() -> None:
         {"strategy": "mean_reversion", "symbol": "BTCUSDT", "interval": "1h", "days": 730},
     )
     assert rs_state["rs_days"] == 730
-

@@ -30,15 +30,16 @@ strategies:
     assert cfg.name == "Test Supervisor"
     assert cfg.max_total_leverage == 1.5
     assert not cfg.risk_regime_filtering
-    
+
     assert len(cfg.families) == 1
     assert cfg.families[0].name == "pairs_arb"
     assert cfg.families[0].allocation == 0.6
-    
+
     assert len(cfg.strategies) == 1
     assert cfg.strategies[0].id == "pairs_arb_btcusdt"
     assert cfg.strategies[0].family == "pairs_arb"
     assert cfg.strategies[0].params["window"] == 100
+
 
 def test_regime_supervisor_from_config(tmp_path: Path):
     yaml_content = """

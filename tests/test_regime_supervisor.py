@@ -33,13 +33,15 @@ def synthetic_close() -> pd.Series:
 def synthetic_df(synthetic_close: pd.Series) -> pd.DataFrame:
     """DataFrame у форматі бектесту."""
     close = synthetic_close
-    df = pd.DataFrame({
-        "open": close * 0.999,
-        "high": close * 1.002,
-        "low": close * 0.998,
-        "close": close,
-        "volume": np.random.uniform(100, 1000, len(close)),
-    })
+    df = pd.DataFrame(
+        {
+            "open": close * 0.999,
+            "high": close * 1.002,
+            "low": close * 0.998,
+            "close": close,
+            "volume": np.random.uniform(100, 1000, len(close)),
+        }
+    )
     return df
 
 
@@ -101,9 +103,7 @@ def test_regime_detector_valid_labels(synthetic_close: pd.Series) -> None:
     valid_labels = {f"{s}|{v}" for s in STRUCTURE_LABELS for v in VOL_LABELS}
     # Деякі рядки можуть мати ffill-значення, але всі мають бути у valid_labels
     unique_labels = set(result["label"].unique())
-    assert unique_labels.issubset(valid_labels), (
-        f"Невалідні label-и: {unique_labels - valid_labels}"
-    )
+    assert unique_labels.issubset(valid_labels), f"Невалідні label-и: {unique_labels - valid_labels}"
 
 
 def test_regime_detector_step_basic(synthetic_close: pd.Series) -> None:
@@ -145,7 +145,9 @@ def test_regime_detector_save_load(tmp_path, synthetic_close: pd.Series) -> None
     loaded = RegimeDetector.load(path)
     assert loaded.is_fitted
     np.testing.assert_allclose(
-        det._hmm.means_, loaded._hmm.means_, rtol=1e-6  # type: ignore
+        det._hmm.means_,
+        loaded._hmm.means_,
+        rtol=1e-6,  # type: ignore
     )
 
 
@@ -227,9 +229,7 @@ def test_regime_supervisor_registry() -> None:
 
 
 @pytest.mark.parametrize("blend_mode", ["regime_soft", "contextual_hedge", "exp3"])
-def test_regime_supervisor_signals_shape(
-    blend_mode: str, synthetic_df: pd.DataFrame
-) -> None:
+def test_regime_supervisor_signals_shape(blend_mode: str, synthetic_df: pd.DataFrame) -> None:
     """generate_signals() повертає Series правильної форми для всіх blend_mode."""
     from scalper_hft.strategies import get_strategy
 

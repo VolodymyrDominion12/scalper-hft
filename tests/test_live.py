@@ -278,4 +278,3 @@ def test_live_trader_cancel_all_pending_and_shutdown():
     trader.settings = dataclasses.replace(trader.settings, dry_run=False)
     trader.shutdown(reason="unit_test")
     mock_client.cancel_all_orders.assert_called_once_with("BTCUSDT")
-

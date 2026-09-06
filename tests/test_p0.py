@@ -329,3 +329,94 @@ def test_require_safe_api_bind_custom_key_public_ok() -> None:
 
     settings = SimpleNamespace(api_secret_key="my-own-strong-key-32-bytes-minimum!!")
     require_safe_api_bind("0.0.0.0", settings)
+
+
+# ── control plane + тижневий ліміт + silent attrition у LiveTrader ──────────
+
+
+def _paper_trader(acc: PaperAccount | None = None) -> LiveTrader:
+    client = _FetchClient([])
+    trader = LiveTrader(_AlwaysLong(), "BTCUSDT", "1m", account=acc or PaperAccount(10_000.0), client=client)
+    trader.settings = SimpleNamespace(
+        dry_run=True,
+        maker_execution=True,
+        position_pct=0.01,
+        max_open_positions=1,
+        daily_loss_limit=0.03,
+        weekly_loss_limit=0.06,
+        max_consecutive_losses=3,
+        binance_api_key="",
+        binance_api_secret="",
+    )
+    return trader
+
+
+def test_weekly_loss_limit_blocks_entry() -> None:
+    from scalper_hft.live.trader import TradeDecision
+
+    acc = PaperAccount(10_000.0)
+    trader = _paper_trader(acc)
+    trader.week_start_equity = 10_000.0
+    acc.cash = 9_300.0  # −7% за тиждень > ліміт 6%
+    acc.day_start_equity = 9_300.0  # денний ліміт не активний — ізолюємо тижневий
+    allowed, reason = trader.risk_check(TradeDecision("open_long", "BTCUSDT", 0.1), mark_price=100.0)
+    assert not allowed
+    assert "тижневий" in reason
+
+
+def test_weekly_loss_limit_allows_within_limit() -> None:
+    from scalper_hft.live.trader import TradeDecision
+
+    acc = PaperAccount(10_000.0)
+    trader = _paper_trader(acc)
+    trader.week_start_equity = 10_000.0
+    acc.cash = 9_600.0  # −4% < 6%
+    acc.day_start_equity = 9_600.0  # денний ліміт не активний
+    allowed, _ = trader.risk_check(TradeDecision("open_long", "BTCUSDT", 0.1), mark_price=100.0)
+    assert allowed
+
+
+def test_control_pause_blocks_step() -> None:
+    from scalper_hft.live.control import ControlState
+
+    trader = _paper_trader()
+    df = _ohlc(80)
+    result = run_trader_once(trader, df, now=df.index[-1], control=ControlState(pause=True))
+    assert result == "hold:paused"
+    assert trader.account.is_flat
+
+
+def test_control_no_new_entries_blocks_open() -> None:
+    from scalper_hft.live.control import ControlState
+
+    trader = _paper_trader()
+    df = _ohlc(80)
+    result = run_trader_once(trader, df, now=df.index[-1], control=ControlState(no_new_entries=True))
+    assert "blocked:no_new_entries" in result
+    assert trader.account.is_flat
+
+
+def test_control_flatten_closes_position() -> None:
+    from scalper_hft.live.control import ControlState
+
+    acc = PaperAccount(10_000.0)
+    trader = _paper_trader(acc)
+    df = _ohlc(80)
+    ts = df.index[-1]
+    acc.open_position("BTCUSDT", "long", 0.1, 100.0, ts)
+    result = run_trader_once(trader, df, now=ts, control=ControlState(flatten=True))
+    assert "closed" in result
+    assert acc.is_flat
+
+
+def test_silent_attrition_blocks_entries_after_losses() -> None:
+    from scalper_hft.live.trader import TradeDecision
+
+    acc = PaperAccount(10_000.0)
+    trader = _paper_trader(acc)
+    # 5 збиткових угод по −1% ноціоналу → EWMA ≤ −0.5% → trip
+    for _ in range(5):
+        acc.trades.append({"entry_price": 100.0, "size": 1.0, "pnl": -1.0})
+    allowed, reason = trader.risk_check(TradeDecision("open_long", "BTCUSDT", 0.1), mark_price=100.0)
+    assert not allowed
+    assert "attrition" in reason

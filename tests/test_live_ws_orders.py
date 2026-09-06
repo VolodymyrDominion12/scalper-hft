@@ -498,3 +498,90 @@ def test_pairs_portfolio_ws_dispatch() -> None:
     dispatched = portfolio.on_ws_order_trade(event, now=now)
     assert dispatched == ["XRPUSDT/BTCUSDT:chase_leg2"]
     assert engine.pending is None
+
+
+# ── Ідемпотентність submit: retry з тим самим clientOrderId ──────────────────
+
+
+class _FlakyOrderClient(_MockExchangeClient):
+    """Перший create_order падає (таймаут), наступні — успішні; записує coid."""
+
+    def __init__(self, fail_first: bool = True, duplicate_on_retry: bool = False) -> None:
+        super().__init__()
+        self.fail_first = fail_first
+        self.duplicate_on_retry = duplicate_on_retry
+        self.calls: list[str | None] = []
+
+    def create_order(
+        self, symbol, order_type, side, amount, price=None, params=None, post_only=False, client_order_id=None
+    ):
+        self.calls.append(client_order_id)
+        if len(self.calls) == 1 and self.fail_first:
+            raise TimeoutError("network timeout after possible accept")
+        if self.duplicate_on_retry:
+            import ccxt
+
+            raise ccxt.DuplicateOrderId("binance Duplicate order sent. (-4116)")
+        return {"id": "900", "average": price, "price": price}
+
+    def fetch_open_orders(self, symbol=None):
+        return [
+            {
+                "id": "900",
+                "clientOrderId": self.calls[-1],
+                "amount": 0.05,
+                "price": 49_990.0,
+            }
+        ]
+
+
+def _live_trader(client) -> LiveTrader:
+    orig = get_settings()
+    set_settings(
+        dataclasses.replace(
+            orig,
+            dry_run=False,
+            exchange="binance-testnet",
+            binance_api_key="test-key",
+            binance_api_secret="test-secret",
+            maker_execution=True,
+        )
+    )
+    trader = LiveTrader(strategy=_DummyStrategy(), symbol="BTCUSDT", account=PaperAccount(10_000.0), client=client)  # type: ignore[arg-type]
+    return trader
+
+
+def test_submit_retry_reuses_client_order_id() -> None:
+    orig = get_settings()
+    try:
+        client = _FlakyOrderClient(fail_first=True)
+        trader = _live_trader(client)
+        ok1, status1 = trader._submit_order("buy", 0.05, 50_000.0, kind="open", pos_side="long")
+        assert not ok1 and status1 == "failed"
+        ok2, status2 = trader._submit_order("buy", 0.05, 50_000.0, kind="open", pos_side="long")
+        assert ok2 and status2 == "pending"
+        # retry пішов з ТИМ САМИМ clientOrderId — біржа дедуплікує
+        assert client.calls[0] is not None and client.calls[0] == client.calls[1]
+        assert client.calls[0] in trader.pending_orders
+    finally:
+        set_settings(orig)
+
+
+def test_submit_duplicate_recovers_existing_order() -> None:
+    orig = get_settings()
+    try:
+        client = _FlakyOrderClient(fail_first=True, duplicate_on_retry=True)
+        trader = _live_trader(client)
+        ok1, _ = trader._submit_order("buy", 0.05, 50_000.0, kind="open", pos_side="long")
+        assert not ok1
+        ok2, status2 = trader._submit_order("buy", 0.05, 50_000.0, kind="open", pos_side="long")
+        # дубль → відновлено існуючий ордер, третього create_order не було
+        assert ok2 and status2 == "pending"
+        assert len(client.calls) == 2
+        coid = client.calls[0]
+        po = trader.pending_orders[coid]
+        assert po.order_id == "900"
+        assert abs(po.size - 0.05) < 1e-9
+        assert abs(po.price - 49_990.0) < 1e-9
+    finally:
+        set_settings(orig)

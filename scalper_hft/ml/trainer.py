@@ -88,12 +88,17 @@ def _purge_train_slice(
     t1: pd.Series,
     train_end: int,
     test_end: int,
+    train_start: int = 0,
 ) -> np.ndarray:
-    """Індекси train, чиї лейбли не заходять у test (AFML purge)."""
+    """Індекси train, чиї лейбли не заходять у test (AFML purge).
+
+    train_start..train_end — межі train-вікна (rolling WF); без train_start
+    вікно помилково стає expanding від 0.
+    """
     t_test_start = index[train_end]
     t1_al = t1.reindex(index)
     t1_al = t1_al.fillna(pd.Series(index, index=index))
-    keep = [i for i in range(train_end) if t1_al.iloc[i] <= t_test_start]
+    keep = [i for i in range(train_start, train_end) if t1_al.iloc[i] <= t_test_start]
     return np.asarray(keep, dtype=int)
 
 
@@ -144,6 +149,9 @@ def train_walk_forward(
         close: ряд цін для симуляції Sharpe.
         sample_weights: ваги зразків (з compute_sample_weights або build_labeled_dataset).
                         None = рівні ваги.
+        t1: час завершення лейбла кожного зразка (build_labeled_dataset з
+            return_t1=True). Якщо задано — AFML purge: train-зразки, чиї лейбли
+            заходять у test-вікно, вилучаються (без label leakage).
 
     Returns:
         MlResult з OOS метриками.
@@ -163,7 +171,9 @@ def train_walk_forward(
         idx_te = slice(start + train_size, start + train_size + test_size)
 
         if t1 is not None:
-            tr_idx = _purge_train_slice(X.index, t1, start + train_size, start + train_size + test_size)
+            tr_idx = _purge_train_slice(
+                X.index, t1, start + train_size, start + train_size + test_size, train_start=start
+            )
             if len(tr_idx) < 10:
                 start += test_size
                 continue
@@ -288,7 +298,7 @@ def train_from_ohlcv(
     Returns:
         MlResult з усіма метриками.
     """
-    X, y, w = build_labeled_dataset(
+    X, y, w, t1 = build_labeled_dataset(
         df=df,
         trades=trades,
         mode=mode,
@@ -302,6 +312,7 @@ def train_from_ohlcv(
         add_hmm=add_hmm,
         add_garch=add_garch,
         hmm_states=hmm_states,
+        return_t1=True,
     )
     logger.info(
         "Dataset: %d зразків | labels: %s | frac_diff: %s",
@@ -317,6 +328,7 @@ def train_from_ohlcv(
         params=params,
         close=df["close"],
         sample_weights=w,
+        t1=t1,
     )
 
 
@@ -360,6 +372,7 @@ def train_walk_forward_meta(
     params: dict | None = None,
     close: pd.Series | None = None,
     cost: object | None = None,
+    t1: pd.Series | None = None,
 ) -> tuple[pd.Series, pd.Series]:
     """Walk-forward мета-лейблінг: primary задає сторону, мета — «торгувати чи ні».
 
@@ -387,8 +400,19 @@ def train_walk_forward_meta(
     while start + train_size + test_size <= len(X):
         idx_tr = slice(start, start + train_size)
         idx_te = slice(start + train_size, start + train_size + test_size)
-        X_tr = X.iloc[idx_tr]
-        y_tr = y.iloc[idx_tr]
+        if t1 is not None:
+            # AFML purge: train-зразки, чиї лейбли заходять у test-вікно, геть
+            tr_idx = _purge_train_slice(
+                X.index, t1, start + train_size, start + train_size + test_size, train_start=start
+            )
+            if len(tr_idx) < 10:
+                start += test_size
+                continue
+            X_tr = X.iloc[tr_idx]
+            y_tr = y.iloc[tr_idx]
+        else:
+            X_tr = X.iloc[idx_tr]
+            y_tr = y.iloc[idx_tr]
         X_te = X.iloc[idx_te]
 
         w_tr = None
