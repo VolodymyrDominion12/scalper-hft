@@ -14,10 +14,10 @@ from scalper_hft.overlay.policy import CellMatch, CellPolicy, OverlayBook
 
 def bind_strategy_kwargs(cls: type, kwargs: dict[str, Any]) -> dict[str, Any]:
     """Лишити лише параметри, які __init__ стратегії реально приймає."""
-    sig = inspect.signature(cls.__init__)
+    sig = inspect.signature(cls)
     if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
         return dict(kwargs)
-    known = set(sig.parameters) - {"self"}
+    known = set(sig.parameters)
     return {k: v for k, v in kwargs.items() if k in known}
 
 
