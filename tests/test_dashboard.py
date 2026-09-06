@@ -85,3 +85,19 @@ print("ok")
     )
     assert result.returncode == 0, result.stderr or result.stdout
     assert "ok" in result.stdout
+
+
+def test_reload_shared_restores_stale_common_names() -> None:
+    """Імітація Streamlit: у sys.modules лежить старий _common без нових імен."""
+    import scalper_hft.app_pages._common as common
+    from scalper_hft.app_pages import reload_shared
+
+    assert hasattr(common, "RESEARCH_SECTION")
+    del common.RESEARCH_SECTION
+    del common.JOB_KINDS
+    assert not hasattr(common, "RESEARCH_SECTION")
+    reload_shared()
+    import scalper_hft.app_pages._common as refreshed
+
+    assert refreshed.RESEARCH_SECTION == "research_section_prefill"
+    assert "capacity" in refreshed.JOB_KINDS

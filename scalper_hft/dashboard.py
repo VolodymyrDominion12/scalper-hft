@@ -25,6 +25,11 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+import scalper_hft.app_pages._common  # noqa: E402, F401
+from scalper_hft.app_pages import reload_shared  # noqa: E402
+
+reload_shared()
+
 import streamlit as st  # noqa: E402
 
 st.set_page_config(page_title="scalper-hft", page_icon="📈", layout="wide")

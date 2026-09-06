@@ -11,6 +11,7 @@ from typing import Any
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+
 from scalper_hft.app_pages._common import (
     BT_INTERVALS,
     PAIR_CHOICES,

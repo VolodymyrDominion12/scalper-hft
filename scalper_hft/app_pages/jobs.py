@@ -6,6 +6,7 @@ from typing import Literal
 
 import pandas as pd
 import streamlit as st
+
 from scalper_hft.app_pages._common import (
     JOB_KINDS,
     JOB_STATUSES,
