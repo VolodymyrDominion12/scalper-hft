@@ -9,15 +9,10 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import tempfile
-import time
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pandas as pd
-import pytest
-
 
 # ─── Хелпери ──────────────────────────────────────────────────────────────────
 

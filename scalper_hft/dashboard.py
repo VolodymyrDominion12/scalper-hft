@@ -31,6 +31,7 @@ from scalper_hft.app_pages import reload_shared  # noqa: E402
 reload_shared()
 
 import streamlit as st  # noqa: E402
+
 from scalper_hft.dashboard_auth import check_password  # noqa: E402
 
 st.set_page_config(page_title="scalper-hft", page_icon="📈", layout="wide")

@@ -165,8 +165,9 @@ def test_spec_params_in_param_space(name: str, spec: dict[str, Any]) -> None:
     Примітка: стратегії з **kwargs (__init__(self, **params)) використовують
     'params_doc' замість 'params' у spec — перевірка пропускається (немає __init__ сигнатури).
     """
-    from scalper_hft.strategies import REGISTRY
     import inspect
+
+    from scalper_hft.strategies import REGISTRY
 
     spec_name = spec.get("name", name)
     if spec_name not in REGISTRY:

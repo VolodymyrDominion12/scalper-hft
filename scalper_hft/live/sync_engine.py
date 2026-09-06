@@ -230,6 +230,7 @@ class SyncEngine:
             return self._exchange
 
         import ccxt  # type: ignore[import]
+
         from scalper_hft.config import get_settings
 
         settings = get_settings()

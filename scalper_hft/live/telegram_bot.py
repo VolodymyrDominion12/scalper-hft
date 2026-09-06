@@ -29,7 +29,6 @@ import logging
 import threading
 import time
 from collections import defaultdict, deque
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -333,8 +332,8 @@ class TelegramBotServer:
             # Малюємо PNG через matplotlib
             import matplotlib
             matplotlib.use("Agg")
-            import matplotlib.pyplot as plt
             import matplotlib.dates as mdates
+            import matplotlib.pyplot as plt
 
             df["ts"] = pd.to_datetime(df["ts"])
             df = df.sort_values("ts")

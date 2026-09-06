@@ -25,7 +25,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -35,7 +35,6 @@ from scalper_hft.features.hmm_regime import GaussianHMM
 from scalper_hft.features.regimes import (
     DEFAULT_TREND_THRESHOLD,
     named_market_state,
-    volatility_regime,
 )
 
 logger = logging.getLogger(__name__)

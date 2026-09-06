@@ -83,7 +83,6 @@ def test_ensure_klines_readonly_uses_cache_no_network(monkeypatch) -> None:
 
 def test_ensure_klines_readonly_raises_when_cache_empty(monkeypatch) -> None:
     import pytest
-
     from scalper_hft.data import access as acc
     from scalper_hft.data import downloader as dl
 

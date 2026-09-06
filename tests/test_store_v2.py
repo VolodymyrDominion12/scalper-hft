@@ -2,18 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
-
 from scalper_hft.live.store import SCHEMA_VERSION, PaperStore
 from scalper_hft.live.sync_engine import SyncEngine
-
 
 # ─── Фікстури ─────────────────────────────────────────────────────────────────
 
@@ -87,7 +83,7 @@ def test_migration_v1_to_v2_preserves_data(v1_store_path: Path) -> None:
 
 def test_migration_adds_exchange_column(v1_store_path: Path) -> None:
     """Після міграції в таблиці equity є колонка exchange."""
-    store = PaperStore(v1_store_path)
+    PaperStore(v1_store_path).close()
     conn = sqlite3.connect(v1_store_path)
     cols = [row[1] for row in conn.execute("PRAGMA table_info(equity)").fetchall()]
     conn.close()

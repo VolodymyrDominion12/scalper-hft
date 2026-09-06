@@ -16,10 +16,10 @@ from scalper_hft.strategies.mean_reversion import MeanReversionScalper
 from scalper_hft.strategies.ml_strategy import MLStrategy
 from scalper_hft.strategies.ob_imbalance import ObImbalanceScalper
 from scalper_hft.strategies.pairs_arb import PairsArb
+from scalper_hft.strategies.regime_supervisor import RegimeSupervisor
 from scalper_hft.strategies.smc_fvg import SmcFvgStrategy
 from scalper_hft.strategies.sparse_basket import SparseBasketArb
 from scalper_hft.strategies.stoch_rsi import StochRsiStrategy
-from scalper_hft.strategies.regime_supervisor import RegimeSupervisor
 from scalper_hft.strategies.supertrend import SupertrendStrategy
 from scalper_hft.strategies.taxonomy import (
     FAMILIES,
