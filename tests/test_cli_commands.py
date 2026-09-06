@@ -16,6 +16,7 @@ from scalper_hft.live.store import PaperStore
 def test_cli_exchange_flag_no_frozen_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """Перевірка, що прапорець --exchange не викликає FrozenInstanceError."""
     import os
+
     from scalper_hft.config import set_settings
 
     orig_settings = get_settings()
