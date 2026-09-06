@@ -92,7 +92,7 @@ def test_paper_store_log_position_alignment() -> None:
         store = PaperStore(db_path)
 
         # 1. Позиційний виклик без явного ts (симуляція live_monitor.py)
-        store.log_position("binance", "BTCUSDT", "long", 0.25, 64500.0, 64700.0, 42.50, "paper")
+        store.log_position("binance", "BTCUSDT", "long", 0.25, 64500.0, 64700.0, 42.50, "paper")  # type: ignore[arg-type]
 
         # 2. Сучасний виклик через keyword arguments
         store.log_position(
