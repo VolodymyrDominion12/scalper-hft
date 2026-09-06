@@ -16,3 +16,21 @@ def test_depth5_url_public() -> None:
 def test_bookticker_testnet_host() -> None:
     url = bookticker_url("BTCUSDT", testnet=True)
     assert url == "wss://stream.binancefuture.com/public/ws/btcusdt@bookTicker"
+
+
+def test_mask_listen_key_hides_secret() -> None:
+    from scalper_hft.live.ws_urls import mask_listen_key, private_user_stream_url
+
+    url = private_user_stream_url("supersecretkey123", testnet=False)
+    masked = mask_listen_key(url)
+    assert "supersecretkey123" not in masked
+    assert "listenKey=***" in masked
+    assert "events=" in masked  # решта query залишається
+
+
+def test_mask_listen_key_noop_without_key() -> None:
+    from scalper_hft.live.ws_urls import mask_listen_key
+
+    assert mask_listen_key("wss://fstream.binance.com/public/ws/btcusdt@bookTicker") == (
+        "wss://fstream.binance.com/public/ws/btcusdt@bookTicker"
+    )

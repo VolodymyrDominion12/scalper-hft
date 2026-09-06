@@ -211,7 +211,7 @@ class BinanceUserDataStream:
 
         self._running = True
         self._last_keepalive_mono = time.monotonic()
-        logger.info("Підключення до User Data Stream: %s", self.ws_url)
+        logger.info("Підключення до User Data Stream: %s", mask_listen_key(self.ws_url))
 
         while self._running:
             try:

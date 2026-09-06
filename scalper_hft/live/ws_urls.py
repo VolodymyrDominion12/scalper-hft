@@ -44,3 +44,15 @@ def private_user_stream_url(
     """User data: listenKey лише як query-параметр, не сегмент шляху."""
     query = urlencode({"listenKey": listen_key, "events": events})
     return f"{_host(testnet)}/private/ws?{query}"
+
+
+def mask_listen_key(url: str) -> str:
+    """URL для логів: listenKey замінюється на *** (session hijack через логи)."""
+    if "listenKey=" not in url:
+        return url
+    head, _, tail = url.partition("listenKey=")
+    _, sep, rest = tail.partition("&")
+    masked = head + "listenKey=***"
+    if sep:
+        masked += sep + rest
+    return masked

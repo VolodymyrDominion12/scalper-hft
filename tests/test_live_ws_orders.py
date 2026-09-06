@@ -135,9 +135,123 @@ def test_trader_on_ws_order_partial_fill() -> None:
     trader.on_ws_order_trade(event)
 
     assert "c2" in trader.pending_orders
-    assert abs(trader.pending_orders["c2"].size - 0.12) < 1e-9
+    # size — оригінальний розмір ордера; зарахована частина у booked_qty
+    assert abs(trader.pending_orders["c2"].size - 0.2) < 1e-9
+    assert abs(trader.pending_orders["c2"].booked_qty - 0.08) < 1e-9
+    assert abs(trader.pending_orders["c2"].remaining_qty - 0.12) < 1e-9
     assert "BTCUSDT" in trader.account.positions
     assert abs(trader.account.positions["BTCUSDT"].size - 0.08) < 1e-9
+
+
+def test_trader_ws_partial_then_filled_no_double_book() -> None:
+    """WS partial → WS FILLED: зараховується лише дельта, не повний розмір."""
+    account = PaperAccount(initial_capital=10_000.0)
+    trader = LiveTrader(strategy=_DummyStrategy(), symbol="BTCUSDT", account=account)
+
+    po = PendingOrder(
+        client_order_id="c4",
+        order_id="104",
+        symbol="BTCUSDT",
+        side="buy",
+        size=0.2,
+        price=50000.0,
+        reduce_only=False,
+        kind="open",
+        pos_side="long",
+        placed_ts=pd.Timestamp.now(tz="UTC").tz_localize(None),
+    )
+    trader.pending_orders["c4"] = po
+
+    base = {
+        "event_time": 12345,
+        "symbol": "BTCUSDT",
+        "client_order_id": "c4",
+        "order_id": 104,
+        "side": "BUY",
+        "order_type": "LIMIT",
+        "execution_type": "TRADE",
+        "commission": 0.0,
+        "commission_asset": "USDT",
+        "is_maker": True,
+    }
+    trader.on_ws_order_trade(
+        OrderTradeEvent(
+            **base,
+            status="PARTIALLY_FILLED",
+            last_filled_qty=0.08,
+            cumulative_filled_qty=0.08,
+            last_filled_price=50000.0,
+        )
+    )
+    trader.on_ws_order_trade(
+        OrderTradeEvent(
+            **base, status="FILLED", last_filled_qty=0.12, cumulative_filled_qty=0.2, last_filled_price=50010.0
+        )
+    )
+
+    assert "c4" not in trader.pending_orders
+    pos = trader.account.positions["BTCUSDT"]
+    # 0.08 + 0.12 = 0.2, без подвоєння; середньозважена ціна
+    assert abs(pos.size - 0.2) < 1e-9
+    assert abs(pos.entry_price - (50000.0 * 0.08 + 50010.0 * 0.12) / 0.2) < 1e-6
+
+
+def test_trader_ws_partial_then_rest_poll_no_double_book() -> None:
+    """Race: WS partial зарахував частину, REST poll бачить той самий cumulative."""
+
+    class _PollClient(_MockExchangeClient):
+        def fetch_order(self, order_id, symbol):
+            return {"status": "closed", "filled": 0.2, "average": 50005.0}
+
+        def cancel_order(self, order_id, symbol):
+            return {}
+
+    orig = get_settings()
+    try:
+        set_settings(dataclasses.replace(orig, dry_run=False, exchange="binance-testnet"))
+        account = PaperAccount(initial_capital=10_000.0)
+        trader = LiveTrader(strategy=_DummyStrategy(), symbol="BTCUSDT", account=account, client=_PollClient())  # type: ignore[arg-type]
+
+        po = PendingOrder(
+            client_order_id="c5",
+            order_id="105",
+            symbol="BTCUSDT",
+            side="buy",
+            size=0.2,
+            price=50000.0,
+            reduce_only=False,
+            kind="open",
+            pos_side="long",
+            placed_ts=pd.Timestamp.now(tz="UTC").tz_localize(None),
+        )
+        trader.pending_orders["c5"] = po
+
+        trader.on_ws_order_trade(
+            OrderTradeEvent(
+                event_time=12345,
+                symbol="BTCUSDT",
+                client_order_id="c5",
+                order_id=105,
+                side="BUY",
+                order_type="LIMIT",
+                status="PARTIALLY_FILLED",
+                execution_type="TRADE",
+                last_filled_qty=0.08,
+                cumulative_filled_qty=0.08,
+                last_filled_price=50000.0,
+                commission=0.0,
+                commission_asset="USDT",
+                is_maker=True,
+            )
+        )
+        events = trader.poll_pending_orders()
+
+        assert events == ["filled:c5"]
+        assert "c5" not in trader.pending_orders
+        # зараховано 0.08 (WS) + 0.12 (REST дельта) = 0.2, без подвоєння
+        assert abs(trader.account.positions["BTCUSDT"].size - 0.2) < 1e-9
+    finally:
+        set_settings(orig)
 
 
 def test_trader_on_ws_order_canceled() -> None:

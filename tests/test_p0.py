@@ -300,3 +300,32 @@ def test_run_trader_once_live_match_continues() -> None:
     result = run_trader_once(trader, df, now=idx[-1] + pd.Timedelta(seconds=30))
     assert client.n == 1
     assert isinstance(result, str)
+
+
+def test_require_safe_api_bind_default_key_public_host() -> None:
+    from scalper_hft.config import DEFAULT_API_SECRET_KEY, require_safe_api_bind
+
+    settings = SimpleNamespace(api_secret_key=DEFAULT_API_SECRET_KEY)
+    try:
+        require_safe_api_bind("0.0.0.0", settings)
+    except RuntimeError as exc:
+        # у повідомленні — жодного значення ключа
+        assert DEFAULT_API_SECRET_KEY not in str(exc)
+        assert "API_SECRET_KEY" in str(exc)
+        return
+    raise AssertionError("дефолтний ключ на 0.0.0.0 має падати")
+
+
+def test_require_safe_api_bind_default_key_localhost_ok() -> None:
+    from scalper_hft.config import DEFAULT_API_SECRET_KEY, require_safe_api_bind
+
+    settings = SimpleNamespace(api_secret_key=DEFAULT_API_SECRET_KEY)
+    require_safe_api_bind("127.0.0.1", settings)
+    require_safe_api_bind("localhost", settings)
+
+
+def test_require_safe_api_bind_custom_key_public_ok() -> None:
+    from scalper_hft.config import require_safe_api_bind
+
+    settings = SimpleNamespace(api_secret_key="my-own-strong-key-32-bytes-minimum!!")
+    require_safe_api_bind("0.0.0.0", settings)

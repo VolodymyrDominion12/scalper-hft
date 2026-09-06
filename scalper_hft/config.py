@@ -13,6 +13,12 @@ from scalper_hft.symbols import CANONICAL_SYMBOLS
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(_PROJECT_ROOT / ".env")
 
+#: Дефолтний dev-ключ JWT для API. У будь-якому non-localhost оточенні
+#: МАЄ бути перевизначений через API_SECRET_KEY у .env.
+DEFAULT_API_SECRET_KEY = "scalper_dev_secret_key_minimum_32_bytes_long_jwt"
+
+_LOCAL_API_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
 
 def _env_float(key: str, default: float) -> float:
     raw = os.getenv(key)
@@ -104,9 +110,7 @@ class Settings:
     # API
     api_host: str = field(default_factory=lambda: os.getenv("API_HOST", "0.0.0.0"))
     api_port: int = field(default_factory=lambda: _env_int("API_PORT", 8000))
-    api_secret_key: str = field(
-        default_factory=lambda: os.getenv("API_SECRET_KEY", "scalper_dev_secret_key_minimum_32_bytes_long_jwt")
-    )
+    api_secret_key: str = field(default_factory=lambda: os.getenv("API_SECRET_KEY", DEFAULT_API_SECRET_KEY))
 
     @property
     def postgres_conninfo(self) -> str:
@@ -154,6 +158,19 @@ def require_live_credentials(settings: Settings) -> None:
     secret = (settings.binance_api_secret or "").strip()
     if not key or not secret:
         raise RuntimeError("Live режим (DRY_RUN=false) потребує BINANCE_API_KEY і BINANCE_API_SECRET")
+
+
+def require_safe_api_bind(host: str, settings: Settings) -> None:
+    """Fail-closed: дефолтний JWT-секрет дозволений лише на localhost.
+
+    API з відомим dev-ключем на публічному інтерфейсі = відкритий доступ
+    до керування ботом. У повідомленні немає значення ключа.
+    """
+    if host not in _LOCAL_API_HOSTS and settings.api_secret_key == DEFAULT_API_SECRET_KEY:
+        raise RuntimeError(
+            f"API на {host} з дефолтним API_SECRET_KEY заборонено. "
+            "Задайте власний API_SECRET_KEY у .env або біндіть на 127.0.0.1."
+        )
 
 
 def set_settings(settings: Settings) -> None:

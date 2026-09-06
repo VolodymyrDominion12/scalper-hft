@@ -515,9 +515,14 @@ def cmd_ml(args: argparse.Namespace) -> None:
 
 
 def cmd_paper(args: argparse.Namespace) -> None:
+    from scalper_hft.config import get_settings
     from scalper_hft.live.trader import LiveTrader, run_trader_once
     from scalper_hft.strategies import get_strategy
 
+    if not get_settings().dry_run:
+        raise SystemExit(
+            "paper — paper-only команда: при DRY_RUN=false відмова. Реальні ордери — лише через свідомий live-запуск."
+        )
     df = _load_klines(
         args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", True)
     )
@@ -840,9 +845,15 @@ def cmd_record_bookticker(args: argparse.Namespace) -> None:
 
 def cmd_paper_run(args: argparse.Namespace) -> None:
     """Циклічний paper-прогін: кілька кроків з паузою, збереження угод."""
+    from scalper_hft.config import get_settings
     from scalper_hft.live.paper_runner import PaperRunner
     from scalper_hft.strategies import get_strategy
 
+    if not get_settings().dry_run:
+        raise SystemExit(
+            "paper-run — paper-only команда: при DRY_RUN=false відмова. "
+            "Реальні ордери — лише через свідомий live-запуск."
+        )
     strategy = get_strategy(args.strategy, **args.param_dict)
     runner = PaperRunner(strategy, args.symbol, args.interval)
     result = runner.run(iterations=args.iterations, sleep_sec=args.sleep)
@@ -1878,6 +1889,12 @@ def cmd_api(args: argparse.Namespace) -> None:
                 default_port=settings.api_port,
             )
         except ValueError as exc:
+            sys.exit(str(exc))
+        from scalper_hft.config import require_safe_api_bind
+
+        try:
+            require_safe_api_bind(host, settings)
+        except RuntimeError as exc:
             sys.exit(str(exc))
         logger.info(f"Запуск FastAPI сервера на {host}:{port}...")
         uvicorn.run("scalper_hft.api.server:app", host=host, port=port, reload=False)

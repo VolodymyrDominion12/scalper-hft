@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -98,12 +99,18 @@ class PendingOrder:
     order_id: str  # exchange order id (fallback = client id)
     symbol: str
     side: str  # buy | sell (біржовий бік)
-    size: float
+    size: float  # ОРИГІНАЛЬНИЙ розмір ордера (не мутує при часткових філах)
     price: float
     reduce_only: bool
     kind: str  # "open" | "close"
     pos_side: str = ""  # long | short (для kind="open")
     placed_ts: pd.Timestamp | None = None
+    booked_qty: float = 0.0  # скільки вже зараховано у локальний рахунок (WS/REST дельта-облік)
+
+    @property
+    def remaining_qty(self) -> float:
+        """Ще не зарахована частина ордера."""
+        return max(0.0, self.size - self.booked_qty)
 
 
 class SilentAttritionKillSwitch:
@@ -171,6 +178,7 @@ class LiveTrader:
         hmm_block: bool = False,
         hmm_states: int = 3,
         hmm_threshold: float = 0.5,
+        control_path: Path | str | None = None,
     ) -> None:
         self.settings = get_settings()
         require_live_credentials(self.settings)
@@ -197,6 +205,14 @@ class LiveTrader:
         self.hmm_threshold = hmm_threshold
         self.last_signal: int = 0
         self._last_roll_day: object | None = None
+        # Тижневий ліміт збитків (ISO-тиждень), як у pairs runner
+        self.week_start_equity = self.account.equity
+        self._last_roll_week: tuple[int, int] | None = None
+        # Silent Attrition: EWMA PnL на угоду → стоп нових входів (PM Ch. 4, 13)
+        self.attrition = SilentAttritionKillSwitch()
+        self._attrition_seen_trades = 0
+        # Control plane (pause / no_new_entries / flatten), читається у run_trader_once
+        self.control_path = control_path
         self.cooldown = CooldownState()
         self._entry_size_mult = 1.0
         # C2: live maker-ордери, що ще не заповнились (clientOrderId → PendingOrder)
@@ -308,6 +324,14 @@ class LiveTrader:
 
         ts = _as_naive_utc(now if now is not None else _utc_now())
         day = ts.date()
+        iso = ts.isocalendar()
+        week = (int(iso.year), int(iso.week))
+        if self._last_roll_week is None:
+            self._last_roll_week = week
+        elif week != self._last_roll_week:
+            self.week_start_equity = self.account.equity
+            self._last_roll_week = week
+            logger.info("Новий тиждень %s: week_start_equity=%.2f", week, self.week_start_equity)
         if self._last_roll_day is None:
             self._last_roll_day = day
             return False
@@ -317,6 +341,24 @@ class LiveTrader:
             logger.info("Новий день %s: day_start_equity=%.2f", day, self.account.day_start_equity)
             return True
         return False
+
+    def _update_attrition(self) -> None:
+        """Скормити SilentAttritionKillSwitch нові закриті угоди з журналу."""
+        trades = self.account.trades
+        if len(trades) <= self._attrition_seen_trades:
+            return
+        for tr in trades[self._attrition_seen_trades :]:
+            notional = float(tr.get("entry_price", 0.0)) * float(tr.get("size", 0.0))
+            pnl_pct = float(tr.get("pnl", 0.0)) / notional if notional > 0 else 0.0
+            self.attrition.record_trade(pnl_pct)
+        self._attrition_seen_trades = len(trades)
+        if self.attrition.tripped:
+            logger.warning(
+                "SilentAttrition: EWMA PnL/trade %.5f ≤ %.5f після %d угод — нові входи заблоковано",
+                self.attrition.ewma_pnl,
+                self.attrition.threshold_pnl,
+                self.attrition.trade_count,
+            )
 
     # ── ризик-контроль (книга, гл. 4) ────────────────────────────────────────
     def risk_check(
@@ -355,6 +397,13 @@ class LiveTrader:
             return False, gate.reason
         if self.account.equity <= self.account.day_start_equity * (1 - self.settings.daily_loss_limit):
             return False, "денний ліміт збитків"
+        weekly_limit = float(getattr(self.settings, "weekly_loss_limit", 0.06))
+        if self.account.equity <= self.week_start_equity * (1 - weekly_limit):
+            return False, "тижневий ліміт збитків"
+        # Silent Attrition: EWMA PnL на угоду стійко збитковий → стоп входів
+        self._update_attrition()
+        if self.attrition.tripped:
+            return False, "silent attrition: EWMA PnL нижче порогу"
         if len(self.account.positions) >= self.settings.max_open_positions:
             return False, "максимум відкритих позицій"
         if gate.status == "cooldown":
@@ -589,17 +638,15 @@ class LiveTrader:
             filled = float((info or {}).get("filled") or 0.0)
             avg = float((info or {}).get("average") or (info or {}).get("price") or po.price)
             if status in ("closed", "filled") or filled >= po.size - 1e-9:
-                self._book_pending_fill(po, po.size, avg, ts)
+                # Дельта-облік: частина могла бути зарахована через WS раніше.
+                self._book_fill_delta(po, po.size, avg, ts)
                 del self.pending_orders[coid]
                 events.append(f"filled:{coid}")
                 continue
-            if filled > 1e-9:  # частковий філ: бронимо заповнене, решту скасовуємо
-                # Обмеження: PaperAccount не підтримує часткове закриття, тож при
-                # частковому reduce-філі локально закривається ВСЯ позиція, а
-                # залишок на біржі виявить наступна звірка → KillSwitch
-                # (fail-closed: зупинка, оператор розбирається). Повноцінне
-                # часткове закриття потребує user-data stream філів.
-                self._book_pending_fill(po, filled, avg, ts)
+            if filled > 1e-9:  # частковий філ: бронимо дельту, решту скасовуємо
+                # PaperAccount підтримує часткове закриття (close_position(size=...))
+                # та доливку (add_to_position) — бронюємо рівно заповнене.
+                self._book_fill_delta(po, filled, avg, ts)
                 if cancel is not None:
                     try:
                         cancel(po.order_id, po.symbol)
@@ -627,13 +674,41 @@ class LiveTrader:
         return events
 
     def _book_pending_fill(self, po: PendingOrder, size: float, price: float, ts: pd.Timestamp) -> None:
-        """Забронити підтверджений філ у локальному рахунку (maker-комісії)."""
+        """Забронити підтверджений філ у локальному рахунку (maker-комісії).
+
+        Open при вже відкритій позиції — доливка з середньозваженою ціною
+        (часткові філи одного ордера), а не тихий пропуск.
+        """
         if po.kind == "open":
-            if self.symbol not in self.account.positions:
+            existing = self.account.positions.get(self.symbol)
+            if existing is None:
                 self.account.open_position(self.symbol, po.pos_side, size, price, ts, is_maker=True)
+            elif existing.side == po.pos_side:
+                self.account.add_to_position(self.symbol, size, price, ts, is_maker=True)
+            else:
+                # протилежна сторона — не бронюємо; розбіжність зловить reconcile
+                logger.error(
+                    "Філ %s (%s) при відкритій протилежній позиції %s — пропущено, звірка обов'язкова",
+                    po.client_order_id,
+                    po.pos_side,
+                    existing.side,
+                )
         else:
             if self.symbol in self.account.positions:
                 self.account.close_position(self.symbol, price, ts, is_maker=True, size=size)
+
+    def _book_fill_delta(self, po: PendingOrder, cumulative_filled: float, price: float, ts: pd.Timestamp) -> float:
+        """Забронювати лише ДЕЛЬТУ від авторитетного cumulative (WS або REST).
+
+        Ідемпотентно: дубльовані WS-події або REST-полл після WS-філа не
+        подвоюють позицію. Повертає фактично зараховану кількість.
+        """
+        delta = min(cumulative_filled, po.size) - po.booked_qty
+        if delta <= 1e-9:
+            return 0.0
+        self._book_pending_fill(po, delta, price, ts)
+        po.booked_qty += delta
+        return delta
 
     # ── WebSocket User Data Stream ───────────────────────────────────────────
 
@@ -651,34 +726,25 @@ class LiveTrader:
         status = event.status.upper()
         if status in ("FILLED", "CLOSED"):
             fill_px = event.last_filled_price if event.last_filled_price > 0 else po.price
-            self._book_pending_fill(po, po.size, fill_px, ts)
+            # FILLED → ордер заповнений повністю; бронюємо лише незарахований залишок
+            cumulative = event.cumulative_filled_qty if event.cumulative_filled_qty > 0 else po.size
+            booked = self._book_fill_delta(po, max(cumulative, po.size), fill_px, ts)
             self.pending_orders.pop(coid, None)
-            logger.info("WS fill booked: %s (size=%.4f, px=%.4f)", coid, po.size, fill_px)
+            logger.info("WS fill booked: %s (delta=%.4f, px=%.4f)", coid, booked, fill_px)
         elif status == "PARTIALLY_FILLED":
-            if event.last_filled_qty > 1e-9:
+            cumulative = event.cumulative_filled_qty
+            if cumulative <= 1e-9:  # fallback на per-fill qty, якщо cumulative відсутній
+                cumulative = po.booked_qty + event.last_filled_qty
+            if cumulative > po.booked_qty + 1e-9:
                 fill_px = event.last_filled_price if event.last_filled_price > 0 else po.price
-                self._book_pending_fill(po, event.last_filled_qty, fill_px, ts)
-                remaining = max(0.0, po.size - event.cumulative_filled_qty)
-                if remaining <= 1e-9:
+                booked = self._book_fill_delta(po, cumulative, fill_px, ts)
+                if po.remaining_qty <= 1e-9:
                     self.pending_orders.pop(coid, None)
-                else:
-                    self.pending_orders[coid] = PendingOrder(
-                        client_order_id=po.client_order_id,
-                        order_id=po.order_id,
-                        symbol=po.symbol,
-                        side=po.side,
-                        size=remaining,
-                        price=po.price,
-                        reduce_only=po.reduce_only,
-                        kind=po.kind,
-                        pos_side=po.pos_side,
-                        placed_ts=po.placed_ts,
-                    )
                 logger.info(
-                    "WS partial fill booked: %s (qty=%.4f, remaining=%.4f)",
+                    "WS partial fill booked: %s (delta=%.4f, remaining=%.4f)",
                     coid,
-                    event.last_filled_qty,
-                    remaining,
+                    booked,
+                    po.remaining_qty,
                 )
         elif status in ("CANCELED", "CANCELLED", "EXPIRED", "REJECTED"):
             self.pending_orders.pop(coid, None)
@@ -788,11 +854,14 @@ def execute_signal(
     signal: int,
     df: pd.DataFrame,
     now: pd.Timestamp | None = None,
+    block_new_entries: bool = False,
 ) -> str:
     """Рішення за сигналом на останньому закритому барі → виконання.
 
     Реверс (long→short і навпаки): спочатку close (ніколи не блокується
     ризиком), потім open. Інакше max_open_positions=1 блокує фліп назавжди.
+    block_new_entries (control.json no_new_entries): закриття дозволене,
+    нові входи — ні.
     """
     closed = closed_klines(df, trader.interval, now=now)
     if closed is None or closed.empty:

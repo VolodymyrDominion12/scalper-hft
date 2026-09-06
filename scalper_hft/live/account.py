@@ -106,6 +106,26 @@ class PaperAccount:
         self.positions[symbol] = Position(symbol, side, size, price, ts, entry_fee=fee)
         self._marks[symbol] = price
 
+    def add_to_position(self, symbol: str, size: float, price: float, ts: pd.Timestamp, is_maker: bool = False) -> None:
+        """Доливка до існуючої позиції (часткові філи одного ордера).
+
+        Середньозважена ціна входу; комісія додається до entry_fee.
+        """
+        pos = self.positions.get(symbol)
+        if pos is None:
+            raise ValueError(f"позиція {symbol} не знайдена — спочатку open")
+        if size <= 0:
+            raise ValueError(f"некоректний розмір доливки: {size}")
+        fee_rate = self.maker_fee if is_maker else self.taker_fee
+        fee = price * size * fee_rate
+        self.cash -= fee
+        total = pos.size + size
+        pos.entry_price = (pos.entry_price * pos.size + price * size) / total
+        pos.size = total
+        pos.entry_fee += fee
+        pos.entry_ts = ts if ts < pos.entry_ts else pos.entry_ts
+        self._marks[symbol] = price
+
     def close_position(
         self, symbol: str, price: float, ts: pd.Timestamp, is_maker: bool = False, size: float | None = None
     ) -> dict:

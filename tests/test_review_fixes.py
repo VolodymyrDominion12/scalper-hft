@@ -553,6 +553,57 @@ class TestPairsRunnersLiveBlock:
             PairsPortfolioRunner(interval="1h")
 
 
+# ── M3b: single-symbol paper-шляхи блокують live ─────────────────────────────
+
+
+class TestSingleSymbolPaperLiveBlock:
+    """paper/paper-run — paper-only: при DRY_RUN=false відмова (fail-closed)."""
+
+    def test_paper_runner_blocks_live(self, monkeypatch):
+        from types import SimpleNamespace
+
+        import scalper_hft.live.paper_runner as prmod
+        from scalper_hft.live.paper_runner import PaperRunner
+
+        monkeypatch.setattr(
+            prmod,
+            "get_settings",
+            lambda: SimpleNamespace(dry_run=False, taker_fee=0.0005, maker_fee=0.0002),
+        )
+        with pytest.raises(RuntimeError, match="paper-only"):
+            PaperRunner(None, "BTCUSDT", interval="5m")  # type: ignore[arg-type]
+
+    def test_cmd_paper_blocks_live(self, monkeypatch):
+        from types import SimpleNamespace
+
+        import scalper_hft.config as cfg
+        from scalper_hft.cli import cmd_paper
+
+        monkeypatch.setattr(cfg, "get_settings", lambda: SimpleNamespace(dry_run=False))
+        args = SimpleNamespace(symbol="BTCUSDT", interval="5m", days=1, strategy="mean_reversion", param_dict={})
+        with pytest.raises(SystemExit, match="paper-only"):
+            cmd_paper(args)
+
+    def test_cmd_paper_run_blocks_live(self, monkeypatch):
+        from types import SimpleNamespace
+
+        import scalper_hft.config as cfg
+        from scalper_hft.cli import cmd_paper_run
+
+        monkeypatch.setattr(cfg, "get_settings", lambda: SimpleNamespace(dry_run=False))
+        args = SimpleNamespace(
+            symbol="BTCUSDT",
+            interval="5m",
+            strategy="mean_reversion",
+            param_dict={},
+            iterations=1,
+            sleep=0,
+            notify=False,
+        )
+        with pytest.raises(SystemExit, match="paper-only"):
+            cmd_paper_run(args)
+
+
 # ── M4: live equity з біржі ───────────────────────────────────────────────────
 
 

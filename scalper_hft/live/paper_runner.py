@@ -68,10 +68,16 @@ class PaperRunner:
     def __init__(
         self, strategy: Strategy, symbol: str, interval: str = "5m", account: PaperAccount | None = None
     ) -> None:
+        settings = get_settings()
+        if not settings.dry_run:
+            raise RuntimeError(
+                "PaperRunner — paper-only: при DRY_RUN=false paper-команди відмовляють. "
+                "Live-торгівля single-symbol — лише через свідомий live-запуск, "
+                "не через paper/paper-run."
+            )
         self.strategy = strategy
         self.symbol = symbol
         self.interval = interval
-        settings = get_settings()
         self.account = account or PaperAccount(
             initial_capital=10_000.0,
             taker_fee=settings.taker_fee,
