@@ -24,7 +24,7 @@ if not _SWEEP_DB.exists():
     st.stop()
 
 
-@st.cache_data(ttl="10s")
+@st.cache_data(ttl="10s", show_spinner="Читання sweep.db…")
 def load_sweep_results() -> pd.DataFrame:
     try:
         with SweepStore(_SWEEP_DB) as store:

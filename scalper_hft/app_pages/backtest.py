@@ -12,6 +12,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from scalper_hft.app_pages._busy import busy
 from scalper_hft.app_pages._common import (
     BT_INTERVALS,
     PAIR_CHOICES,
@@ -107,18 +108,19 @@ def _render_bt_chart(view: dict) -> None:
         st.caption(f"Угод: {len(res.trades)} · Max DD: {res.metrics.max_drawdown:.1%}")
         st.caption("💡 Клік по маркеру ▲/▼/× — деталі угоди")
     with right:
-        fdf = add_standard_features(df)  # фічі лише для графіка
-        fig = make_backtest_figure(
-            fdf,
-            res,
-            symbol=title,
-            start=window[0],
-            end=window[1],
-            max_bars=max_bars,
-            with_trades=with_trades,
-            with_sl_tp=with_sl_tp,
-            indicators=auto_indicator_columns(fdf) if with_inds else [],
-        )
+        with busy("Будую графік угод…"):
+            fdf = add_standard_features(df)  # фічі лише для графіка
+            fig = make_backtest_figure(
+                fdf,
+                res,
+                symbol=title,
+                start=window[0],
+                end=window[1],
+                max_bars=max_bars,
+                with_trades=with_trades,
+                with_sl_tp=with_sl_tp,
+                indicators=auto_indicator_columns(fdf) if with_inds else [],
+            )
         sel = st.plotly_chart(fig, width="stretch", key="bt_fig", on_select="rerun", selection_mode="points")
         sel_state: Any = getattr(sel, "selection", None)
         if sel_state:
@@ -191,14 +193,15 @@ def _render_pairs_chart(res: Any, title: str) -> None:
         )
         st.caption(f"Угод: {len(res.trades)} · Max DD: {res.metrics.max_drawdown:.1%}")
     with right:
-        fig = make_pairs_figure(
-            res,
-            start=window[0],
-            end=window[1],
-            max_bars=max_bars,
-            with_trades=with_trades,
-            symbol=title,
-        )
+        with busy("Будую графік спреду…"):
+            fig = make_pairs_figure(
+                res,
+                start=window[0],
+                end=window[1],
+                max_bars=max_bars,
+                with_trades=with_trades,
+                symbol=title,
+            )
         st.plotly_chart(fig, width="stretch", key="pairs_fig")
     st.subheader("Угоди")
     if res.trades is not None and not res.trades.empty:
@@ -275,7 +278,8 @@ elif _job.status == "succeeded":
     if is_pairs:
         st.session_state.pop("bt_view", None)
         try:
-            pairs_res = load_pairs_result(_job_dir)
+            with busy("Завантаження результату пари…"):
+                pairs_res = load_pairs_result(_job_dir)
         except FileNotFoundError:
             st.warning("Артефакти ще не записані.")
         else:
@@ -306,41 +310,43 @@ elif _job.status == "succeeded":
                 st.text(m.summary())
     else:
         strategy = get_strategy(strategy_name)
-        df = klines_from_store(symbol, interval, days)
-        try:
-            res = load_backtest_result(_job_dir)
-        except FileNotFoundError:
+        with busy("Завантаження свічок і результату…"):
+            df = klines_from_store(symbol, interval, days)
+            try:
+                res = load_backtest_result(_job_dir)
+            except FileNotFoundError:
+                res = None
+        if res is None:
             st.warning("Артефакти ще не записані.")
+        elif df is None or len(df) < 2:
+            st.warning(f"Немає даних {symbol} {interval} для графіка — download спершу")
         else:
-            if df is None or len(df) < 2:
-                st.warning(f"Немає даних {symbol} {interval} для графіка — download спершу")
-            else:
-                st.session_state["bt_view"] = {"df": df, "res": res, "title": _title}
-                st.session_state.pop("bt_sel_ts", None)
-                m = res.metrics
-                ret = res.equity.pct_change().dropna()
-                n_trials = estimate_n_trials(max(len(strategy.param_space), 1), 40)
-                dsr = deflated_sharpe_ratio(ret.values, n_trials=n_trials)
-                verdict = dsr_verdict(dsr)
-                dsr_label = {"significant": "значущий", "weak": "слабкий", "none": "немає edge"}[verdict]
-                with st.container(horizontal=True):
-                    st.metric("Дохідність", f"{m.total_return:.2%}", border=True)
-                    st.metric("Sharpe (год.)", f"{m.sharpe_hourly:.2f}", border=True)
-                    st.metric("Угоди", f"{m.n_trades}", border=True)
-                    st.metric("Win rate", f"{m.win_rate:.0%}", border=True)
-                    st.metric("Profit factor", f"{m.profit_factor:.2f}", border=True)
-                    st.metric(
-                        "Deflated Sharpe",
-                        f"{dsr:.3f}",
-                        delta=dsr_label,
-                        delta_color="normal" if verdict == "significant" else "inverse",
-                        border=True,
-                        help=f"> 0.95 = значущий edge після поправки на trials={n_trials}",
-                    )
-                if m.n_trades:
-                    st.caption(hurdle_note(m.avg_trade_return, cost.round_trip_maker(), n_legs=1))
-                with st.expander("Повні метрики", icon=":material/analytics:"):
-                    st.text(m.summary())
+            st.session_state["bt_view"] = {"df": df, "res": res, "title": _title}
+            st.session_state.pop("bt_sel_ts", None)
+            m = res.metrics
+            ret = res.equity.pct_change().dropna()
+            n_trials = estimate_n_trials(max(len(strategy.param_space), 1), 40)
+            dsr = deflated_sharpe_ratio(ret.values, n_trials=n_trials)
+            verdict = dsr_verdict(dsr)
+            dsr_label = {"significant": "значущий", "weak": "слабкий", "none": "немає edge"}[verdict]
+            with st.container(horizontal=True):
+                st.metric("Дохідність", f"{m.total_return:.2%}", border=True)
+                st.metric("Sharpe (год.)", f"{m.sharpe_hourly:.2f}", border=True)
+                st.metric("Угоди", f"{m.n_trades}", border=True)
+                st.metric("Win rate", f"{m.win_rate:.0%}", border=True)
+                st.metric("Profit factor", f"{m.profit_factor:.2f}", border=True)
+                st.metric(
+                    "Deflated Sharpe",
+                    f"{dsr:.3f}",
+                    delta=dsr_label,
+                    delta_color="normal" if verdict == "significant" else "inverse",
+                    border=True,
+                    help=f"> 0.95 = значущий edge після поправки на trials={n_trials}",
+                )
+            if m.n_trades:
+                st.caption(hurdle_note(m.avg_trade_return, cost.round_trip_maker(), n_legs=1))
+            with st.expander("Повні метрики", icon=":material/analytics:"):
+                st.text(m.summary())
 
 if st.session_state.get("bt_fp") != _fp:
     if not (_job and _job.status == "succeeded" and not is_pairs):
@@ -580,7 +586,8 @@ else:
         st.warning(_cap_msg)
     if _cap_job is not None and _cap_job.status == "succeeded":
         try:
-            curve, extra = load_capacity_curve(artifacts_dir(DEFAULT_JOBS_PATH, _cap_job.id))
+            with busy("Завантаження кривої capacity…"):
+                curve, extra = load_capacity_curve(artifacts_dir(DEFAULT_JOBS_PATH, _cap_job.id))
         except FileNotFoundError:
             st.warning("Артефакти capacity ще не записані.")
         else:

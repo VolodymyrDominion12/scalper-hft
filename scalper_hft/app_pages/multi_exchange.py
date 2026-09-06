@@ -21,7 +21,7 @@ if not _PAPER_DB.exists():
 
 
 # --- Дані ---
-@st.cache_data(ttl="10s")
+@st.cache_data(ttl="10s", show_spinner="Завантаження акаунтів…")
 def load_all_accounts() -> pd.DataFrame:
     try:
         with PaperStore(_PAPER_DB) as store:
@@ -35,7 +35,7 @@ def load_all_accounts() -> pd.DataFrame:
         return pd.DataFrame()
 
 
-@st.cache_data(ttl="10s")
+@st.cache_data(ttl="10s", show_spinner="Завантаження ботів…")
 def load_bots() -> pd.DataFrame:
     try:
         with PaperStore(_PAPER_DB) as store:

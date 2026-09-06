@@ -25,6 +25,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+import scalper_hft.app_pages._busy  # noqa: E402, F401
 import scalper_hft.app_pages._common  # noqa: E402, F401
 from scalper_hft.app_pages import reload_shared  # noqa: E402
 
@@ -32,12 +33,15 @@ reload_shared()
 
 import streamlit as st  # noqa: E402
 
+from scalper_hft.app_pages._busy import inject_busy_overlay  # noqa: E402
 from scalper_hft.dashboard_auth import check_password  # noqa: E402
 
 st.set_page_config(page_title="scalper-hft", page_icon="📈", layout="wide")
 
 if not check_password():
     st.stop()
+
+inject_busy_overlay()
 
 pages = [
     st.Page("app_pages/overview.py", title="Моніторинг", icon=":material/monitoring:", default=True),

@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from scalper_hft.app_pages._busy import busy
 from scalper_hft.app_pages._common import SYMBOLS
 from scalper_hft.config import get_settings
 from scalper_hft.data.cache_ops import (
@@ -122,7 +123,7 @@ if not _PAPER_DB.exists():
     st.page_link("app_pages/help.py", label="Довідка", icon=":material/menu_book:")
 
 
-@st.cache_data(ttl="5m", max_entries=8)
+@st.cache_data(ttl="5m", max_entries=8, show_spinner="Інвентар кешу…")
 def _cached_inventory(data_dir_s: str, symbols: tuple[str, ...], backend: str) -> pd.DataFrame:
     from scalper_hft.data.store import get_store
 
@@ -265,8 +266,9 @@ def _delete_cache_dialog(symbols: list[str]) -> None:
             st.rerun()
         if st.button("Видалити", type="primary", icon=":material/delete:", disabled=not files):
             deleted: list[str] = []
-            for sym in symbols:
-                deleted.extend(delete_symbol_cache(data_dir, sym))
+            with busy("Видалення файлів кешу…"):
+                for sym in symbols:
+                    deleted.extend(delete_symbol_cache(data_dir, sym))
             st.toast(f"Видалено файлів: {len(deleted)}", icon=":material/delete:")
             _invalidate_inventory()
             st.rerun()
@@ -383,7 +385,7 @@ def _cache_manager(inv_df: pd.DataFrame) -> None:
     _open_cache_dialog()
 
 
-@st.cache_data(ttl="30s", max_entries=4)
+@st.cache_data(ttl="30s", max_entries=4, show_spinner="Читання sweep.db…")
 def _cached_sweep(path_s: str) -> pd.DataFrame:
     from scalper_hft.research.sweep_store import SweepStore
 

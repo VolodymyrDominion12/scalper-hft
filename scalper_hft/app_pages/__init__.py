@@ -12,6 +12,9 @@ _COMMON_ALIASES = (
     "scalper_hft.app_pages._results",
     "app_pages._results",
     "_results",
+    "scalper_hft.app_pages._busy",
+    "app_pages._busy",
+    "_busy",
 )
 
 

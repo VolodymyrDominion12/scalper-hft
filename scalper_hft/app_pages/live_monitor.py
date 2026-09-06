@@ -8,6 +8,7 @@ import httpx
 import streamlit as st
 
 from scalper_hft.api.auth import create_access_token
+from scalper_hft.app_pages._busy import busy
 from scalper_hft.config import get_settings
 from scalper_hft.live.control import load_control, save_control
 from scalper_hft.live.store import PaperStore
@@ -85,11 +86,12 @@ with st.expander("⚙️ Параметри підключення до API та
     if btn_test:
         headers = {"Authorization": f"Bearer {st.session_state.live_jwt_token}"}
         try:
-            resp = httpx.get(
-                f"{st.session_state.live_api_base_url}/api/v1/status",
-                headers=headers,
-                timeout=3.0,
-            )
+            with busy("Перевірка REST зв'язку…"):
+                resp = httpx.get(
+                    f"{st.session_state.live_api_base_url}/api/v1/status",
+                    headers=headers,
+                    timeout=3.0,
+                )
             if resp.status_code == 200:
                 data = resp.json()
                 st.success(
@@ -235,18 +237,38 @@ with st.container(border=True):
                 if resp.status_code == 200:
                     st.success(f"✅ Позицію {selected_symbol} закрито.")
                 else:
-                    store.log_position(exchange=settings.exchange, symbol=selected_symbol, side="flat", size=0.0, entry_price=0.0, mark_price=0.0, unrealized_pnl=0.0, mode="paper")
+                    store.log_position(
+                        exchange=settings.exchange,
+                        symbol=selected_symbol,
+                        side="flat",
+                        size=0.0,
+                        entry_price=0.0,
+                        mark_price=0.0,
+                        unrealized_pnl=0.0,
+                        mode="paper",
+                    )
                     st.info(f"Оновлено локально: позицію {selected_symbol} закрито.")
                 st.rerun()
             except Exception:
-                store.log_position(exchange=settings.exchange, symbol=selected_symbol, side="flat", size=0.0, entry_price=0.0, mark_price=0.0, unrealized_pnl=0.0, mode="paper")
+                store.log_position(
+                    exchange=settings.exchange,
+                    symbol=selected_symbol,
+                    side="flat",
+                    size=0.0,
+                    entry_price=0.0,
+                    mark_price=0.0,
+                    unrealized_pnl=0.0,
+                    mode="paper",
+                )
                 st.info(f"Закрито в локальному сховищі: {selected_symbol}.")
                 st.rerun()
 
 
 # ─── 6. Симуляція сигналів (Paper Demo) ───────────────────────────────────────
 with st.expander("🧪 Симуляція тестових сигналів (Швидка перевірка WebSocket)", expanded=False):
-    st.caption("Натисніть кнопку, щоб створити тестову позицію і спостерігати миттєве оновлення віджета без перезавантаження сторінки.")
+    st.caption(
+        "Натисніть кнопку, щоб створити тестову позицію і спостерігати миттєве оновлення віджета без перезавантаження сторінки."
+    )
     col_d1, col_d2, col_d3 = st.columns(3)
 
     headers = {"Authorization": f"Bearer {st.session_state.live_jwt_token}"}
@@ -270,7 +292,16 @@ with st.expander("🧪 Симуляція тестових сигналів (Ш�
             except Exception:
                 # Прямий запис у базу, якщо REST офлайн
                 store = PaperStore()
-                store.log_position(exchange="binance", symbol="BTCUSDT", side="long", size=0.25, entry_price=64500.0, mark_price=64700.0, unrealized_pnl=42.50, mode="paper")
+                store.log_position(
+                    exchange="binance",
+                    symbol="BTCUSDT",
+                    side="long",
+                    size=0.25,
+                    entry_price=64500.0,
+                    mark_price=64700.0,
+                    unrealized_pnl=42.50,
+                    mode="paper",
+                )
                 st.toast("Записано в локальний PaperStore!", icon=":material/database:")
 
     with col_d2:
@@ -291,7 +322,16 @@ with st.expander("🧪 Симуляція тестових сигналів (Ш�
                 st.toast("Створено SHORT ETHUSDT!", icon=":material/trending_down:")
             except Exception:
                 store = PaperStore()
-                store.log_position(exchange="binance", symbol="ETHUSDT", side="short", size=2.5, entry_price=3450.0, mark_price=3470.0, unrealized_pnl=-15.80, mode="paper")
+                store.log_position(
+                    exchange="binance",
+                    symbol="ETHUSDT",
+                    side="short",
+                    size=2.5,
+                    entry_price=3450.0,
+                    mark_price=3470.0,
+                    unrealized_pnl=-15.80,
+                    mode="paper",
+                )
                 st.toast("Записано в локальний PaperStore!", icon=":material/database:")
 
     with col_d3:
@@ -312,7 +352,16 @@ with st.expander("🧪 Симуляція тестових сигналів (Ш�
                 st.toast("Створено LONG XRPUSDT!", icon=":material/trending_up:")
             except Exception:
                 store = PaperStore()
-                store.log_position(exchange="binance", symbol="XRPUSDT", side="long", size=1500.0, entry_price=0.58, mark_price=0.60, unrealized_pnl=18.20, mode="paper")
+                store.log_position(
+                    exchange="binance",
+                    symbol="XRPUSDT",
+                    side="long",
+                    size=1500.0,
+                    entry_price=0.58,
+                    mark_price=0.60,
+                    unrealized_pnl=18.20,
+                    mode="paper",
+                )
                 st.toast("Записано в локальний PaperStore!", icon=":material/database:")
 
 
@@ -343,13 +392,15 @@ with tab_trades:
         st.info("Немає угод у журналі.")
 
 with tab_sys:
-    st.json({
-        "exchange": settings.exchange,
-        "dry_run": settings.dry_run,
-        "maker_execution": settings.maker_execution,
-        "maker_fee": settings.maker_fee,
-        "taker_fee": settings.taker_fee,
-        "slippage_bps": settings.slippage_bps,
-        "api_secret_configured": bool(settings.api_secret_key),
-        "control_file": str(load_control()),
-    })
+    st.json(
+        {
+            "exchange": settings.exchange,
+            "dry_run": settings.dry_run,
+            "maker_execution": settings.maker_execution,
+            "maker_fee": settings.maker_fee,
+            "taker_fee": settings.taker_fee,
+            "slippage_bps": settings.slippage_bps,
+            "api_secret_configured": bool(settings.api_secret_key),
+            "control_file": str(load_control()),
+        }
+    )

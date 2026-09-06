@@ -211,6 +211,66 @@ def test_save_load_capacity_curve(tmp_path: Path) -> None:
     assert list(loaded["scale"]) == [1.0, 2.0, 5.0]
 
 
+def test_busy_overlay_css_targets_running_widget() -> None:
+    from scalper_hft.app_pages._busy import BUSY_OVERLAY_CSS
+
+    assert "stStatusWidgetRunningIcon" in BUSY_OVERLAY_CSS
+    assert "Обробка" in BUSY_OVERLAY_CSS
+    assert "stHeader" not in BUSY_OVERLAY_CSS
+    assert "top: 3.75rem" in BUSY_OVERLAY_CSS
+
+
+def test_busy_spinner_shows_elapsed_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+    import types
+    from contextlib import nullcontext
+
+    captured: dict[str, object] = {}
+    fake = types.ModuleType("streamlit")
+
+    def spinner(text: str, *, show_time: bool = False) -> object:
+        captured["text"] = text
+        captured["show_time"] = show_time
+        return nullcontext()
+
+    fake.spinner = spinner  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "streamlit", fake)
+    from scalper_hft.app_pages._busy import busy
+
+    with busy("Будую графік…"):
+        pass
+    assert captured["text"] == "Будую графік…"
+    assert captured["show_time"] is True
+
+
+def test_inject_busy_overlay_emits_style(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+    import types
+
+    html: list[str] = []
+    fake = types.ModuleType("streamlit")
+    fake.html = lambda body: html.append(body)  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "streamlit", fake)
+    from scalper_hft.app_pages._busy import BUSY_OVERLAY_CSS, inject_busy_overlay
+
+    inject_busy_overlay()
+    assert html
+    assert "<style>" in html[0]
+    assert "stStatusWidgetRunningIcon" in html[0]
+    assert BUSY_OVERLAY_CSS.strip() in html[0]
+
+
+def test_reload_shared_restores_busy_overlay_css() -> None:
+    import scalper_hft.app_pages._busy as busy_mod
+    from scalper_hft.app_pages import reload_shared
+
+    busy_mod.BUSY_OVERLAY_CSS = "mutated"
+    reload_shared()
+    import scalper_hft.app_pages._busy as refreshed
+
+    assert "stStatusWidgetRunningIcon" in refreshed.BUSY_OVERLAY_CSS
+
+
 def test_handle_capacity_writes_csv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from scalper_hft.research.job_handlers import handle_capacity
 

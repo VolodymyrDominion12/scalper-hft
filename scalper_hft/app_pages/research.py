@@ -10,6 +10,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from scalper_hft.app_pages._busy import busy
 from scalper_hft.app_pages._common import (
     BT_INTERVALS,
     RESEARCH_SECTIONS,
@@ -153,7 +154,7 @@ if section == "Sweep matrix":
 
     with col_right:
 
-        @st.cache_data(ttl=30, show_spinner=False)
+        @st.cache_data(ttl=30, show_spinner="Читання sweep.db…")
         def _load_sweep_df() -> pd.DataFrame:
             if not _SWEEP_DB.exists():
                 return pd.DataFrame()
@@ -288,7 +289,9 @@ elif section == "Filter attribution":
                     )
                     fig_attr.update_layout(xaxis_title="", yaxis_title="Кількість сигналів", height=350)
                     st.plotly_chart(fig_attr, width="stretch")
-                df_k = klines_from_store(str(rs_sym), str(rs_iv), int(rs_days))
+                df_k = None
+                with busy("Завантаження свічок для shadow PnL…"):
+                    df_k = klines_from_store(str(rs_sym), str(rs_iv), int(rs_days))
                 if df_k is not None and "close" in df_k.columns:
                     pnl_df = filter_pnl_impact(trace, df_k["close"], horizon_bars=int(fa_horizon))
                     if not pnl_df.empty:
