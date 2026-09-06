@@ -52,6 +52,9 @@ class RegimeSupervisor(Strategy):
         min_dwell_bars:     гістерезис structure-режиму: новий режим приймається
                             лише після N послідовних барів (default 0 = вимкнено).
                             Зменшує churn ваг на фліпах range↔trend.
+        vol_high_veto:      True — позиція 0 у режимі high-vol (default False).
+        trend_direction_gate: True — у trend_up без шортів, у trend_down без
+                            лонгів (default False).
     """
 
     name = "regime_supervisor"
@@ -154,13 +157,23 @@ class RegimeSupervisor(Strategy):
 
         # 3. Зважування
         if self.blend_mode == "regime_soft":
-            return self._blend_regime_soft(sig_df, regime_df)
+            result = self._blend_regime_soft(sig_df, regime_df)
         elif self.blend_mode == "best_prior":
-            return self._blend_best_prior(sig_df, regime_df)
+            result = self._blend_best_prior(sig_df, regime_df)
         elif self.blend_mode == "exp3":
-            return self._blend_exp3(sig_df, df["close"])
+            result = self._blend_exp3(sig_df, df["close"])
         else:  # contextual_hedge (default)
-            return self._blend_contextual_hedge(sig_df, regime_df, df["close"])
+            result = self._blend_contextual_hedge(sig_df, regime_df, df["close"])
+
+        # 4. Режимні гейти (опційні): vol-high veto та trend-direction gate.
+        from scalper_hft.features.regimes import apply_regime_gates
+
+        return apply_regime_gates(
+            result,
+            regime_df,
+            vol_high_veto=bool(self.get("vol_high_veto", False)),
+            trend_direction_gate=bool(self.get("trend_direction_gate", False)),
+        )
 
     # ────────────────────────────────────────────────────────────────────────
     # Blend implementations

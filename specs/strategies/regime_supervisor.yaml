@@ -1,5 +1,5 @@
 name: regime_supervisor
-version: "1.1"
+version: "1.2"
 status: candidate
 family: meta
 
@@ -60,6 +60,16 @@ params_doc:
       Гістерезис structure-режиму: новий режим приймається лише після N
       послідовних барів (0 = вимкнено). Зменшує churn ваг/стратегій на
       фліпах range↔trend.
+  vol_high_veto:
+    default: false
+    description: >
+      True — позиція 0 у режимі волатильності high (вибухові рухи ≠ стабільний
+      короткий edge; захист від momentum-crash і комісійного бюджету).
+  trend_direction_gate:
+    default: false
+    description: >
+      True — у trend_up заборонені шорти, у trend_down — лонги (не торгуємо
+      проти явного тренду; range — без обмежень).
 
 invariants:
   no_lookahead: true

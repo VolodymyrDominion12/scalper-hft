@@ -139,6 +139,36 @@ def apply_min_dwell(series: pd.Series, min_dwell: int) -> pd.Series:
     return pd.Series(out, index=series.index, dtype=object)
 
 
+def apply_regime_gates(
+    signal: pd.Series,
+    regime_df: pd.DataFrame,
+    *,
+    vol_high_veto: bool = False,
+    trend_direction_gate: bool = False,
+) -> pd.Series:
+    """Режимні гейти на готовий сигнал мета-стратегії (каузальні, без lookahead).
+
+    - vol_high_veto: у режимі high-vol позиція = 0 (дослідження: у вибуховій
+      волатильності короткий 1h-горизонт домінує реверсія, а моментум ловить
+      «momentum crash»; плюс комісійний бюджет на угоду);
+    - trend_direction_gate: у trend_up заборонені шорти, у trend_down — лонги
+      (не торгуємо проти явного тренду; range — без обмежень).
+    Regime-мітки (structure/vol) беруться з regime_df, обчисленого на закритих
+    барах; рушій зсуває сигнал на 1 — виконання з t+1.
+    """
+    if not (vol_high_veto or trend_direction_gate) or regime_df is None or regime_df.empty:
+        return signal.copy()
+    out = signal.copy()
+    vol = regime_df.reindex(signal.index)["vol"].fillna("normal")
+    structure = regime_df.reindex(signal.index)["structure"].fillna("range")
+    if vol_high_veto:
+        out = out.mask(vol == "high", 0.0)
+    if trend_direction_gate:
+        out = out.mask((structure == "trend_up") & (out < 0), 0.0)
+        out = out.mask((structure == "trend_down") & (out > 0), 0.0)
+    return out
+
+
 def named_market_state(
     close: pd.Series,
     *,

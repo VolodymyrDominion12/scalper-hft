@@ -9,6 +9,8 @@ from scalper_hft.features.regimes import (
     COMPOSITE_ORDER,
     STRUCTURE_LABELS,
     VOL_LABELS,
+    apply_min_dwell,
+    apply_regime_gates,
     market_structure,
     named_market_state,
     volatility_regime,
@@ -86,3 +88,46 @@ def test_volatility_regime_still_three_labels() -> None:
 def test_market_structure_rejects_negative_threshold() -> None:
     with pytest.raises(ValueError, match="trend_threshold"):
         market_structure(_close_range(n=60), trend_threshold=-0.1)
+
+
+def test_apply_min_dwell_hysteresis() -> None:
+    idx = pd.date_range("2025-01-01", periods=6, freq="1h")
+    series = pd.Series(["A", "A", "B", "B", "B", "A"], index=idx, dtype=object)
+    assert list(apply_min_dwell(series, 2)) == ["A", "A", "A", "B", "B", "B"]
+    # фліпи без підтвердження не проходять
+    flappy = pd.Series(["A", "B", "A", "B", "A", "B"], index=idx, dtype=object)
+    assert list(apply_min_dwell(flappy, 2).unique()) == ["A"]
+
+
+def _regime_df(structure: list[str], vol: list[str]) -> pd.DataFrame:
+    idx = pd.date_range("2025-01-01", periods=len(structure), freq="1h")
+    return pd.DataFrame(
+        {
+            "structure": pd.Series(structure, index=idx, dtype=object),
+            "vol": pd.Series(vol, index=idx, dtype=object),
+        }
+    )
+
+
+def test_apply_regime_gates_high_vol_veto() -> None:
+    idx = pd.date_range("2025-01-01", periods=3, freq="1h")
+    sig = pd.Series([1.0, -1.0, 1.0], index=idx)
+    regime = _regime_df(["range", "range", "range"], ["high", "normal", "normal"])
+    out = apply_regime_gates(sig, regime, vol_high_veto=True)
+    assert list(out) == [0.0, -1.0, 1.0]
+
+
+def test_apply_regime_gates_trend_direction() -> None:
+    idx = pd.date_range("2025-01-01", periods=3, freq="1h")
+    sig = pd.Series([-1.0, 1.0, 1.0], index=idx)  # шорт у тренді вгору, лонг у тренді вниз
+    regime = _regime_df(["trend_up", "trend_down", "range"], ["normal", "normal", "normal"])
+    out = apply_regime_gates(sig, regime, trend_direction_gate=True)
+    assert list(out) == [0.0, 0.0, 1.0]  # range — без обмежень
+
+
+def test_apply_regime_gates_noop_when_disabled() -> None:
+    idx = pd.date_range("2025-01-01", periods=3, freq="1h")
+    sig = pd.Series([1.0, -1.0, 1.0], index=idx)
+    regime = _regime_df(["trend_up", "high", "range"], ["normal", "high", "low"])
+    out = apply_regime_gates(sig, regime)
+    assert list(out) == [1.0, -1.0, 1.0]

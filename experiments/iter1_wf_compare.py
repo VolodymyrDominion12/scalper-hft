@@ -37,26 +37,44 @@ from scalper_hft.validation.walk_forward import run_walk_forward
 SYMBOLS = ["XRPUSDT", "AVAXUSDT", "UNIUSDT", "LINKUSDT", "AAVEUSDT", "ADAUSDT"]
 INTERVAL = "1h"
 BASE = "1m"
-CHILDREN = "supertrend,cross_momentum,stoch_rsi"
+# Два набори дітей: офіційний дефолт (mean_reversion,supertrend,hmm_reversion) і
+# «чистий» regime-спліт (тренд: supertrend/cross_momentum; рейндж: stoch_rsi).
+CHILDREN_SETS = {
+    "official": "mean_reversion,supertrend,hmm_reversion",
+    "split": "supertrend,cross_momentum,stoch_rsi",
+}
 
-VARIANTS: list[tuple[str, dict]] = [
-    ("single:supertrend", {"name": "supertrend"}),
-    ("single:cross_momentum", {"name": "cross_momentum"}),
-    ("single:stoch_rsi", {"name": "stoch_rsi"}),
-    ("sup:regime_soft:d0", {"name": "regime_supervisor", "blend_mode": "regime_soft", "min_dwell_bars": 0}),
-    ("sup:regime_soft:d3", {"name": "regime_supervisor", "blend_mode": "regime_soft", "min_dwell_bars": 3}),
-    ("sup:contextual_hedge:d0", {"name": "regime_supervisor", "blend_mode": "contextual_hedge", "min_dwell_bars": 0}),
-    ("sup:contextual_hedge:d3", {"name": "regime_supervisor", "blend_mode": "contextual_hedge", "min_dwell_bars": 3}),
-    ("sup:best_prior:d0", {"name": "regime_supervisor", "blend_mode": "best_prior", "min_dwell_bars": 0}),
-    ("sup:best_prior:d3", {"name": "regime_supervisor", "blend_mode": "best_prior", "min_dwell_bars": 3}),
-]
+
+def _variants() -> list[tuple[str, dict]]:
+    v: list[tuple[str, dict]] = [
+        ("single:supertrend", {"name": "supertrend"}),
+        ("single:stoch_rsi", {"name": "stoch_rsi"}),
+    ]
+    for cset, children in CHILDREN_SETS.items():
+        for mode in ("regime_soft", "contextual_hedge", "best_prior"):
+            for dwell in (0, 3):
+                v.append(
+                    (
+                        f"sup:{cset}:{mode}:d{dwell}",
+                        {
+                            "name": "regime_supervisor",
+                            "children": children,
+                            "blend_mode": mode,
+                            "min_dwell_bars": dwell,
+                        },
+                    )
+                )
+    return v
+
+
+VARIANTS: list[tuple[str, dict]] = _variants()
 
 
 def _build_strategy(variant: dict):
     if variant["name"] == "regime_supervisor":
         return get_strategy(
             "regime_supervisor",
-            strategies=CHILDREN,
+            strategies=variant["children"],
             blend_mode=variant["blend_mode"],
             min_dwell_bars=variant["min_dwell_bars"],
             n_hmm_states=3,
@@ -65,7 +83,7 @@ def _build_strategy(variant: dict):
     return get_strategy(variant["name"])
 
 
-def run_cell(symbol: str, variant_label: str, variant: dict, days: int, train: int, test: int) -> dict:
+def run_cell(symbol: str, variant_label: str, variant: dict, days: int, train: int, test: int, maker: bool) -> dict:
     settings = get_settings()
     strat = _build_strategy(variant)
     df = ensure_klines(symbol, INTERVAL, days, base_interval=BASE, derive=True, readonly=True)
@@ -83,6 +101,7 @@ def run_cell(symbol: str, variant_label: str, variant: dict, days: int, train: i
         cost=cost,
         position_pct=settings.position_pct,
         interval=INTERVAL,
+        is_maker=maker,
     )
     row = {
         "symbol": symbol,
@@ -90,6 +109,7 @@ def run_cell(symbol: str, variant_label: str, variant: dict, days: int, train: i
         "kind": variant["name"],
         "blend_mode": str(variant.get("blend_mode", "")),
         "dwell": variant.get("min_dwell_bars", ""),
+        "maker": maker,
         "n_bars": len(df),
         "n_windows": len(res.windows),
         "n_trades_oos": sum(w.n_trades for w in res.windows),
@@ -108,13 +128,18 @@ def main() -> None:
     ap.add_argument("--test", type=int, default=500)
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--symbols", type=str, default=",".join(SYMBOLS))
+    ap.add_argument("--maker", action="store_true", default=True)
     args = ap.parse_args()
 
     symbols = [s for s in args.symbols.split(",") if s]
     out_csv = Path("results/iter1_wf_compare.csv")
     out_md = Path("results/iter1_wf_compare.md")
 
-    cells = [(sym, label, variant, args.days, args.train, args.test) for sym in symbols for label, variant in VARIANTS]
+    cells = [
+        (sym, label, variant, args.days, args.train, args.test, args.maker)
+        for sym in symbols
+        for label, variant in VARIANTS
+    ]
     rows: list[dict] = []
     workers = args.workers if args.workers > 1 else 1
     if workers > 1:
@@ -141,7 +166,8 @@ def main() -> None:
         agg[r["variant"]].append(r)
     lines = ["# Iteration 1 — WF-порівняння regime-сутності vs singles (1h)", ""]
     lines.append(f"- days={args.days}, train={args.train}, test={args.test}, symbols={symbols}")
-    lines.append(f"- children: {CHILDREN}; maker=False (taker), без overlay")
+    children_desc = "; ".join(f"{k}={v}" for k, v in CHILDREN_SETS.items())
+    lines.append(f"- children sets: {children_desc}; is_maker={args.maker}, без overlay")
     lines.append("")
     lines.append("| variant | avg OOS SR | pos win frac | n_trades OOS | per-symbol OOS SR |")
     lines.append("|---|---|---|---|---|")
