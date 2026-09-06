@@ -231,6 +231,7 @@ def handle_overfit(payload: dict[str, Any], job_dir: Path, **_: Any) -> None:
         days,
         train_bars=train_bars,
         test_bars=test_bars,
+        strategy_params=payload.get("params") or None,
     )
     if audit.status != "ok":
         raise RuntimeError(audit.error or "аудит комірки не вдався")
@@ -294,6 +295,23 @@ def payload_from_backtest_cli(args: Any) -> dict[str, Any]:
         "trace": bool(getattr(args, "trace", False)),
         "base_interval": getattr(args, "base", None) or "1m",
         "breakeven_gate": bool(getattr(args, "breakeven_gate", False)),
+    }
+
+
+def payload_from_overfit_cli(args: Any) -> dict[str, Any]:
+    from scalper_hft.config import get_settings
+
+    settings = get_settings()
+    symbol = args.symbol or (settings.default_symbols[0] if settings.default_symbols else "BTCUSDT")
+    interval = args.interval or settings.default_interval
+    return {
+        "strategy": args.strategy,
+        "symbol": symbol,
+        "interval": interval,
+        "days": args.days,
+        "train_bars": getattr(args, "train", None),
+        "test_bars": getattr(args, "test", None),
+        "params": dict(getattr(args, "param_dict", None) or {}),
     }
 
 

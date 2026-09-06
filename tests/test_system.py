@@ -378,14 +378,13 @@ def test_delta_neutral_basis_accounting():
 
 
 def test_post_only_flag():
-    """post_only=True додає параметр postOnly до ордера."""
-    from scalper_hft.data.client import ExchangeClient
-
-    c = ExchangeClient(exchange_id="binance", market_type="spot")
-    # не робимо реальний запит — перевіряємо, що параметр прокидається в kwargs
+    """post_only=True додає параметр postOnly до ордера (без створення клієнта)."""
     import inspect
 
-    src = inspect.getsource(c.create_order)
+    from scalper_hft.data.client import ExchangeClient
+
+    # source-level перевірка на КЛАСІ — жодного ccxt-інстансу/мережі в тестах
+    src = inspect.getsource(ExchangeClient.create_order)
     assert "postOnly" in src and "post_only" in src
 
 
