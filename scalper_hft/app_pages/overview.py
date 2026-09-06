@@ -78,29 +78,34 @@ st.caption(
 st.subheader("Системні KPI та Боти")
 if _PAPER_DB.exists():
     try:
-        from scalper_hft.live.store import PaperStore
         with PaperStore(_PAPER_DB) as p_store:
-            accounts = pd.read_sql_query("SELECT * FROM accounts", p_store._conn)
+            accounts = p_store.all_accounts()
             bots = p_store.all_bots()
-            
+
         if not accounts.empty:
             st.caption("Останні баланси по біржах (live/paper)")
-            # Get latest balance per exchange/mode
             accounts["ts"] = pd.to_datetime(accounts["ts"])
             latest = accounts.sort_values("ts").groupby(["exchange", "mode"]).last().reset_index()
-            
+
             cols = st.columns(len(latest) if len(latest) > 0 else 1)
             for i, row in latest.iterrows():
                 with cols[i % len(cols)]:
-                    st.metric(f"{row['exchange']} ({row['mode']})", f"${row['balance']:,.2f}", 
-                              delta=f"Unrealized PnL: ${row['unrealized_pnl']:.2f}")
+                    st.metric(
+                        f"{row['exchange']} ({row['mode']})",
+                        f"${row['balance']:,.2f}",
+                        delta=f"Unrealized PnL: ${row['unrealized_pnl']:.2f}",
+                    )
 
         if not bots.empty:
             st.caption("Активні боти (Bot Cards)")
             bot_cols = st.columns(min(3, len(bots)))
             for i, row in bots.iterrows():
                 with bot_cols[i % 3]:
-                    st.info(f"**{row['pid']}**\n\nБіржа: {row['exchange']} | Режим: {row['mode']}\n\nОстанній пінг: {row['last_ping']}")
+                    st.info(
+                        f"**{row['bot_id']}**\n\n"
+                        f"Біржа: {row['exchange']} | Режим: {row['mode']}\n\n"
+                        f"Останній пінг: {row['last_heartbeat']}"
+                    )
 
     except Exception as e:
         st.warning(f"Не вдалося завантажити Multi-exchange KPI: {e}")
@@ -463,14 +468,11 @@ _cache_manager(inv)
 
 st.header(":material/monitoring: Paper pairs")
 if _PAPER_DB.exists():
-    store = PaperStore(_PAPER_DB)
-    try:
+    with PaperStore(_PAPER_DB) as store:
         stats = store.fill_stats()
         eq = store.all_equity()
         months = store.all_months()
         recent_orders = store.recent_orders()
-    finally:
-        store.close()
 
     k = compute_paper_kpis(stats, eq)
     fill_delta = None if k.fill_rate != k.fill_rate else f"{k.fill_rate:.0%} fill-rate"

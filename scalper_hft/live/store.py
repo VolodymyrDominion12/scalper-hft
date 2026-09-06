@@ -139,12 +139,12 @@ class PaperStore:
         використовуємо спробу і ігноруємо OperationalError.
         """
         migrations = [
-            ("equity",  "exchange TEXT NOT NULL DEFAULT 'binance'"),
-            ("equity",  "mode TEXT NOT NULL DEFAULT 'paper'"),
-            ("orders",  "exchange TEXT NOT NULL DEFAULT 'binance'"),
-            ("orders",  "mode TEXT NOT NULL DEFAULT 'paper'"),
-            ("trades",  "exchange TEXT NOT NULL DEFAULT 'binance'"),
-            ("trades",  "mode TEXT NOT NULL DEFAULT 'paper'"),
+            ("equity", "exchange TEXT NOT NULL DEFAULT 'binance'"),
+            ("equity", "mode TEXT NOT NULL DEFAULT 'paper'"),
+            ("orders", "exchange TEXT NOT NULL DEFAULT 'binance'"),
+            ("orders", "mode TEXT NOT NULL DEFAULT 'paper'"),
+            ("trades", "exchange TEXT NOT NULL DEFAULT 'binance'"),
+            ("trades", "mode TEXT NOT NULL DEFAULT 'paper'"),
         ]
         cur = self._conn.cursor()
         for table, col_def in migrations:
@@ -167,11 +167,16 @@ class PaperStore:
         else:
             cur.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
 
-
         self._conn.commit()
 
     def close(self) -> None:
         self._conn.close()
+
+    def __enter__(self) -> PaperStore:
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        self.close()
 
     # ─── v1: equity / orders / trades / months ───────────────────────────────
 
@@ -346,13 +351,18 @@ class PaperStore:
             return None
         return dict(row)
 
-    def recent_accounts(
-        self, exchange: str = "binance", mode: str = "paper", limit: int = 200
-    ) -> pd.DataFrame:
+    def recent_accounts(self, exchange: str = "binance", mode: str = "paper", limit: int = 200) -> pd.DataFrame:
         return pd.read_sql_query(
             "SELECT ts, exchange, mode, balance, unrealized_pnl, margin_used, available FROM accounts WHERE exchange = ? AND mode = ? ORDER BY id DESC LIMIT ?",
             self._conn,
             params=(exchange, mode, limit),
+        )
+
+    def all_accounts(self) -> pd.DataFrame:
+        """Усі знімки балансів по біржах і режимах."""
+        return pd.read_sql_query(
+            "SELECT ts, exchange, mode, balance, unrealized_pnl, margin_used, available FROM accounts ORDER BY id",
+            self._conn,
         )
 
     # ─── v2: positions ────────────────────────────────────────────────────────
@@ -377,9 +387,7 @@ class PaperStore:
         )
         self._conn.commit()
 
-    def open_positions(
-        self, exchange: str | None = None, mode: str | None = None
-    ) -> pd.DataFrame:
+    def open_positions(self, exchange: str | None = None, mode: str | None = None) -> pd.DataFrame:
         """Останній знімок позицій (по одному рядку на symbol, з найбільшим id)."""
         where_parts = []
         params: list[Any] = []
@@ -458,5 +466,3 @@ class PaperStore:
         """Повернути поточну версію схеми."""
         row = self._conn.execute("SELECT version FROM schema_version").fetchone()
         return int(row[0]) if row else 1
-
-

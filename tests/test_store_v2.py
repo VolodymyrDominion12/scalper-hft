@@ -13,6 +13,7 @@ from scalper_hft.live.sync_engine import SyncEngine
 
 # ─── Фікстури ─────────────────────────────────────────────────────────────────
 
+
 @pytest.fixture
 def store(tmp_path: Path) -> PaperStore:
     """Свіжий PaperStore у тимчасовій директорії."""
@@ -48,15 +49,22 @@ def v1_store_path(tmp_path: Path) -> Path:
         CREATE TABLE snapshots (id TEXT PRIMARY KEY, payload TEXT NOT NULL, saved_at TEXT NOT NULL);
     """)
     # Заповнити тестовими даними v1
-    conn.execute("INSERT INTO equity (ts, pair, equity, cash, realized_pnl) VALUES ('2026-01-01', 'XRP/BTC', 1000, 900, 100)")
-    conn.execute("INSERT INTO trades (ts, pair, symbol, side, size, entry_price, kind) VALUES ('2026-01-01', 'XRP/BTC', 'XRPUSDT', 'buy', 100, 0.5, 'trade')")
-    conn.execute("INSERT INTO orders (ts, pair, symbol, side, size, price, status, reason) VALUES ('2026-01-01', 'XRP/BTC', 'XRPUSDT', 'buy', 100, 0.5, 'filled', 'entry')")
+    conn.execute(
+        "INSERT INTO equity (ts, pair, equity, cash, realized_pnl) VALUES ('2026-01-01', 'XRP/BTC', 1000, 900, 100)"
+    )
+    conn.execute(
+        "INSERT INTO trades (ts, pair, symbol, side, size, entry_price, kind) VALUES ('2026-01-01', 'XRP/BTC', 'XRPUSDT', 'buy', 100, 0.5, 'trade')"
+    )
+    conn.execute(
+        "INSERT INTO orders (ts, pair, symbol, side, size, price, status, reason) VALUES ('2026-01-01', 'XRP/BTC', 'XRPUSDT', 'buy', 100, 0.5, 'filled', 'entry')"
+    )
     conn.commit()
     conn.close()
     return db_path
 
 
 # ─── Тести схеми і міграції ───────────────────────────────────────────────────
+
 
 def test_new_store_schema_version(store: PaperStore) -> None:
     """Новий store має правильну версію схеми."""
@@ -130,14 +138,12 @@ def test_new_tables_created(store: PaperStore) -> None:
 
 # ─── Тести log_equity з exchange/mode ─────────────────────────────────────────
 
+
 def test_log_equity_with_exchange(store: PaperStore) -> None:
     """log_equity зберігає exchange і mode."""
     ts = pd.Timestamp.now(tz="UTC")
-    store.log_equity(ts, "XRP/BTC", equity=1050.0, cash=950.0, realized_pnl=50.0,
-                     exchange="bybit", mode="live")
-    row = store._conn.execute(
-        "SELECT exchange, mode FROM equity WHERE pair='XRP/BTC'"
-    ).fetchone()
+    store.log_equity(ts, "XRP/BTC", equity=1050.0, cash=950.0, realized_pnl=50.0, exchange="bybit", mode="live")
+    row = store._conn.execute("SELECT exchange, mode FROM equity WHERE pair='XRP/BTC'").fetchone()
     assert row["exchange"] == "bybit"
     assert row["mode"] == "live"
 
@@ -152,6 +158,7 @@ def test_log_equity_default_exchange(store: PaperStore) -> None:
 
 
 # ─── Тести accounts ───────────────────────────────────────────────────────────
+
 
 def test_log_and_latest_account(store: PaperStore) -> None:
     """log_account → latest_account повертає останній запис."""
@@ -194,15 +201,62 @@ def test_recent_accounts_returns_df(store: PaperStore) -> None:
     assert "unrealized_pnl" in df.columns
 
 
+def test_all_accounts_empty(store: PaperStore) -> None:
+    """all_accounts без даних → порожній DataFrame."""
+    df = store.all_accounts()
+    assert df.empty
+    assert "exchange" in df.columns
+    assert "balance" in df.columns
+
+
+def test_all_accounts_includes_all_exchanges(store: PaperStore) -> None:
+    """all_accounts повертає знімки з усіх бірж, не лише однієї."""
+    ts = pd.Timestamp.now(tz="UTC")
+    store.log_account(ts, "binance", "paper", 10000.0, 0.0, 0.0, 10000.0)
+    store.log_account(ts, "bybit", "live", 5000.0, 1.0, 0.0, 5000.0)
+    df = store.all_accounts()
+    assert set(df["exchange"]) == {"binance", "bybit"}
+    assert set(df["mode"]) == {"paper", "live"}
+
+
+def test_paper_store_context_manager_closes_connection(tmp_path: Path) -> None:
+    """with PaperStore закриває SQLite-з'єднання на виході."""
+    path = tmp_path / "ctx.sqlite"
+    with PaperStore(path) as ctx_store:
+        assert ctx_store.schema_version() == SCHEMA_VERSION
+    with pytest.raises(sqlite3.ProgrammingError):
+        ctx_store.schema_version()
+
+
+def test_dashboard_kpi_read_pattern(tmp_path: Path) -> None:
+    """Overview KPI читає accounts/bots через публічний API в with-блоці."""
+    path = tmp_path / "kpi.sqlite"
+    seed = PaperStore(path)
+    ts = pd.Timestamp.now(tz="UTC")
+    seed.log_account(ts, "binance", "paper", 10000.0, 25.0, 0.0, 10000.0)
+    seed.upsert_bot("bot1", "binance", "BTCUSDT", "1h", "pairs_arb", "paper", "running")
+    seed.close()
+
+    with PaperStore(path) as p_store:
+        accounts = p_store.all_accounts()
+        bots = p_store.all_bots()
+
+    assert not accounts.empty
+    assert accounts.iloc[0]["balance"] == 10000.0
+    assert list(bots["bot_id"]) == ["bot1"]
+    assert "last_heartbeat" in bots.columns
+    assert "pid" not in bots.columns
+    assert "last_ping" not in bots.columns
+
+
 # ─── Тести positions ──────────────────────────────────────────────────────────
+
 
 def test_log_and_open_positions(store: PaperStore) -> None:
     """log_position → open_positions повертає відкриті позиції."""
     ts = pd.Timestamp.now(tz="UTC")
-    store.log_position(ts, "binance", "BTCUSDT", "long", 0.1, 60000.0,
-                       mark_price=61000.0, unrealized_pnl=100.0)
-    store.log_position(ts, "binance", "ETHUSDT", "short", 1.0, 3000.0,
-                       mark_price=2950.0, unrealized_pnl=50.0)
+    store.log_position(ts, "binance", "BTCUSDT", "long", 0.1, 60000.0, mark_price=61000.0, unrealized_pnl=100.0)
+    store.log_position(ts, "binance", "ETHUSDT", "short", 1.0, 3000.0, mark_price=2950.0, unrealized_pnl=50.0)
 
     df = store.open_positions(exchange="binance")
     assert len(df) == 2
@@ -238,12 +292,18 @@ def test_open_positions_exchange_filter(store: PaperStore) -> None:
 
 # ─── Тести bots ───────────────────────────────────────────────────────────────
 
+
 def test_upsert_bot_new(store: PaperStore) -> None:
     """upsert_bot реєструє нового бота."""
     store.upsert_bot(
-        "bot_xrpbtc", "binance", "XRPUSDT", "1h",
-        "regime_supervisor", "paper", "running",
-        config={"blend_mode": "contextual_hedge"}
+        "bot_xrpbtc",
+        "binance",
+        "XRPUSDT",
+        "1h",
+        "regime_supervisor",
+        "paper",
+        "running",
+        config={"blend_mode": "contextual_hedge"},
     )
     df = store.all_bots()
     assert len(df) == 1
@@ -284,6 +344,7 @@ def test_all_bots_empty(store: PaperStore) -> None:
 
 # ─── Тести SyncEngine ─────────────────────────────────────────────────────────
 
+
 def test_sync_engine_paper_account_noop(tmp_path: Path) -> None:
     """SyncEngine paper mode sync_account — no-op, не викликає ccxt."""
     store = PaperStore(tmp_path / "s.sqlite")
@@ -320,9 +381,7 @@ def test_sync_engine_live_account_calls_ccxt(tmp_path: Path) -> None:
 
     # Мок ccxt exchange
     mock_exchange = MagicMock()
-    mock_exchange.fetch_balance.return_value = {
-        "USDT": {"total": 10000.0, "free": 9000.0, "used": 1000.0}
-    }
+    mock_exchange.fetch_balance.return_value = {"USDT": {"total": 10000.0, "free": 9000.0, "used": 1000.0}}
     mock_exchange.fetch_positions.return_value = []
 
     with patch.object(engine, "_get_exchange", return_value=mock_exchange):
@@ -365,9 +424,12 @@ def test_sync_engine_live_positions_calls_ccxt(tmp_path: Path) -> None:
 def test_sync_engine_start_stop(tmp_path: Path) -> None:
     """SyncEngine start() запускає thread, stop() зупиняє."""
     import time
+
     store = PaperStore(tmp_path / "s.sqlite")
     engine = SyncEngine(
-        store, exchange_id="binance", mode="paper",
+        store,
+        exchange_id="binance",
+        mode="paper",
         account_interval_sec=10,
         position_interval_sec=10,
     )
