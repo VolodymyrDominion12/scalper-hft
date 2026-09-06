@@ -1057,7 +1057,12 @@ def run_trader_once(
     if ctrl.pause:
         return "hold:paused"
     trader.poll_pending_orders(now=now)
-    reconcile_exchange_state(trader.account, trader.client, dry_run=trader.settings.dry_run)
+    reconcile_exchange_state(
+        trader.account,
+        trader.client,
+        dry_run=trader.settings.dry_run,
+        scope={trader.symbol},
+    )
     if not trader.settings.dry_run:
         trader.sync_live_equity(now=now)
     signal = trader.compute_signal(df, now=now)

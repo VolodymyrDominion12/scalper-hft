@@ -917,7 +917,12 @@ class PairsPaperRunner:
         if ctrl.pause:
             return "hold:paused"
         if reconcile:
-            reconcile_exchange_state(self.account, self.client, dry_run=self._dry_run)
+            reconcile_exchange_state(
+                self.account,
+                self.client,
+                dry_run=self._dry_run,
+                scope={self.leg1, self.leg2},
+            )
         self.engine.control_block_entries = ctrl.no_new_entries
         df1 = closed_klines(_fetch_ohlcv(self.leg1, self.interval), self.interval, now=now)
         df2 = closed_klines(_fetch_ohlcv(self.leg2, self.interval), self.interval, now=now)
@@ -1109,7 +1114,8 @@ class PairsPortfolioRunner:
         if ctrl.pause:
             return "hold:paused"
         self._roll_week(now)
-        reconcile_exchange_state(self.account, self.client, dry_run=self._dry_run)
+        scope = {sym for r in self.runners for sym in (r.leg1, r.leg2)}
+        reconcile_exchange_state(self.account, self.client, dry_run=self._dry_run, scope=scope)
         halt = self._should_halt_entries()
         for r in self.runners:
             r.engine.portfolio_block_entries = halt

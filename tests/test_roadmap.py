@@ -64,6 +64,26 @@ def test_reconcile_detects_drift() -> None:
     assert not bad and "short" in reason
 
 
+def test_reconcile_scope_ignores_foreign_positions() -> None:
+    """Сторонні позиції того ж рахунку (поза scope трейдера) не тригерять KillSwitch."""
+    acc = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
+    ts = pd.Timestamp("2025-01-01")
+    acc.open_position("BTCUSDT", "long", 1.0, 100.0, ts)
+    exchange = {
+        "BTCUSDT": ExchangePosition("BTCUSDT", "long", 1.0),
+        "ETHUSDT": ExchangePosition("ETHUSDT", "short", 2.0),  # чужа позиція
+    }
+    # exact-set без scope → false-trip
+    ok, _ = reconcile_positions(acc, exchange)
+    assert not ok
+    # зі scope={BTCUSDT} — ETHUSDT ігнорується
+    ok2, reason2 = reconcile_positions(acc, exchange, scope={"BTCUSDT"})
+    assert ok2, reason2
+    # локальна розбіжність у межах scope все одно ловиться
+    bad, reason = reconcile_positions(acc, {"BTCUSDT": ExchangePosition("BTCUSDT", "short", 1.0)}, scope={"BTCUSDT"})
+    assert not bad and "short" in reason
+
+
 def test_halt_if_drift_paper_noop() -> None:
     acc = PaperAccount(10_000.0)
     halt_if_drift(acc, [{"symbol": "BTCUSDT", "side": "long", "contracts": 1}], dry_run=True)

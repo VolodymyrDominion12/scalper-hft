@@ -47,6 +47,23 @@ settings = get_settings()
 
 apply_research_bt_prefill(st.session_state)
 
+
+def _param_combos(strategy: Any) -> int:
+    """Кількість комбінацій параметрів (добуток розмірів ґраток) для DSR.
+
+    Раніше в DSR передавався `len(param_space)` (кількість ПАРАМЕТРІВ),
+    що занижувало поправку на множинне тестування. Той самий розрахунок,
+    що й у CLI (`cli/_common.py::_param_combinations`) та cell_audit.
+    """
+    ps = getattr(strategy, "param_space", {}) or {}
+    if not ps:
+        return 1
+    combos = 1
+    for _lo, _hi, _s in ps.values():
+        step_f = float(_s) if _s else 1.0
+        combos *= max(int((float(_hi) - float(_lo)) / step_f) + 1, 1)
+    return min(max(combos, 1), 100_000)
+
 st.title("Бектест")
 
 st.sidebar.header("Параметри", divider=False)
@@ -285,7 +302,7 @@ elif _job.status == "succeeded":
         else:
             m = pairs_res.metrics
             ret = pairs_res.equity.pct_change().dropna()
-            n_trials = estimate_n_trials(max(len(get_strategy("pairs_arb").param_space), 1), 40)
+            n_trials = estimate_n_trials(_param_combos(get_strategy("pairs_arb")), 40)
             dsr = deflated_sharpe_ratio(ret.values, n_trials=n_trials)
             verdict = dsr_verdict(dsr)
             dsr_label = {"significant": "значущий", "weak": "слабкий", "none": "немає edge"}[verdict]
@@ -325,7 +342,7 @@ elif _job.status == "succeeded":
             st.session_state.pop("bt_sel_ts", None)
             m = res.metrics
             ret = res.equity.pct_change().dropna()
-            n_trials = estimate_n_trials(max(len(strategy.param_space), 1), 40)
+            n_trials = estimate_n_trials(_param_combos(strategy), 40)
             dsr = deflated_sharpe_ratio(ret.values, n_trials=n_trials)
             verdict = dsr_verdict(dsr)
             dsr_label = {"significant": "значущий", "weak": "слабкий", "none": "немає edge"}[verdict]

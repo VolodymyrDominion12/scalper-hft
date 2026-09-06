@@ -10,10 +10,14 @@
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pandas as pd
 
 from scalper_hft.strategies.base import Strategy
+
+logger = logging.getLogger(__name__)
 
 
 def estimate_ou_parameters(spread: pd.Series) -> dict[str, float]:
@@ -168,7 +172,19 @@ class SparseBasketArb(Strategy):
         динамічний спред кошика та z-score.
         """
         if basket_df is None or basket_df.empty:
-            # Фолбек на одиночний ряд (mean-reversion на close)
+            # Фолбек на одиночний ряд (mean-reversion на close).
+            # УВАГА: бектест-рушій НЕ передає basket_df (багатоактивний контур
+            # не підключений), тому ця гілка — ЄДИНА досяжна через CLI/рушій:
+            # «sparse_basket» у бектесті фактично = single-series z-score MR,
+            # а НЕ кошиковий арбітраж. Логуємо попередження один раз, щоб
+            # результати не трактувались як валідація basket-гіпотези.
+            if not getattr(self, "_warned_fallback", False):
+                self._warned_fallback = True
+                logger.warning(
+                    "sparse_basket: basket_df не передано (multi-asset контур не "
+                    "підключений до рушія) — працює single-series z-score "
+                    "mean-reversion fallback, НЕ кошиковий арбітраж"
+                )
             close = df["close"]
             ma = close.rolling(self.lookback, min_periods=20).mean()
             std = close.rolling(self.lookback, min_periods=20).std().replace(0, np.nan)

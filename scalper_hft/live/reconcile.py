@@ -40,11 +40,20 @@ def reconcile_positions(
     exchange: dict[str, ExchangePosition],
     *,
     size_tol: float = 1e-8,
+    scope: set[str] | None = None,
 ) -> tuple[bool, str]:
-    """Порівняти локальні ноги з біржею. Ключі account можуть бути `pair:SYMBOL`."""
+    """Порівняти локальні ноги з біржею. Ключі account можуть бути `pair:SYMBOL`.
+
+    scope: множина символів, які КЕРУЄ цей трейдер/ранере. Якщо задано —
+    сторонні позиції того ж біржового рахунку (інший трейдер, ручні угоди)
+    НЕ тригерять KillSwitch: звіряються лише локальні ноги в межах scope і
+    лише exchange-позиції в межах scope. Без scope поведінка стара (exact-set).
+    """
     local_net: dict[str, float] = {}
     for key, pos in account.positions.items():
         sym = key.split(":")[-1]
+        if scope is not None and sym not in scope:
+            continue
         signed = pos.size if pos.side == "long" else -pos.size
         local_net[sym] = local_net.get(sym, 0.0) + signed
 
@@ -63,7 +72,8 @@ def reconcile_positions(
         if abs(ex.size - size) > size_tol * max(size, 1.0):
             return False, f"{sym}: розмір {size} vs біржа {ex.size}"
 
-    for sym, ex in exchange.items():
+    exchange_filtered = {s: ex for s, ex in exchange.items() if scope is None or s in scope}
+    for sym, ex in exchange_filtered.items():
         if sym not in local:
             return False, f"на біржі є {sym} {ex.side}, локально немає"
     return True, "ok"
@@ -74,20 +84,29 @@ def halt_if_drift(
     raw_positions: list[dict],
     *,
     dry_run: bool = True,
+    scope: set[str] | None = None,
 ) -> None:
     """У live: кинути KillSwitch при розходженні. Paper — no-op."""
     if dry_run:
         return
-    ok, reason = reconcile_positions(account, parse_exchange_positions(raw_positions))
+    ok, reason = reconcile_positions(
+        account, parse_exchange_positions(raw_positions), scope=scope
+    )
     if not ok:
         raise KillSwitch(reason)
 
 
-def reconcile_exchange_state(account: PaperAccount, client: object | None, *, dry_run: bool) -> None:
+def reconcile_exchange_state(
+    account: PaperAccount,
+    client: object | None,
+    *,
+    dry_run: bool,
+    scope: set[str] | None = None,
+) -> None:
     """Paper: no-op. Live: fetch_positions + halt_if_drift. KillSwitch не ковтати."""
     if dry_run:
         return
     if client is None or not hasattr(client, "fetch_positions"):
         raise RuntimeError("Live звірка потребує клієнт біржі з fetch_positions")
     raw = client.fetch_positions()
-    halt_if_drift(account, raw, dry_run=False)
+    halt_if_drift(account, raw, dry_run=False, scope=scope)
