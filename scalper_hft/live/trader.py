@@ -102,7 +102,7 @@ class PendingOrder:
     reduce_only: bool
     kind: str  # "open" | "close"
     pos_side: str = ""  # long | short (для kind="open")
-    placed_ts: object = None
+    placed_ts: pd.Timestamp | None = None
 
 
 class SilentAttritionKillSwitch:

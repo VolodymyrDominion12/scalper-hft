@@ -63,7 +63,7 @@ def apply_stress(
     # rolling-сума у позиції t покриває [t−crash_bars+1, t] → посилюємо цей інтервал
     if crash_mult > 1.0 and len(out) > crash_bars:
         roll = out.rolling(crash_bars).sum()
-        worst_end = int(np.nanargmin(roll.values))
+        worst_end = int(np.nanargmin(roll.to_numpy(dtype=float)))
         if np.isfinite(roll.iloc[worst_end]):
             idx = np.arange(max(0, worst_end - crash_bars + 1), worst_end + 1)
             out.iloc[idx] = out.iloc[idx] * crash_mult

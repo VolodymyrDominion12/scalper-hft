@@ -131,7 +131,7 @@ def excursions_from_bars(trades: pd.DataFrame, bars: pd.DataFrame) -> pd.DataFra
         return trades.copy()
     rows: list[dict[str, object]] = []
     for _, trade in trades.iterrows():
-        rec = trade.to_dict()
+        rec: dict[str, object] = {str(k): v for k, v in trade.to_dict().items()}
         entry_ts = pd.Timestamp(trade["entry_ts"])
         exit_ts = pd.Timestamp(trade.get("exit_ts", trade["entry_ts"]))
         entry_px = (

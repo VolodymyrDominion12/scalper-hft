@@ -123,7 +123,7 @@ def resample_klines(
     tgt_min = interval_minutes(target)
     check_target_valid(src_min, tgt_min)
 
-    out = df.resample(_rule(tgt_min), label="left", closed="left").agg(_AGG)
+    out = df.resample(_rule(tgt_min), label="left", closed="left").agg(_AGG)  # type: ignore[arg-type]
     out = out.dropna(subset=["open"])  # порожні біни (пропуски в даних)
 
     if drop_incomplete:

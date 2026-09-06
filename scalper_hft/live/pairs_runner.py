@@ -169,7 +169,7 @@ class PairsEngine:
         self.coint_kill = coint_kill
         self.portfolio_block_entries = False
         self.control_block_entries = False
-        self._spread_hist = pd.Series(dtype=float)
+        self._spread_hist = pd.Series(dtype=float, index=pd.DatetimeIndex([]))
         self.wait_bars = wait_bars if wait_bars is not None else settings.maker_fill_wait_bars
         self.size_pct = pair_size_pct(n_pairs, settings.pair_notional_pct, settings.portfolio_notional_pct)
         self.max_losing_months = settings.max_losing_months
@@ -504,7 +504,7 @@ class PairsEngine:
         self._last_week = week
         self._roll_month(ts, equity)
         if close1 > 0 and close2 > 0:
-            self._spread_hist.loc[ts] = float(np.log(close1) - np.log(close2))
+            self._spread_hist.loc[pd.Timestamp(ts)] = float(np.log(close1) - np.log(close2))  # type: ignore[call-overload]
         if self.is_journal.records:
             mid1 = 0.5 * (high1 + low1)
             mid2 = 0.5 * (high2 + low2)
@@ -537,7 +537,7 @@ class PairsEngine:
         l1 = common["l1_close"].astype(float)
         l2 = common["l2_close"].astype(float)
         ok = (l1 > 0) & (l2 > 0)
-        self._spread_hist = np.log(l1[ok]) - np.log(l2[ok])
+        self._spread_hist = pd.Series(np.log(l1[ok]) - np.log(l2[ok]), index=l1[ok].index, dtype=float)
 
     def to_snapshot(self) -> dict[str, Any]:
         pending: list[dict[str, Any]] | None = None
@@ -627,7 +627,8 @@ def replay_pairs(
     equity_pts: list[tuple[pd.Timestamp, float]] = []
     actions: list[str] = []
     prev: pd.Timestamp | None = None
-    for ts, row in common.iterrows():
+    for ts_raw, row in common.iterrows():
+        ts = pd.Timestamp(str(ts_raw))
         action = engine.on_bar(
             ts,
             float(row["l1_high"]),

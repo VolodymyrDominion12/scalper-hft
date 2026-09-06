@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -80,7 +81,7 @@ def estimate_n_trials(param_combinations: int, backtests_per_combo: int = 1, mul
 
 
 def deflated_sharpe_ratio(
-    returns: Sequence[float] | pd.Series,
+    returns: Sequence[float] | pd.Series | np.ndarray,
     n_trials: int,
     skew: float | None = None,
     kurtosis: float | None = None,
@@ -100,11 +101,11 @@ def deflated_sharpe_ratio(
         return 0.0
     sr = ret.mean() / ret.std(ddof=1) if ret.std(ddof=1) > 0 else 0.0
     if skew is None:
-        skew = float(pd.Series(ret).skew())
+        skew = float(cast(float, pd.Series(ret).skew()))
     if kurtosis is None:
         # pandas .kurt() = НАДЛИШКОВИЙ ексцес; формула Bailey-LdP хоче ЗВИЧАЙНИЙ
         # (raw) γ4 = excess + 3 — інакше variance-терм занижений, DSR завищений.
-        kurtosis = float(pd.Series(ret).kurt()) + 3.0
+        kurtosis = float(cast(float, pd.Series(ret).kurt())) + 3.0
 
     # дисперсія оцінки Sharpe (Lo 2002 / Bailey-LdP):
     # V[SR] = (1 − skew×SR + (kurt−1)/4×SR²) / (n−1)
@@ -176,8 +177,8 @@ def probabilistic_sharpe_ratio(
         return 0.0
     sr = float(ret.mean() / std) - sr_benchmark
     series = pd.Series(ret)
-    skew = float(series.skew())
-    kurt = float(series.kurt()) + 3.0  # pandas kurt = excess; формула хоче raw kurtosis
+    skew = float(cast(float, series.skew()))
+    kurt = float(cast(float, series.kurt())) + 3.0  # pandas kurt = excess; формула хоче raw kurtosis
     var_term = 1.0 - skew * sr + (kurt - 1.0) / 4.0 * sr**2
     if var_term <= 0.0:
         return 0.0

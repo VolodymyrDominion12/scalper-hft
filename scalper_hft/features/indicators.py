@@ -62,7 +62,7 @@ def realized_vol(close: pd.Series, window: int = 30, bars_per_year: float | None
     bars_per_year: кількість барів у році для ануалізації. Якщо None,
     визначається автоматично з частоти DatetimeIndex, або fallback на 525 600 (1m).
     """
-    log_ret = np.log(close / close.shift(1))
+    log_ret = pd.Series(np.log(close / close.shift(1)), index=close.index)
     if bars_per_year is None:
         if isinstance(close.index, pd.DatetimeIndex) and len(close) > 1:
             diffs = close.index.to_series().diff().dropna()

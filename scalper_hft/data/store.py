@@ -122,7 +122,7 @@ def _span_from_column(path: Path, ts_name: str) -> tuple[pd.Timestamp | None, pd
 def _naive_utc(value: object) -> pd.Timestamp | None:
     if value is None:
         return None
-    ts = pd.Timestamp(value)
+    ts = pd.Timestamp(value)  # type: ignore[arg-type]
     if pd.isna(ts):
         return None
     if ts.tzinfo is not None:
@@ -394,7 +394,7 @@ class PostgresStore:
                 elif table == "funding":
                     cur.execute("DELETE FROM funding WHERE symbol = %s", (symbol,))
                     cols = ["symbol", "ts", "funding_rate"]
-                    rows = [(symbol, ts.to_pydatetime(), float(r)) for ts, r in df["fundingRate"].items()]
+                    rows = [(symbol, pd.Timestamp(str(ts)).to_pydatetime(), float(r)) for ts, r in df["fundingRate"].items()]
                 else:  # pragma: no cover
                     raise ValueError(f"невідома таблиця {table}")
 

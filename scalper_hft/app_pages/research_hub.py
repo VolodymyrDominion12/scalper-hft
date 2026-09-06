@@ -21,7 +21,7 @@ if not _SWEEP_DB.exists():
 def load_sweep_results() -> pd.DataFrame:
     try:
         conn = sqlite3.connect(str(_SWEEP_DB))
-        df = pd.read_sql_query("SELECT * FROM sweep_results ORDER BY timestamp DESC LIMIT 100", conn)
+        df = pd.read_sql_query("SELECT * FROM sweep_results ORDER BY run_ts DESC LIMIT 100", conn)
         conn.close()
         return df
     except Exception as exc:
@@ -35,4 +35,4 @@ if results_df.empty:
     st.stop()
 
 st.subheader("Останні бектести")
-st.dataframe(results_df, use_container_width=True, hide_index=True)
+st.dataframe(results_df, width="stretch", hide_index=True)

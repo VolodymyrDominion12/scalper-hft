@@ -32,7 +32,7 @@ def _half_life(spread: pd.Series) -> float:
     common = x.index.intersection(y.index)
     if len(common) < 20:
         return float("inf")
-    xx, yy = x.loc[common].values, y.loc[common].values
+    xx, yy = x.loc[common].to_numpy(dtype=float), y.loc[common].to_numpy(dtype=float)
     if np.std(xx) < 1e-12:
         return float("inf")
     b = float(np.polyfit(xx, yy, 1)[0])

@@ -132,7 +132,7 @@ def survival_by_feature(
     rows: dict[str, list] = {"bin": [], "n": [], "median_hold": [], "survival_10": []}
     overall_median = float(df["duration"].median())
     for b, g in df.groupby("bin", observed=True):
-        km = kaplan_meier(g["duration"].values, g["event"].values)
+        km = kaplan_meier(g["duration"].to_numpy(), g["event"].to_numpy())
         surv_at = 0.0
         if not km.empty and overall_median > 0:
             interp = km[km["time"] <= overall_median]

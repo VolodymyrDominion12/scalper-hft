@@ -9,6 +9,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any
 
+import pandas as pd
 from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -46,21 +47,22 @@ class MockPositionRequest(BaseModel):
 
 
 def _extract_positions(store: PaperStore) -> list[dict[str, Any]]:
-    pos_list = store.open_positions()
-    positions = []
-    for _, p in pos_list.iterrows() if hasattr(pos_list, "iterrows") else enumerate(pos_list):
-        positions.append({
-            "id": p["id"] if hasattr(p, "__getitem__") else getattr(p, "id", None),
-            "symbol": p["symbol"] if hasattr(p, "__getitem__") else p.symbol,
-            "side": p["side"] if hasattr(p, "__getitem__") else p.side,
-            "size": float(p["size"] if hasattr(p, "__getitem__") else getattr(p, "size", 0.0)),
-            "entry_price": float(p["entry_price"] if hasattr(p, "__getitem__") else getattr(p, "entry_price", 0.0)),
-            "mark_price": float(p["mark_price"] if hasattr(p, "__getitem__") and p["mark_price"] is not None else getattr(p, "mark_price", 0.0) or 0.0),
-            "unrealized_pnl": float(p["unrealized_pnl"] if hasattr(p, "__getitem__") and p["unrealized_pnl"] is not None else getattr(p, "unrealized_pnl", 0.0) or 0.0),
-            "exchange": p["exchange"] if hasattr(p, "__getitem__") else getattr(p, "exchange", "binance"),
-            "mode": p["mode"] if hasattr(p, "__getitem__") else getattr(p, "mode", "paper"),
-            "ts": str(p["ts"] if hasattr(p, "__getitem__") else getattr(p, "ts", "")),
-        })
+    pos_df = store.open_positions()
+    positions: list[dict[str, Any]] = []
+    if pos_df is not None and not pos_df.empty:
+        for _, p in pos_df.iterrows():
+            positions.append({
+                "id": p.get("id") if hasattr(p, "get") else None,
+                "symbol": str(p.get("symbol", "")),
+                "side": str(p.get("side", "flat")),
+                "size": float(p.get("size", 0.0) or 0.0),
+                "entry_price": float(p.get("entry_price", 0.0) or 0.0),
+                "mark_price": float(p.get("mark_price", 0.0) or 0.0) if pd.notna(p.get("mark_price")) else 0.0,
+                "unrealized_pnl": float(p.get("unrealized_pnl", 0.0) or 0.0) if pd.notna(p.get("unrealized_pnl")) else 0.0,
+                "exchange": str(p.get("exchange", "binance")),
+                "mode": str(p.get("mode", "paper")),
+                "ts": str(p.get("ts", "")),
+            })
     return positions
 
 

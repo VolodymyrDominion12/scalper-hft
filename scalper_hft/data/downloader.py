@@ -83,8 +83,8 @@ def _index_ms(index: pd.DatetimeIndex) -> Any:
     """Epoch-ms для кожного бару. Pandas 3 тримає DatetimeIndex у us, не ns."""
     idx = index.tz_convert("UTC").tz_localize(None) if index.tz is not None else index
     if hasattr(idx, "as_unit"):
-        return idx.as_unit("ms").asi8
-    return idx.asi8 // 1_000_000
+        return getattr(idx.as_unit("ms"), "asi8")
+    return getattr(idx, "asi8") // 1_000_000
 
 
 def _gap_windows(index: pd.DatetimeIndex, interval_ms: int, since_ms: int) -> list[tuple[int, int]]:
@@ -815,6 +815,8 @@ def download_funding(
     force: bool = False,
     retries: int | None = None,
     batch_delay: float | None = None,
+    checkpoint_batches: int | None = None,
+    exchange_id: str | None = None,
 ) -> pd.DataFrame:
     """Кеш фандінгу: свіжий лише якщо покриває період і остання ставка < 16 год.
 
@@ -833,7 +835,13 @@ def download_funding(
             return cached
         logger.info("Оновлення funding %s: %d рядків (до %s, stale=%s)", symbol, len(cached), newest, stale)
     logger.info("Завантаження funding %s за %d днів", symbol, days)
-    return Downloader(store=store, retries=retries, batch_delay=batch_delay).funding(symbol, days)
+    return Downloader(
+        store=store,
+        retries=retries,
+        batch_delay=batch_delay,
+        checkpoint_batches=checkpoint_batches,
+        exchange_id=exchange_id,
+    ).funding(symbol, days)
 
 
 def download_spot_klines(

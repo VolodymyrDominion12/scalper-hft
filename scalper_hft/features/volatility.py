@@ -115,10 +115,10 @@ def garch_forecast(
         if t % refit_every == 0:
             # рефіт параметрів на останньому вікні
             hist = r.iloc[max(0, t - window) : t]
-            omega, alpha, beta = garch11_fit(hist.values)
+            omega, alpha, beta = garch11_fit(hist.to_numpy())
             # ініціалізуємо v з довгострокової дисперсії при першому рефіті
             if t == warmup or v <= 0:
-                v = float(np.var(hist.values)) if len(hist) > 1 else 1e-8
+                v = float(np.var(hist.to_numpy())) if len(hist) > 1 else 1e-8
             # v продовжується інкрементально (не перегравається)
         # σ²_t → прогноз σ²_{t+1}
         var_t = omega + alpha * r.iloc[t - 1] ** 2 + beta * v

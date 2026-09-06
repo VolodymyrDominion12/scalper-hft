@@ -30,7 +30,7 @@ DEFAULT_TREND_THRESHOLD: Final[float] = 0.35
 
 def volatility_regime(close: pd.Series, lookback: int = 60, percentile_window: int = 500) -> pd.Series:
     """Режим волатильності: low / normal / high за процентилем останньої реалізованої волатильності."""
-    log_ret = np.log(close / close.shift(1))
+    log_ret = pd.Series(np.log(close / close.shift(1)), index=close.index)
     rv = log_ret.rolling(lookback, min_periods=lookback // 2).std()
     pct = rv.rolling(percentile_window, min_periods=percentile_window // 2).apply(
         lambda x: (x.iloc[-1] >= x).mean(), raw=False
@@ -60,8 +60,10 @@ def session_filter(index: pd.DatetimeIndex, start_hour: int = 0, end_hour: int =
     """Маска активної сесії (години UTC). Скальпінг — лише в ліквідні години."""
     hours = index.hour
     if start_hour <= end_hour:
-        return (hours >= start_hour) & (hours < end_hour)
-    return (hours >= start_hour) | (hours < end_hour)
+        mask = (hours >= start_hour) & (hours < end_hour)
+    else:
+        mask = (hours >= start_hour) | (hours < end_hour)
+    return pd.Series(mask, index=index, dtype=bool)
 
 
 def market_structure(

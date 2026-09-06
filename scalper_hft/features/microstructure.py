@@ -103,8 +103,8 @@ def kyle_lambda(close: pd.Series, signed_volume: pd.Series) -> tuple[float, floa
     """
     dp = close.diff().dropna()
     sv = signed_volume.reindex(dp.index).fillna(0.0)
-    x = sv.values.astype(float)
-    y = dp.values.astype(float)
+    x = sv.to_numpy(dtype=float)
+    y = dp.to_numpy(dtype=float)
     den = float(np.dot(x, x))
     if den <= 0 or len(x) < 3:
         return 0.0, 0.0
@@ -130,8 +130,8 @@ def kyle_lambda_series(close: pd.Series, signed_volume: pd.Series, window: int =
 
     dp = close.diff()
     sv = signed_volume.reindex(dp.index).fillna(0.0)
-    x = sv.values.astype(float)
-    y = dp.values.astype(float)
+    x = sv.to_numpy(dtype=float)
+    y = dp.to_numpy(dtype=float)
     n = len(y)
 
     lam_vals = np.full(n, np.nan)
@@ -210,11 +210,11 @@ def corwin_schultz_spread(high: pd.Series, low: pd.Series) -> pd.Series:
     де β — сума квадратів лог-діапазонів двох барів, γ — квадрат дворового
     діапазону. NaN, де (2γ−β) < 0 (шум — стандартна поведінка оцінювача).
     """
-    h = np.log(high / low).pow(2)
+    h = pd.Series(np.log(high / low), index=high.index).pow(2)
     beta = h.rolling(2).sum()
     h2 = high.rolling(2).max()
     l2 = low.rolling(2).min()
-    gamma = np.log(h2 / l2).pow(2)
+    gamma = pd.Series(np.log(h2 / l2), index=high.index).pow(2)
     inner = 2.0 * gamma - beta
     alpha = (np.sqrt(2.0 * beta) - np.sqrt(beta / 3.0) - np.sqrt(inner)) / (3.0 - 2.0 * np.sqrt(2.0))
     alpha = alpha.where(inner > 0).where(beta > 0).clip(lower=0.0)  # негативні → 0 (стандартна практика)
@@ -223,7 +223,7 @@ def corwin_schultz_spread(high: pd.Series, low: pd.Series) -> pd.Series:
 
 def parkinson_vol(high: pd.Series, low: pd.Series, window: int = 20) -> pd.Series:
     """Волатильність Parkinson: sqrt(mean(ln(H/L)²) / (4·ln2)) за вікно."""
-    hl = np.log(high / low).pow(2)
+    hl = pd.Series(np.log(high / low), index=high.index).pow(2)
     return np.sqrt(hl.rolling(window, min_periods=window // 2).mean() / (4.0 * np.log(2.0)))
 
 

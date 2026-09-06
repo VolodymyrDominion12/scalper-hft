@@ -302,7 +302,7 @@ def audit_cell(
                     smoothness = None
                 sens_n = len(sres.grid)
                 sens_param = pname
-                grid_rows = tuple(sres.grid.to_dict(orient="records"))
+                grid_rows = tuple({str(k): v for k, v in r.items()} for r in sres.grid.to_dict(orient="records"))
             except Exception as exc:  # noqa: BLE001
                 sens_error = str(exc)[:120]
 
@@ -325,7 +325,7 @@ def audit_cell(
                 combos *= max(int((float(_hi) - float(_lo)) / step_f) + 1, 1)
             combos = min(max(combos, 1), 100_000)
             n_trials = int(estimate_n_trials(param_combinations=combos, backtests_per_combo=DSR_BACKTESTS_PER_COMBO))
-            dsr = float(deflated_sharpe_ratio(ret.values, n_trials=n_trials))
+            dsr = float(deflated_sharpe_ratio(ret.to_numpy(dtype=float), n_trials=n_trials))
 
         return CellAudit(
             symbol=symbol,

@@ -175,8 +175,8 @@ def estimate_half_life(spread: pd.Series, min_obs: int = 20) -> float:
     s = spread.dropna()
     if len(s) < min_obs:
         return float("inf")
-    x = s.shift(1).iloc[1:].values
-    y = s.diff().iloc[1:].values
+    x = s.shift(1).iloc[1:].to_numpy(dtype=float)
+    y = s.diff().iloc[1:].to_numpy(dtype=float)
     if np.std(x) < 1e-12:
         return float("inf")
     b = float(np.polyfit(x, y, 1)[0])

@@ -35,10 +35,11 @@ def quintile_spread_study(
     means = aligned["fwd"].groupby(bins).mean()
     means.index = [f"Q{int(i) + 1}" for i in means.index]
     ranks = np.arange(len(means))
+    means_arr = means.to_numpy(dtype=float)
     if len(means) >= 2:
-        spearman = float(pd.Series(ranks).corr(pd.Series(means.values), method="spearman"))
+        spearman = float(pd.Series(ranks).corr(pd.Series(means_arr), method="spearman"))
     else:
         spearman = 0.0
-    diffs = np.diff(means.values)
+    diffs = np.diff(means_arr)
     monotonic = bool(np.all(diffs >= -1e-12) or np.all(diffs <= 1e-12))
     return QuintileResult(means=means, spearman=spearman, monotonic=monotonic)

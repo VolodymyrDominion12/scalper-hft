@@ -28,7 +28,7 @@ class PaperStore:
     Path за замовчуванням results/paper_pairs.sqlite.
     """
 
-    def __init__(self, path: Path | None = None) -> None:
+    def __init__(self, path: Path | str | None = None) -> None:
         self.path = Path(path) if path is not None else Path("results") / "paper_pairs.sqlite"
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self.path, timeout=15.0)

@@ -39,7 +39,7 @@ def csw_cusum(
         s_neg = min(0.0, s_neg + float(v))
         s_max = max(s_max, s_pos, -s_neg)
         if s_pos > threshold or s_neg < -threshold:
-            breaks.append(pd.Timestamp(t))
+            breaks.append(pd.Timestamp(str(t)))
             s_pos = 0.0
             s_neg = 0.0
     return CusumBreakResult(len(breaks), breaks, s_max)
