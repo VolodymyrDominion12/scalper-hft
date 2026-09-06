@@ -64,6 +64,7 @@ def _param_combos(strategy: Any) -> int:
         combos *= max(int((float(_hi) - float(_lo)) / step_f) + 1, 1)
     return min(max(combos, 1), 100_000)
 
+
 st.title("Бектест")
 
 st.sidebar.header("Параметри", divider=False)
