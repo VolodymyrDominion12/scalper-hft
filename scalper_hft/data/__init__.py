@@ -6,7 +6,7 @@ from scalper_hft.data.bars import (
     create_tick_run_bars,
     create_volume_bars,
 )
-from scalper_hft.data.binance_client import BinanceClient
+from scalper_hft.data.client import ExchangeClient
 from scalper_hft.data.downloader import Downloader, download_agg_trades, download_funding, download_klines
 from scalper_hft.data.research import MarketDataBundle, load_research_data
 from scalper_hft.data.storage import (
@@ -23,7 +23,7 @@ from scalper_hft.data.storage import (
 from scalper_hft.data.validate import BarQualityReport, validate_bars
 
 __all__ = [
-    "BinanceClient",
+    "ExchangeClient",
     "Downloader",
     "download_klines",
     "download_agg_trades",

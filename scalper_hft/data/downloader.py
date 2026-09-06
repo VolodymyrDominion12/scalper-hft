@@ -29,7 +29,7 @@ from typing import Any
 import pandas as pd
 
 from scalper_hft.config import get_settings
-from scalper_hft.data.binance_client import BinanceClient
+from scalper_hft.data.client import ExchangeClient
 from scalper_hft.data.store import get_store
 
 logger = logging.getLogger(__name__)
@@ -225,19 +225,16 @@ def _trade_id(t: dict[str, Any], fallback: int) -> int:
         return fallback
 
 
-_client: BinanceClient | None = None
+_client: ExchangeClient | None = None
 
 
-def _default_client() -> BinanceClient:
-    """Спільний клієнт на процес: ccxt enableRateLimit пейсить запити ГЛОБАЛЬНО.
-
-    Без цього кожен Downloader створював свій ccxt-інстанс зі своїм лімітером —
-    паралельні завантаження разом перевищували ліміт IP (429 -1003).
-    """
+def _default_client(exchange_id: str | None = None) -> ExchangeClient:
+    """Спільний клієнт на процес (глобальний кеш для кожного exchange)."""
     global _client
-    if _client is None:
+    if _client is None or getattr(_client, "exchange_id", None) != exchange_id:
         settings = get_settings()
-        _client = BinanceClient(settings.binance_api_key, settings.binance_api_secret, settings.exchange)
+        ex = exchange_id or settings.exchange
+        _client = ExchangeClient(settings.binance_api_key, settings.binance_api_secret, ex)
     return _client
 
 
@@ -370,14 +367,16 @@ class Downloader:
 
     def __init__(
         self,
-        client: BinanceClient | None = None,
+        client: ExchangeClient | None = None,
         retries: int | None = None,
         store: Any = None,
         batch_delay: float | None = None,
         checkpoint_batches: int | None = None,
+        exchange_id: str | None = None,
     ) -> None:
         settings = get_settings()
-        self.client = client or _default_client()
+        self.exchange_id = exchange_id or settings.exchange
+        self.client = client or _default_client(self.exchange_id)
         self.retries = int(retries if retries is not None else settings.download_retries)
         self.batch_delay = float(batch_delay if batch_delay is not None else settings.download_batch_delay)
         self.checkpoint_batches = int(
@@ -553,7 +552,7 @@ class Downloader:
     def spot_klines(self, symbol: str, interval: str, days: int, force: bool = False) -> pd.DataFrame:
         """Спотові klines (для delta-neutral арбітражу) у окремий кеш."""
         existing = self.store.load_spot_klines(symbol, interval)
-        spot_client = BinanceClient(market_type="spot")
+        spot_client = ExchangeClient(market_type="spot")
         save_fn = partial(self.store.save_spot_klines, symbol, interval)
         out = self._extend_klines(
             existing,
@@ -750,6 +749,7 @@ def download_klines(
     retries: int | None = None,
     batch_delay: float | None = None,
     checkpoint_batches: int | None = None,
+    exchange_id: str | None = None,
 ) -> pd.DataFrame:
     """Завантажити/оновити klines. Старі бари не видаляються: докачуються
     лише префікс, внутрішні дірки та застарілий хвіст."""
@@ -766,6 +766,7 @@ def download_klines(
         retries=retries,
         batch_delay=batch_delay,
         checkpoint_batches=checkpoint_batches,
+        exchange_id=exchange_id,
     ).klines(symbol, interval, days, force=force)
 
 
@@ -776,6 +777,7 @@ def download_agg_trades(
     retries: int | None = None,
     batch_delay: float | None = None,
     checkpoint_batches: int | None = None,
+    exchange_id: str | None = None,
 ) -> pd.DataFrame:
     store = get_store()
     cached = None if force else store.load_trades(symbol)
@@ -803,6 +805,7 @@ def download_agg_trades(
             retries=retries,
             batch_delay=batch_delay,
             checkpoint_batches=checkpoint_batches,
+            exchange_id=exchange_id,
         ).agg_trades(symbol, days)
 
 

@@ -105,6 +105,7 @@ def test_load_research_data_defaults_to_derive(monkeypatch) -> None:
         base_interval: str = "1m",
         derive: bool = True,
         force: bool = False,
+        exchange_id: str | None = None,
     ) -> pd.DataFrame:
         seen["interval"] = interval
         seen["derive"] = derive

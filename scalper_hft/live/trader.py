@@ -28,7 +28,7 @@ import pandas as pd
 
 from scalper_hft.backtest.execution import CostModel
 from scalper_hft.config import get_settings, require_live_credentials
-from scalper_hft.data.binance_client import BinanceClient
+from scalper_hft.data.client import ExchangeClient
 from scalper_hft.live.account import PaperAccount
 from scalper_hft.live.exit_ladders import OneWayTradingLadder
 from scalper_hft.live.risk_gate import CooldownState, decide_entry
@@ -164,7 +164,7 @@ class LiveTrader:
         symbol: str,
         interval: str = "1m",
         account: PaperAccount | None = None,
-        client: BinanceClient | None = None,
+        client: ExchangeClient | None = None,
         vol_sizing: bool = False,
         vol_ref: float | None = None,
         hmm_block: bool = False,
@@ -181,7 +181,7 @@ class LiveTrader:
             taker_fee=self.settings.taker_fee,
             maker_fee=self.settings.maker_fee,
         )
-        self.client = client or BinanceClient(
+        self.client = client or ExchangeClient(
             self.settings.binance_api_key, self.settings.binance_api_secret, self.settings.exchange, auth=True
         )
         self.cost = CostModel(
@@ -465,7 +465,7 @@ class LiveTrader:
         if self.settings.dry_run:
             return True, "filled"
         require_live_credentials(self.settings)
-        # M5: нормалізація під фільтри біржі (BinanceClient має sanitize_order;
+        # M5: нормалізація під фільтри біржі (ExchangeClient має sanitize_order;
         # тестові/мінімальні клієнти без нього — пропускають нормалізацію).
         sanitize = getattr(self.client, "sanitize_order", None)
         if sanitize is not None:

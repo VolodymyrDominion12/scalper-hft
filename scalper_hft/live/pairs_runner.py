@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 
 from scalper_hft.config import get_settings
-from scalper_hft.data.binance_client import BinanceClient
+from scalper_hft.data.client import ExchangeClient
 from scalper_hft.live.account import PaperAccount
 from scalper_hft.live.bar_clock import daemon_sleep_sec
 from scalper_hft.live.control import DEFAULT_CONTROL_PATH, ControlState, load_control
@@ -667,7 +667,7 @@ def _funding_between(funding: pd.DataFrame | None, prev: pd.Timestamp | None, ts
 
 
 def _fetch_ohlcv(symbol: str, interval: str, limit: int = _RECENT_BARS) -> pd.DataFrame:
-    client = BinanceClient()
+    client = ExchangeClient()
     batch = client.fetch_klines(symbol, interval, since_ms=0, limit=limit)
     if not batch:
         raise RuntimeError(f"Немає даних для {symbol}")

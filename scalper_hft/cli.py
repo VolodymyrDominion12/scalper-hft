@@ -44,16 +44,13 @@ def _apply_use_kalman(args: argparse.Namespace, params: dict) -> dict:
     return out
 
 
-def _load_klines(symbol: str, interval: str, days: int, base: str | None = None, derive: bool = True) -> pd.DataFrame:
-    """Завантажити klines: за замовчуванням ресемплінг старших ТФ із 1m-кешу.
-
-    --no-derive — качати цільовий інтервал з Binance (нативні 5m/15m).
-    """
+def _load_klines(symbol: str, interval: str, days: int, base: str | None = None, derive: bool = True, exchange_id: str | None = None) -> pd.DataFrame:
+    """Хелпер для CLI: завантажити/ресемплити дані або впасти з помилкою."""
     from scalper_hft.data.access import ensure_klines
 
-    df = ensure_klines(symbol, interval, days, base_interval=base or "1m", derive=derive)
+    df = ensure_klines(symbol, interval, days, base_interval=base or "1m", derive=derive, exchange_id=exchange_id)
     if df is None or df.empty:
-        logger.error("Немає даних для %s %s — запустіть download спершу", symbol, interval)
+        logger.error("Немає даних %s %s — запустіть download спершу", symbol, interval)
         sys.exit(1)
     return df
 
@@ -67,6 +64,7 @@ def cmd_download(args: argparse.Namespace) -> None:
     retries = getattr(args, "retries", None)
     batch_delay = getattr(args, "delay", None)
     checkpoint_batches = getattr(args, "checkpoint_batches", None)
+    exchange_id = getattr(args, "exchange", settings.exchange)
 
     logger.info("Спочатку звірю кеш: докачаю лише відсутні дні/вікна (--force оновлює хвіст)")
     for sym in symbols:
@@ -79,6 +77,7 @@ def cmd_download(args: argparse.Namespace) -> None:
                 retries=retries,
                 batch_delay=batch_delay,
                 checkpoint_batches=checkpoint_batches,
+                exchange_id=exchange_id,
             )
             logger.info("klines %s %s: %d свічок (%s … %s)", sym, iv, len(df), df.index[0], df.index[-1])
         if args.trades:
@@ -89,6 +88,7 @@ def cmd_download(args: argparse.Namespace) -> None:
                 retries=retries,
                 batch_delay=batch_delay,
                 checkpoint_batches=checkpoint_batches,
+                exchange_id=exchange_id,
             )
             logger.info("aggTrades %s: %d трейдів", sym, len(tr) if tr is not None else 0)
         if args.funding:
@@ -98,6 +98,8 @@ def cmd_download(args: argparse.Namespace) -> None:
                 force=args.force,
                 retries=retries,
                 batch_delay=batch_delay,
+                checkpoint_batches=checkpoint_batches,
+                exchange_id=exchange_id,
             )
             logger.info("funding %s: %d точок", sym, len(fu) if fu is not None else 0)
         if getattr(args, "vision", False):
@@ -130,6 +132,7 @@ def cmd_backtest(args: argparse.Namespace) -> None:
     strategy = get_strategy(args.strategy, **params)
     _warn_pairs_short_interval(args.strategy, args.interval)
     settings = get_settings()
+    exchange_id = getattr(args, "exchange", settings.exchange)
     bar_type = getattr(args, "bar_type", "time")
     bundle = load_research_data(
         args.symbol,
@@ -138,6 +141,7 @@ def cmd_backtest(args: argparse.Namespace) -> None:
         strategy,
         base=getattr(args, "base", None) or "1m",
         derive=getattr(args, "derive", True),
+        exchange_id=exchange_id,
     )
     df = bundle.klines
     trades = bundle.trades
@@ -186,6 +190,7 @@ def cmd_plot(args: argparse.Namespace) -> None:
         strategy,
         base=getattr(args, "base", None) or "1m",
         derive=getattr(args, "derive", True),
+        exchange_id=getattr(args, "exchange", settings.exchange),
     )
     df = bundle.klines
     if df is None or df.empty:
@@ -217,20 +222,22 @@ def cmd_walkforward(args: argparse.Namespace) -> None:
     from scalper_hft.strategies import get_strategy
     from scalper_hft.validation.walk_forward import run_walk_forward
 
+    settings = get_settings()
+    exchange_id = getattr(args, "exchange", settings.exchange)
     df = _load_klines(
-        args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", True)
+        args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", True), exchange_id=exchange_id
     )
     strategy = get_strategy(args.strategy, **_apply_use_kalman(args, args.param_dict))
     trades = None
     if strategy.needs_trades:
         from scalper_hft.data.downloader import download_agg_trades
 
-        trades = download_agg_trades(args.symbol, args.days)
+        trades = download_agg_trades(args.symbol, args.days, exchange_id=exchange_id)
     funding = None
     if strategy.needs_funding:
         from scalper_hft.data.downloader import download_funding
 
-        funding = download_funding(args.symbol, args.days)
+        funding = download_funding(args.symbol, args.days, exchange_id=exchange_id)
     settings = get_settings()
     res = run_walk_forward(
         df,
@@ -1770,6 +1777,7 @@ def main(argv: list[str] | None = None) -> None:
     sub = parser.add_subparsers(dest="command", required=True)
 
     def add_common(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--exchange", default=None, help="Біржа, e.g. binance, bybit (за замовч. з .env)")
         p.add_argument("--symbol", default=None, help="Символ, e.g. BTCUSDT (за замовч. з .env)")
         p.add_argument("--interval", default=None, help="Таймфрейм: 1s/5s/1m/5m/15m/1h")
         p.add_argument(
@@ -2228,6 +2236,10 @@ def main(argv: list[str] | None = None) -> None:
     tg_p.set_defaults(func=cmd_telegram_bot)
 
     args = parser.parse_args(argv)
+    from scalper_hft.config import get_settings
+    settings = get_settings()
+    if hasattr(args, "exchange") and args.exchange:
+        settings.exchange = args.exchange
     args.param_dict = _parse_param_dict(getattr(args, "param", []))
     args.func(args)
 

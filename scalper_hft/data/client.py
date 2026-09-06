@@ -1,4 +1,4 @@
-"""Клієнт Binance USDT-M ф'ючерсів поверх ccxt (REST).
+"""Клієнт універсальної біржі поверх ccxt (REST).
 
 Використовується для:
     - завантаження історичних klines / aggTrades / funding (для бектестів)
@@ -15,14 +15,16 @@ from typing import Any
 
 import ccxt
 
+from scalper_hft.data.exchange_registry import ExchangeRegistry
+
 logger = logging.getLogger(__name__)
 
 # Обмеження ваги Binance: 2400 запитів/хв, не дратуємо — спимо між батчами
 _RATE_LIMIT_SLEEP = 0.12
 
 
-class BinanceClient:
-    """Тонка обгортка над ccxt для USDT-M ф'ючерсів Binance."""
+class ExchangeClient:
+    """Тонка обгортка над ccxt для підтримуваних бірж."""
 
     def __init__(
         self,
@@ -35,24 +37,23 @@ class BinanceClient:
         """auth=True — лише коли потрібні приватні ендпоінти (торгівля).
 
         Для завантаження даних (публічні klines/trades/funding) ключі НЕ
-        передаються: Binance валідує X-MBX-APIKEY навіть на публічних
-        ендпоінтах і відхиляє невалідні ключі.
-        market_type: 'future' (USDT-M ф'ючерси) або 'spot' — для delta-neutral
-        арбітражу потрібні обидва ринки.
+        передаються. 
         """
-        exchange_cls = getattr(ccxt, exchange_id) if hasattr(ccxt, exchange_id) else ccxt.binance
+        self.exchange_id = exchange_id
+        meta = ExchangeRegistry.get(exchange_id)
+        
         params: dict[str, Any] = {
             "enableRateLimit": True,
             "options": {"defaultType": market_type},
         }
         if auth and api_key and api_secret:
             params.update({"apiKey": api_key, "secret": api_secret})
-        self.exchange: ccxt.Exchange = exchange_cls(params)  # type: ignore[arg-type]
-        # ccxt не має класу "binance-testnet": тестнет вмикається через
-        # set_sandbox_mode() на базовому класі. Інакше exchange_id мовчазно
-        # падав на mainnet (ризик для live-ордерів).
+            
+        self.exchange: ccxt.Exchange = meta.ccxt_class(params)  # type: ignore[arg-type]
+        
         if str(exchange_id).lower().endswith("testnet") and hasattr(self.exchange, "set_sandbox_mode"):
             self.exchange.set_sandbox_mode(True)
+            
         self.market_type = market_type
         self._market_cache: dict[str, dict[str, Any]] = {}
 

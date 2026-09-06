@@ -10,6 +10,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from scalper_hft.config import get_settings
 from scalper_hft.app_pages._common import (
     BT_INTERVALS,
     RESEARCH_AUDIT_PREFILL,
@@ -49,7 +50,14 @@ st.caption(
 
 with st.container(border=True):
     st.caption("Спільні параметри (sweep має власні списки стратегій/символів/ТФ)")
-    rs1, rs2, rs3, rs4 = st.columns(4)
+    from scalper_hft.data.exchange_registry import ExchangeRegistry
+    exchanges = ExchangeRegistry.list_supported()
+    
+    rs0, rs1, rs2, rs3, rs4 = st.columns(5)
+    with rs0:
+        settings = get_settings()
+        idx = exchanges.index(settings.exchange) if settings.exchange in exchanges else 0
+        rs_ex = st.selectbox("Біржа", exchanges, index=idx, key="rs_exchange")
     with rs1:
         rs_strat = st.selectbox("Стратегія", sorted(REGISTRY), key="rs_strategy")
     with rs2:

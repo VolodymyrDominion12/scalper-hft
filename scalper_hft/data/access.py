@@ -41,6 +41,7 @@ def ensure_klines(
     derive: bool = True,
     force: bool = False,
     readonly: bool = False,
+    exchange_id: str | None = None,
 ) -> pd.DataFrame:
     """Повернути klines (symbol, interval) за останні `days` днів.
 
@@ -66,9 +67,9 @@ def ensure_klines(
     from scalper_hft.data.downloader import download_klines
 
     if interval == base_interval or not derive or not can_derive(interval, base_interval):
-        df = download_klines(symbol, interval, days, force=force)
+        df = download_klines(symbol, interval, days, force=force, exchange_id=exchange_id)
     else:
-        df = _derive_klines(symbol, interval, days, base_interval, force=force)
+        df = _derive_klines(symbol, interval, days, base_interval, force=force, exchange_id=exchange_id)
     return _tail_days(df, days)
 
 
@@ -88,14 +89,14 @@ def _tail_days(df: pd.DataFrame, days: int) -> pd.DataFrame:
     return trimmed if not trimmed.empty else df  # кеш коротший за запит — що є, те й повертаємо
 
 
-def _derive_klines(symbol: str, interval: str, days: int, base_interval: str, *, force: bool) -> pd.DataFrame:
+def _derive_klines(symbol: str, interval: str, days: int, base_interval: str, *, force: bool, exchange_id: str | None = None) -> pd.DataFrame:
     """Завантажити базу (інкрементально) і ресемплінгом отримати цільовий інтервал.
 
     Похідний ряд не зберігається: джерело істини — лише base_interval.
     """
     from scalper_hft.data.downloader import download_klines
 
-    base = download_klines(symbol, base_interval, days, force=force)
+    base = download_klines(symbol, base_interval, days, force=force, exchange_id=exchange_id)
     if base is None or base.empty:
         raise RuntimeError(f"Немає базових даних {symbol} {base_interval} — не з чого ресемплити {interval}")
     out = resample_klines(base, interval, source=base_interval)

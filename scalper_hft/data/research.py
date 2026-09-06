@@ -73,6 +73,7 @@ def load_research_data(
     validate: bool = True,
     base: str = "1m",
     derive: bool = True,
+    exchange_id: str | None = None,
 ) -> MarketDataBundle:
     """Один вхід для CLI/dashboard: klines + опційно trades/funding/L2.
 
@@ -82,13 +83,13 @@ def load_research_data(
     from scalper_hft.data.access import ensure_klines
     from scalper_hft.data.downloader import download_agg_trades, download_funding
 
-    klines = ensure_klines(symbol, interval, days, base_interval=base, derive=derive, force=force)
+    klines = ensure_klines(symbol, interval, days, base_interval=base, derive=derive, force=force, exchange_id=exchange_id)
     trades = None
     funding = None
     if strategy is not None and getattr(strategy, "needs_trades", False):
-        trades = download_agg_trades(symbol, days, force=force)
+        trades = download_agg_trades(symbol, days, force=force, exchange_id=exchange_id)
     if strategy is not None and getattr(strategy, "needs_funding", False):
-        funding = download_funding(symbol, days, force=force)
+        funding = download_funding(symbol, days, force=force, exchange_id=exchange_id)
 
     settings = get_settings()
     book = load_bookticker(settings.data_dir_abs, symbol) if load_l2 else None

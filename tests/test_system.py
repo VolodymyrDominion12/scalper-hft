@@ -332,9 +332,9 @@ def test_delta_neutral_basis_accounting():
 
 def test_post_only_flag():
     """post_only=True додає параметр postOnly до ордера."""
-    from scalper_hft.data.binance_client import BinanceClient
+    from scalper_hft.data.client import ExchangeClient
 
-    c = BinanceClient(exchange_id="binance", market_type="spot")
+    c = ExchangeClient(exchange_id="binance", market_type="spot")
     # не робимо реальний запит — перевіряємо, що параметр прокидається в kwargs
     import inspect
 
