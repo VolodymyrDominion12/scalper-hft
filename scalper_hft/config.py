@@ -115,6 +115,11 @@ class Settings:
             f"user={self.postgres_user} password={self.postgres_password}"
         )
 
+    # API
+    api_host: str = field(default_factory=lambda: os.getenv("API_HOST", "0.0.0.0"))
+    api_port: int = field(default_factory=lambda: _env_int("API_PORT", 8000))
+    api_secret_key: str = field(default_factory=lambda: os.getenv("API_SECRET_KEY", "scalper_dev_secret_key"))
+
     @property
     def slippage_frac(self) -> float:
         """Slippage як частка ціни (bps / 10_000)."""

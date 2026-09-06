@@ -30,6 +30,11 @@ dashboard = [
     "streamlit>=1.30",
     "bcrypt>=4.0",
 ]
+api = [
+    "fastapi>=0.110.0",
+    "uvicorn>=0.27.0",
+    "pyjwt>=2.8.0",
+]
 live = [
     "websockets>=12",
     "python-telegram-bot>=20.8",
@@ -38,6 +43,9 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.6",
     "mypy>=1.10",
+    "pandas-stubs>=2.1",
+    "types-requests>=2.31",
+    "httpx>=0.27.0",
 ]
 
 [build-system]

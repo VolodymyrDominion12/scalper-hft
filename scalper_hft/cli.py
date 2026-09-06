@@ -1770,6 +1770,29 @@ def _parse_param_dict(args: list[str]) -> dict:
     return out
 
 
+def cmd_api(args: argparse.Namespace) -> None:
+    if args.api_action == "start":
+        try:
+            import uvicorn
+        except ImportError:
+            sys.exit("API server requires 'api' extras: uv pip install -e \".[api]\"")
+        from scalper_hft.config import get_settings
+        settings = get_settings()
+        logger.info(f"Запуск FastAPI сервера на {settings.api_host}:{settings.api_port}...")
+        uvicorn.run("scalper_hft.api.server:app", host=settings.api_host, port=settings.api_port, reload=False)
+    
+    elif args.api_action == "token":
+        try:
+            from scalper_hft.api.auth import create_access_token
+        except ImportError:
+            sys.exit("API server requires 'api' extras: uv pip install -e \".[api]\"")
+        token = create_access_token({"sub": "admin"}, expires_delta_hours=args.hours)
+        print(f"eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9... [TOKEN GENERATED]")
+        print("\nJWT Token (keep it secret!):")
+        print(token)
+        print("\nДля доступу додайте заголовок: Authorization: Bearer <token>")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="scalper-hft", description="Високочастотна скальпінг-система (Binance USDT-M)"
@@ -2234,6 +2257,14 @@ def main(argv: list[str] | None = None) -> None:
         help="Шлях до control.json (за замовч. results/control.json)",
     )
     tg_p.set_defaults(func=cmd_telegram_bot)
+
+    # API
+    api_p = sub.add_parser("api", help="FastAPI Server")
+    api_sub = api_p.add_subparsers(dest="api_action", required=True)
+    api_sub.add_parser("start", help="Запустити FastAPI сервер (uvicorn)")
+    api_token = api_sub.add_parser("token", help="Згенерувати JWT токен для API")
+    api_token.add_argument("--hours", type=int, default=24, help="Термін дії токена (годин)")
+    api_p.set_defaults(func=cmd_api)
 
     args = parser.parse_args(argv)
     from scalper_hft.config import get_settings

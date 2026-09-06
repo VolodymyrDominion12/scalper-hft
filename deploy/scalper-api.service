@@ -1,0 +1,17 @@
+[Unit]
+Description=Scalper HFT FastAPI Server
+After=network.target
+
+[Service]
+User=scalper
+Group=scalper
+WorkingDirectory=/opt/scalper-hft
+Environment="PATH=/opt/scalper-hft/.venv/bin"
+# DRY_RUN=true за замовчуванням на рівні сервісу для безпеки, можна перевизначити в .env
+Environment="DRY_RUN=true"
+ExecStart=/opt/scalper-hft/.venv/bin/uvicorn scalper_hft.api.server:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
