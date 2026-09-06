@@ -91,5 +91,5 @@ def pairs_time_decay(
         sr = float(pnl.mean() / pnl.std(ddof=0) * np.sqrt(len(pnl))) if pnl.std(ddof=0) else 0.0
         lags.append(lag)
         sharpes.append(sr)
-        rets.append(float((1.0 + pnl).prod()) - 1.0)
+        rets.append(float(np.prod(1.0 + pnl.to_numpy(dtype=float))) - 1.0)
     return TimeDecayResult(lags=lags, sharpes=sharpes, returns=rets)

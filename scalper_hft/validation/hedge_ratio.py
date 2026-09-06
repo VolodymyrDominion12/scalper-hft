@@ -33,8 +33,8 @@ def rolling_ols_beta(y: pd.Series, x: pd.Series, window: int) -> pd.Series:
     yv, xv = y.astype(float), x.astype(float)
     out = pd.Series(np.nan, index=y.index)
     for i in range(window, len(y) + 1):
-        yy = yv.iloc[i - window : i].values
-        xx = xv.iloc[i - window : i].values
+        yy = yv.iloc[i - window : i].to_numpy(dtype=float)
+        xx = xv.iloc[i - window : i].to_numpy(dtype=float)
         if np.std(xx) < 1e-12:
             continue
         x1 = np.column_stack([np.ones(len(xx)), xx])
@@ -100,17 +100,19 @@ def compare_hedge_oos(
     split = int(len(common) * train_frac)
     oos = slice(split, len(common))
     win = ols_window or lookback
-    log_s = np.log(common["l1"] / common["l2"])
-    beta = rolling_ols_beta(np.log(common["l1"]), np.log(common["l2"]), win)
-    ols_s = np.log(common["l1"]) - beta * np.log(common["l2"])
+    l1_log = pd.Series(np.log(common["l1"]), index=common.index)
+    l2_log = pd.Series(np.log(common["l2"]), index=common.index)
+    log_s = pd.Series(np.log(common["l1"] / common["l2"]), index=common.index)
+    beta = rolling_ols_beta(l1_log, l2_log, win)
+    ols_s = l1_log - beta * l2_log
 
     sr_log = _oos_sharpe(_signal_from_z(_spread_z(log_s, lookback)), log_s, oos)
     sr_ols = _oos_sharpe(_signal_from_z(_spread_z(ols_s, lookback)), ols_s, oos)
 
-    j_beta = johansen_beta(np.log(common["l1"].iloc[:split]), np.log(common["l2"].iloc[:split]))
+    j_beta = johansen_beta(l1_log.iloc[:split], l2_log.iloc[:split])
     sr_j = None
     if j_beta is not None:
-        j_s = np.log(common["l1"]) - j_beta * np.log(common["l2"])
+        j_s = l1_log - j_beta * l2_log
         sr_j = _oos_sharpe(_signal_from_z(_spread_z(j_s, lookback)), j_s, oos)
 
     prefer = "logratio"

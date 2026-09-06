@@ -32,6 +32,7 @@ from scalper_hft.data.client import ExchangeClient
 from scalper_hft.live.account import PaperAccount
 from scalper_hft.live.exit_ladders import OneWayTradingLadder
 from scalper_hft.live.risk_gate import CooldownState, decide_entry
+from scalper_hft.live.ws_user_stream import BinanceUserDataStream, OrderTradeEvent
 from scalper_hft.strategies.base import Strategy
 
 logger = logging.getLogger(__name__)
@@ -207,6 +208,7 @@ class LiveTrader:
 
         self.use_exit_ladders = getattr(self.settings, "use_exit_ladders", False)
         self.ladder: OneWayTradingLadder | None = None
+        self.ws_stream: BinanceUserDataStream | None = None
 
     # ── сигнал ───────────────────────────────────────────────────────────────
     def compute_signal(self, df: pd.DataFrame, now: pd.Timestamp | None = None) -> int:
@@ -548,6 +550,7 @@ class LiveTrader:
         """Безпечне завершення роботи трейдера: скасування всіх pending-ордерів
         та страхувальне скасування ордерів на біржі."""
         logger.info("Ініціалізація shutdown для %s (%s)...", self.symbol, reason)
+        self.stop_user_stream()
         canceled = self.cancel_all_pending(reason=reason)
         if not self.settings.dry_run:
             cancel_all = getattr(self.client, "cancel_all_orders", None)
@@ -631,6 +634,96 @@ class LiveTrader:
         else:
             if self.symbol in self.account.positions:
                 self.account.close_position(self.symbol, price, ts, is_maker=True, size=size)
+
+    # ── WebSocket User Data Stream ───────────────────────────────────────────
+
+    def on_ws_order_trade(self, event: OrderTradeEvent) -> None:
+        """Обробка події ORDER_TRADE_UPDATE з WebSocket User Data Stream.
+
+        Миттєво бронює філи для pending-ордерів без очікування наступного
+        REST-поллінгу або закриття бару, мінімізуючи lag виконання.
+        """
+        coid = event.client_order_id
+        if not coid or coid not in self.pending_orders:
+            return
+        po = self.pending_orders[coid]
+        ts = _as_naive_utc(pd.Timestamp.now(tz="UTC"))
+        status = event.status.upper()
+        if status in ("FILLED", "CLOSED"):
+            fill_px = event.last_filled_price if event.last_filled_price > 0 else po.price
+            self._book_pending_fill(po, po.size, fill_px, ts)
+            self.pending_orders.pop(coid, None)
+            logger.info("WS fill booked: %s (size=%.4f, px=%.4f)", coid, po.size, fill_px)
+        elif status == "PARTIALLY_FILLED":
+            if event.last_filled_qty > 1e-9:
+                fill_px = event.last_filled_price if event.last_filled_price > 0 else po.price
+                self._book_pending_fill(po, event.last_filled_qty, fill_px, ts)
+                remaining = max(0.0, po.size - event.cumulative_filled_qty)
+                if remaining <= 1e-9:
+                    self.pending_orders.pop(coid, None)
+                else:
+                    self.pending_orders[coid] = PendingOrder(
+                        client_order_id=po.client_order_id,
+                        order_id=po.order_id,
+                        symbol=po.symbol,
+                        side=po.side,
+                        size=remaining,
+                        price=po.price,
+                        reduce_only=po.reduce_only,
+                        kind=po.kind,
+                        pos_side=po.pos_side,
+                        placed_ts=po.placed_ts,
+                    )
+                logger.info(
+                    "WS partial fill booked: %s (qty=%.4f, remaining=%.4f)",
+                    coid,
+                    event.last_filled_qty,
+                    remaining,
+                )
+        elif status in ("CANCELED", "CANCELLED", "EXPIRED", "REJECTED"):
+            self.pending_orders.pop(coid, None)
+            logger.info("WS order dead: %s (%s)", coid, status)
+
+    def start_user_stream(self) -> BinanceUserDataStream | None:
+        """Ініціалізувати та повернути клієнт WebSocket User Data Stream."""
+        if self.settings.dry_run or not self.client:
+            return None
+        if self.ws_stream is not None:
+            return self.ws_stream
+        create_fn = getattr(self.client, "create_listen_key", None)
+        keepalive_fn = getattr(self.client, "keepalive_listen_key", None)
+        if not callable(create_fn):
+            return None
+        try:
+            listen_key = create_fn()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Не вдалося створити listenKey: %s", exc)
+            return None
+        if not listen_key:
+            return None
+
+        self.ws_stream = BinanceUserDataStream(
+            listen_key=listen_key,
+            testnet="testnet" in str(getattr(self.settings, "exchange", "")).lower(),
+            on_order_update=self.on_ws_order_trade,
+            keepalive=keepalive_fn if callable(keepalive_fn) else None,
+            refresh_listen_key=create_fn,
+        )
+        logger.info("User Data Stream налаштовано для %s", self.symbol)
+        return self.ws_stream
+
+    def stop_user_stream(self) -> None:
+        """Зупинити User Data Stream та закрити listenKey."""
+        if self.ws_stream is not None:
+            stream = self.ws_stream
+            self.ws_stream = None
+            stream.stop()
+            close_fn = getattr(self.client, "close_listen_key", None)
+            if callable(close_fn) and stream.listen_key:
+                try:
+                    close_fn(stream.listen_key)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Помилка close_listen_key: %s", exc)
 
     # ── M4: live equity з біржі ──────────────────────────────────────────────
 

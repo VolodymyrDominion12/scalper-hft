@@ -224,3 +224,44 @@ class ExchangeClient:
         if symbols:
             return self.exchange.fetch_positions(symbols)
         return self.exchange.fetch_positions()
+
+    # ── WebSocket listenKey (User Data Stream) ────────────────────────────────
+    def create_listen_key(self) -> str:
+        """Створити listenKey для Binance User Data Stream через ccxt."""
+        for method_name in ("fapiPrivatePostListenKey", "dapiPrivatePostListenKey"):
+            fn = getattr(self.exchange, method_name, None)
+            if callable(fn):
+                try:
+                    resp = fn()
+                    key = str((resp or {}).get("listenKey") or "")
+                    if key:
+                        return key
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("%s failed: %s", method_name, exc)
+        return ""
+
+    def keepalive_listen_key(self, listen_key: str) -> None:
+        """Подовжити термін дії listenKey (кожні 30-50 хв)."""
+        if not listen_key:
+            return
+        for method_name in ("fapiPrivatePutListenKey", "dapiPrivatePutListenKey"):
+            fn = getattr(self.exchange, method_name, None)
+            if callable(fn):
+                try:
+                    fn({"listenKey": listen_key})
+                    return
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("%s failed: %s", method_name, exc)
+
+    def close_listen_key(self, listen_key: str) -> None:
+        """Закрити listenKey при завершенні роботи."""
+        if not listen_key:
+            return
+        for method_name in ("fapiPrivateDeleteListenKey", "dapiPrivateDeleteListenKey"):
+            fn = getattr(self.exchange, method_name, None)
+            if callable(fn):
+                try:
+                    fn({"listenKey": listen_key})
+                    return
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("%s failed: %s", method_name, exc)

@@ -174,7 +174,7 @@ class PurgedKFold:
 
             fit_kwargs: dict = {}
             if sample_weight is not None:
-                w_tr = sample_weight.iloc[train_idx].values
+                w_tr = sample_weight.iloc[train_idx].to_numpy(dtype=float)
                 s = w_tr.sum()
                 fit_kwargs["sample_weight"] = w_tr / s if s > 0 else w_tr
 
@@ -182,7 +182,7 @@ class PurgedKFold:
 
             if scoring == "accuracy":
                 preds = estimator.predict(X_te)  # type: ignore[union-attr]
-                scores.append(float((preds == y_te.values).mean()))
+                scores.append(float((preds == y_te.to_numpy()).mean()))
             elif scoring == "neg_log_loss":
                 proba = estimator.predict_proba(X_te)  # type: ignore[union-attr]
                 classes = list(estimator.classes_)  # type: ignore[union-attr]

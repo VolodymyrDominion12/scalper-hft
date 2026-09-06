@@ -33,6 +33,7 @@ from scalper_hft.live.risk_gate import CooldownState, correlated_size_mult, deci
 from scalper_hft.live.store import PaperStore
 from scalper_hft.live.sync_engine import SyncEngine
 from scalper_hft.live.trader import closed_klines
+from scalper_hft.live.ws_user_stream import OrderTradeEvent
 from scalper_hft.strategies.base import Strategy
 from scalper_hft.strategies.pairs_arb import PairsArb
 
@@ -197,6 +198,8 @@ class PairsEngine:
         self.n_filled = 0
         self.n_unfilled = 0
         self.last_bar_ts: pd.Timestamp | None = None
+        self._ws_leg1_fill: float | None = None
+        self._ws_leg2_fill: float | None = None
 
     def _k(self, symbol: str) -> str:
         return pos_key(self.pid, symbol)
@@ -333,6 +336,65 @@ class PairsEngine:
             logger.info("%s unfilled %s/%s: %s", self.pid, o1.symbol, o2.symbol, reason)
             return f"unfilled:{reason}"
         return "pending"
+
+    def on_ws_order_trade(self, event: OrderTradeEvent, now: pd.Timestamp | None = None) -> str:
+        """Обробка події ORDER_TRADE_UPDATE для парного трейдингу.
+
+        Якщо одна з ніг заповнюється через maker WS, негайно
+        виконує другу ногу (taker chase) або фіксує подвійний філ.
+        """
+        if self.pending is None:
+            return "no_pending"
+        o1, o2 = self.pending
+        ts = now if now is not None else pd.Timestamp.now(tz="UTC").tz_localize(None)
+        status = event.status.upper()
+        if status not in ("FILLED", "CLOSED"):
+            return "ignored"
+
+        is_leg1 = event.symbol == o1.symbol or event.client_order_id == o1.key
+        is_leg2 = event.symbol == o2.symbol or event.client_order_id == o2.key
+        if not (is_leg1 or is_leg2):
+            return "symbol_mismatch"
+
+        fill_px = (
+            event.last_filled_price
+            if event.last_filled_price > 0
+            else (o1.limit_price if is_leg1 else o2.limit_price)
+        )
+
+        if self.legging_mode == "strict_both":
+            if is_leg1:
+                self._ws_leg1_fill = fill_px
+            if is_leg2:
+                self._ws_leg2_fill = fill_px
+            px1 = getattr(self, "_ws_leg1_fill", None)
+            px2 = getattr(self, "_ws_leg2_fill", None)
+            if px1 is not None and px2 is not None:
+                self._apply_fills(ts, o1, o2, px1, px2, True, True)
+                self._log_order(ts, o1, "filled", "ws_strict_both")
+                self._log_order(ts, o2, "filled", "ws_strict_both")
+                self.pending = None
+                self.n_filled += 1
+                self._ws_leg1_fill = None
+                self._ws_leg2_fill = None
+                return "both_filled"
+            return "waiting_other_leg"
+
+        # У режимах з chase (taker chase другої ноги)
+        if is_leg1:
+            self._apply_fills(ts, o1, o2, fill_px, o2.limit_price, maker1=True, maker2=False)
+            self._log_order(ts, o1, "filled", "ws_maker_leg1")
+            self._log_order(ts, o2, "filled", "ws_chase_leg2")
+            self.pending = None
+            self.n_filled += 1
+            return "chase_leg2"
+        else:
+            self._apply_fills(ts, o1, o2, o1.limit_price, fill_px, maker1=False, maker2=True)
+            self._log_order(ts, o1, "filled", "ws_chase_leg1")
+            self._log_order(ts, o2, "filled", "ws_maker_leg2")
+            self.pending = None
+            self.n_filled += 1
+            return "chase_leg1"
 
     def _unwind_filled_leg(self, ts: pd.Timestamp, order: PendingOrder, price: float) -> None:
         """Flatten уже відкриту ногу taker-ом; pending без позиції — no-op."""
@@ -887,6 +949,13 @@ class PairsPaperRunner:
             self._persist_if_needed(action)
         return action
 
+    def on_ws_order_trade(self, event: OrderTradeEvent, now: pd.Timestamp | None = None) -> str:
+        """Передати подію WebSocket стріму до PairsEngine."""
+        res = self.engine.on_ws_order_trade(event, now=now)
+        if res not in ("no_pending", "symbol_mismatch", "ignored"):
+            self._persist_if_needed(res)
+        return res
+
     def run(
         self,
         iterations: int = 10,
@@ -1060,6 +1129,15 @@ class PairsPortfolioRunner:
             if r.engine.cancel_pending(reason=reason):
                 count += 1
         return count
+
+    def on_ws_order_trade(self, event: OrderTradeEvent, now: pd.Timestamp | None = None) -> list[str]:
+        """Диспетчеризація WS подій до відповідного парного раннера."""
+        results: list[str] = []
+        for r in self.runners:
+            res = r.on_ws_order_trade(event, now=now)
+            if res not in ("no_pending", "symbol_mismatch", "ignored"):
+                results.append(f"{r.engine.pid}:{res}")
+        return results
 
     def run(
         self,

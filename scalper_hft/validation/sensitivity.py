@@ -79,7 +79,7 @@ def parameter_sensitivity(
     smooth = 1.0
     if secondary_param is None:
         g = grid.sort_values(param_name)
-        metric = g["metric"].values
+        metric = g["metric"].to_numpy(dtype=float)
         if len(metric) > 2 and metric.std() > 0:
             diffs = np.abs(np.diff(metric))
             smooth = 1.0 - min(1.0, float(diffs.mean() / max(metric.std(), 1e-9)))

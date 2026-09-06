@@ -88,7 +88,7 @@ def variant_returns(
                 funding=funding,
                 position_pct=position_pct,
             )
-            rows.append(res.equity.pct_change().fillna(0.0).values)
+            rows.append(res.equity.pct_change().fillna(0.0).to_numpy(dtype=float))
         except Exception:  # noqa: BLE001
             continue
     if not rows:
