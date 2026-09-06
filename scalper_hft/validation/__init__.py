@@ -15,6 +15,7 @@ from scalper_hft.validation.cell_audit import (
     cell_verdict,
     default_train_test,
     min_trades_for,
+    resolve_wf_windows,
 )
 from scalper_hft.validation.cohort import cohort_decay, cohort_metrics, cohort_report
 from scalper_hft.validation.cscv import CscvResult, combinatorial_splits, pbo_cscv, variant_returns
@@ -49,6 +50,7 @@ __all__ = [
     "cell_verdict",
     "default_train_test",
     "min_trades_for",
+    "resolve_wf_windows",
     "CscvResult",
     "combinatorial_splits",
     "pbo_cscv",

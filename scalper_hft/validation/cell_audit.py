@@ -74,6 +74,24 @@ def default_train_test(interval: str) -> tuple[int, int]:
     return WF_TRAIN_TEST.get(interval, DEFAULT_TRAIN_TEST)
 
 
+def resolve_wf_windows(
+    interval: str,
+    train_bars: int | None = None,
+    test_bars: int | None = None,
+) -> tuple[int, int]:
+    """Явні бари, або per-TF дефолт з `default_train_test`.
+
+    None = узяти дефолт інтервалу. Так sweep з 1m і 4h в одній матриці
+    не ставить усім train+test=3000 (4h тоді завжди error).
+    """
+    default_train, default_test = default_train_test(interval)
+    train = default_train if train_bars is None else int(train_bars)
+    test = default_test if test_bars is None else int(test_bars)
+    if train <= 0 or test <= 0:
+        raise ValueError(f"train/test мають бути > 0, отримано {train}/{test}")
+    return train, test
+
+
 def min_trades_for(interval: str) -> int:
     """Мінімум угод для статистичної значущості на цьому ТФ."""
     return MIN_TRADES.get(interval, DEFAULT_MIN_TRADES)

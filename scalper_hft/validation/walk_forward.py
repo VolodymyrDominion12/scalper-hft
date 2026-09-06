@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -20,6 +21,9 @@ import pandas as pd
 from scalper_hft.backtest.engine import run_backtest
 from scalper_hft.backtest.execution import CostModel
 from scalper_hft.strategies.base import Strategy
+
+if TYPE_CHECKING:
+    from scalper_hft.overlay.policy import CellPolicy
 
 
 @dataclass
@@ -87,6 +91,9 @@ def run_walk_forward(
     funding: pd.DataFrame | None = None,
     initial_capital: float = 10_000.0,
     position_pct: float = 0.01,
+    overlay: CellPolicy | None = None,
+    interval: str = "1m",
+    is_maker: bool = False,
 ) -> WalkForwardResult:
     """Walk-forward: параметри фіксовані (або оптимізовані вручну зовні),
     стратегія оцінюється на кожному OOS вікні."""
@@ -108,8 +115,30 @@ def run_walk_forward(
         funding_tr = _slice_by_time(funding, tr.index[0], tr.index[-1]) if funding is not None else None
         funding_te = _slice_by_time(funding, te.index[0], te.index[-1]) if funding is not None else None
 
-        res_is = run_backtest(tr, strategy, initial_capital, cost, position_pct, trades_tr, funding_tr)
-        res_oos = run_backtest(te, strategy, initial_capital, cost, position_pct, trades_te, funding_te)
+        res_is = run_backtest(
+            tr,
+            strategy,
+            initial_capital,
+            cost,
+            position_pct,
+            trades_tr,
+            funding_tr,
+            is_maker=is_maker,
+            overlay=overlay,
+            interval=interval,
+        )
+        res_oos = run_backtest(
+            te,
+            strategy,
+            initial_capital,
+            cost,
+            position_pct,
+            trades_te,
+            funding_te,
+            is_maker=is_maker,
+            overlay=overlay,
+            interval=interval,
+        )
 
         windows.append(
             WalkForwardWindow(

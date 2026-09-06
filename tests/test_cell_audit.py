@@ -17,6 +17,7 @@ from scalper_hft.validation.cell_audit import (
     cell_verdict,
     default_train_test,
     min_trades_for,
+    resolve_wf_windows,
 )
 
 
@@ -40,6 +41,14 @@ def test_default_train_test_known_and_fallback() -> None:
     assert default_train_test("1m") == (4000, 2000)
     assert default_train_test("4h") == (200, 100)
     assert default_train_test("1d") == (2000, 500)
+
+
+def test_resolve_wf_windows_auto_and_override() -> None:
+    assert resolve_wf_windows("4h") == (200, 100)
+    assert resolve_wf_windows("1m") == (4000, 2000)
+    assert resolve_wf_windows("4h", train_bars=2000, test_bars=500) == (2000, 500)
+    with pytest.raises(ValueError):
+        resolve_wf_windows("1h", train_bars=0, test_bars=10)
 
 
 def test_min_trades_for_interval() -> None:

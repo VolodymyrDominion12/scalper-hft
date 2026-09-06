@@ -27,12 +27,15 @@ import json
 import logging
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
 from scalper_hft.backtest.execution import CostModel
 from scalper_hft.research.sweep_store import SweepRow, SweepStore
+
+if TYPE_CHECKING:
+    from scalper_hft.overlay.policy import CellPolicy, OverlayBook
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +69,7 @@ def _run_backtest_cell(
     cost: CostModel,
     position_pct: float,
     enable_trace: bool = False,
+    overlay: CellPolicy | None = None,
 ) -> SweepRow:
     from scalper_hft.backtest.router import run_strategy_backtest
 
@@ -77,6 +81,8 @@ def _run_backtest_cell(
         funding=funding,
         position_pct=position_pct,
         trace=enable_trace,
+        overlay=overlay,
+        interval=interval,
     )
     m = res.metrics
 
@@ -128,6 +134,7 @@ def _run_wf_cell(
     test_bars: int,
     cost: CostModel,
     position_pct: float,
+    overlay: CellPolicy | None = None,
 ) -> SweepRow:
     from scalper_hft.validation.walk_forward import run_walk_forward
 
@@ -140,6 +147,9 @@ def _run_wf_cell(
         trades=trades,
         funding=funding,
         position_pct=position_pct,
+        overlay=overlay,
+        interval=interval,
+        is_maker=overlay.execution == "maker" if overlay is not None else False,
     )
     return SweepRow(
         strategy=strategy.name,
@@ -165,18 +175,34 @@ def _build_cell_runner(
     days: int,
     base_interval: str,
     mode: str,
-    train_bars: int,
-    test_bars: int,
+    train_bars: int | None,
+    test_bars: int | None,
     cost: CostModel,
     position_pct: float,
     data_provider: Callable[..., Any] | None,
     enable_trace: bool = False,
+    overlay_book: OverlayBook | None = None,
 ):
     """Повертає функцію клітинки (strategy_name, symbol, interval) -> SweepRow."""
-    from scalper_hft.strategies import get_strategy
+    from scalper_hft.overlay.resolver import bind_strategy_kwargs, resolve_policy
+    from scalper_hft.strategies import REGISTRY, get_strategy
+    from scalper_hft.validation.cell_audit import resolve_wf_windows
 
     def cell(name: str, symbol: str, interval: str) -> SweepRow:
-        strategy = get_strategy(name)
+        policy: CellPolicy | None = None
+        strat_kwargs: dict[str, Any] = {}
+        if overlay_book is not None:
+            policy = resolve_policy(overlay_book, name, symbol, interval)
+            if not policy.enabled:
+                return SweepRow(
+                    strategy=name,
+                    symbol=symbol,
+                    interval=interval,
+                    status="disabled",
+                    error="overlay: enabled=false",
+                )
+            strat_kwargs = bind_strategy_kwargs(REGISTRY[name], policy.strategy_kwargs())
+        strategy = get_strategy(name, **strat_kwargs)
         if data_provider is not None:
             klines, trades, funding = data_provider(symbol, interval, days)
         else:
@@ -195,6 +221,7 @@ def _build_cell_runner(
                 strategy=strategy.name, symbol=symbol, interval=interval, status="error", error="немає даних"
             )
         if mode == "walkforward":
+            train, test = resolve_wf_windows(interval, train_bars, test_bars)
             return _run_wf_cell(
                 strategy,
                 symbol,
@@ -202,10 +229,11 @@ def _build_cell_runner(
                 klines,
                 trades,
                 funding,
-                train_bars=train_bars,
-                test_bars=test_bars,
+                train_bars=train,
+                test_bars=test,
                 cost=cost,
                 position_pct=position_pct,
+                overlay=policy,
             )
         return _run_backtest_cell(
             strategy,
@@ -217,6 +245,7 @@ def _build_cell_runner(
             cost=cost,
             position_pct=position_pct,
             enable_trace=enable_trace,
+            overlay=policy,
         )
 
     return cell
@@ -229,13 +258,14 @@ def execute_sweep_cell(
     days: int,
     base_interval: str,
     mode: str,
-    train_bars: int,
-    test_bars: int,
+    train_bars: int | None,
+    test_bars: int | None,
     cost: CostModel,
     position_pct: float,
     enable_trace: bool,
     store_path: str | None,
     data_provider: Callable[..., Any] | None,
+    overlay_book: OverlayBook | None = None,
 ) -> SweepRow:
     """Top-level клітинка для ProcessPool (picklable args)."""
     cell = _build_cell_runner(
@@ -248,6 +278,7 @@ def execute_sweep_cell(
         position_pct=position_pct,
         data_provider=data_provider,
         enable_trace=enable_trace,
+        overlay_book=overlay_book,
     )
     try:
         row = cell(name, symbol, interval)
@@ -273,8 +304,8 @@ def run_sweep(
     *,
     base_interval: str = "1m",
     mode: str = "backtest",
-    train_bars: int = 2000,
-    test_bars: int = 500,
+    train_bars: int | None = None,
+    test_bars: int | None = None,
     workers: int = 1,
     include_slow: bool = False,
     data_provider: Callable[..., Any] | None = None,
@@ -282,6 +313,7 @@ def run_sweep(
     resume: bool = False,
     enable_trace: bool = False,
     on_progress: Callable[[int, int], None] | None = None,
+    overlay_book: OverlayBook | None = None,
 ) -> pd.DataFrame:
     """Прогнати матрицю стратегій × символів × таймфреймів.
 
@@ -380,6 +412,7 @@ def run_sweep(
         "enable_trace": enable_trace,
         "store_path": store_path,
         "data_provider": data_provider,
+        "overlay_book": overlay_book,
     }
 
     rows: list[SweepRow] = []

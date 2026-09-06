@@ -115,8 +115,16 @@ def handle_sweep(
     enable_trace = bool(payload.get("enable_trace", False))
     include_slow = bool(payload.get("include_slow", False))
     base = str(payload.get("base_interval") or "1m")
-    train_bars = int(payload.get("train_bars") or 2000)
-    test_bars = int(payload.get("test_bars") or 500)
+    train_raw = payload.get("train_bars")
+    test_raw = payload.get("test_bars")
+    train_bars = int(train_raw) if train_raw is not None else None
+    test_bars = int(test_raw) if test_raw is not None else None
+    overlay_path = payload.get("overlay")
+    overlay_book = None
+    if overlay_path:
+        from scalper_hft.overlay import load_overlay_book
+
+        overlay_book = load_overlay_book(str(overlay_path))
 
     sweep_db = Path(payload.get("sweep_db") or "results/sweep.db")
     jobs_path = Path(store_path) if store_path else None
@@ -144,6 +152,7 @@ def handle_sweep(
             resume=resume,
             enable_trace=enable_trace,
             on_progress=on_progress,
+            overlay_book=overlay_book,
         )
     finally:
         store.close()
@@ -328,6 +337,7 @@ def payload_from_sweep_cli(args: Any) -> dict[str, Any]:
         "enable_trace": False,
         "include_slow": bool(getattr(args, "all", False)),
         "base_interval": getattr(args, "base", None) or "1m",
-        "train_bars": int(args.train),
-        "test_bars": int(args.test),
+        "train_bars": getattr(args, "train", None),
+        "test_bars": getattr(args, "test", None),
+        "overlay": getattr(args, "overlay", None),
     }

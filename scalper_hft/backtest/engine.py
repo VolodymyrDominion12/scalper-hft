@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -21,6 +22,9 @@ from scalper_hft.backtest.execution import CostModel, apply_breakeven_gate
 from scalper_hft.backtest.metrics import BacktestMetrics, compute_metrics
 from scalper_hft.research.filter_trace import FilterTrace
 from scalper_hft.strategies.base import Strategy
+
+if TYPE_CHECKING:
+    from scalper_hft.overlay.policy import CellPolicy
 
 
 @dataclass
@@ -149,6 +153,8 @@ def run_backtest(
     funding: pd.DataFrame | None = None,
     is_maker: bool = False,
     trace: bool = False,
+    overlay: CellPolicy | None = None,
+    interval: str = "1m",
 ) -> BacktestResult:
     """Запуск бектесту стратегії на свічкових даних.
 
@@ -175,8 +181,17 @@ def run_backtest(
     if len(signals) != len(df):
         raise ValueError("Довжина сигналів не збігається з даними")
 
+    use_gate = bool(getattr(strategy, "use_breakeven_gate", False))
+    if overlay is not None:
+        from scalper_hft.overlay.apply import apply_cell_overlay
+
+        signals = apply_cell_overlay(signals, overlay, interval=interval, funding=funding)
+        position_pct = position_pct * overlay.size_mult
+        is_maker = overlay.execution == "maker"
+        use_gate = use_gate or overlay.cost_gate
+
     # Breakeven-гейт: не торгуємо, якщо очікуваний рух < round-trip витрат
-    if getattr(strategy, "use_breakeven_gate", False):
+    if use_gate:
         signals = apply_breakeven_gate(signals, df, cost, is_maker=is_maker)
 
     close = df["close"]
@@ -277,6 +292,6 @@ def run_backtest(
         positions=pos,
         trades=trades_df,
         metrics=metrics,
-        params={"strategy": strategy.name, "position_pct": position_pct, "is_maker": is_maker},
+        params={"strategy": strategy.name, "position_pct": position_pct, "is_maker": is_maker, "interval": interval},
         trace=filter_trace,
     )

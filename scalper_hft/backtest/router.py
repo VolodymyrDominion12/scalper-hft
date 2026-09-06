@@ -16,10 +16,15 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from scalper_hft.backtest.engine import BacktestResult, run_backtest
 from scalper_hft.backtest.event_engine import EventBacktestResult, run_event_backtest
 from scalper_hft.backtest.execution import CostModel
 from scalper_hft.strategies.base import Strategy
+
+if TYPE_CHECKING:
+    from scalper_hft.overlay.policy import CellPolicy
 
 # Стратегії, чиє виконання моделює ЛИШЕ подієвий рушій (пасивний MM).
 EVENT_STRATEGIES = frozenset({"market_maker"})
@@ -36,9 +41,27 @@ def run_strategy_backtest(
     is_maker: bool = False,
     initial_capital: float = 10_000.0,
     trace: bool = False,
+    overlay: CellPolicy | None = None,
+    interval: str = "1m",
 ) -> BacktestResult | EventBacktestResult:
     name = getattr(strategy, "name", "")
     if name in EVENT_STRATEGIES:
+        # Overlay: MM на OHLC невалідний — disabled клітинка лишається нулем
+        # через векторний рушій, а не через подієвий філ-спам.
+        if overlay is not None and not overlay.enabled:
+            return run_backtest(
+                df,
+                strategy,
+                initial_capital=initial_capital,
+                cost=cost,
+                position_pct=0.0,
+                trades=trades,
+                funding=funding,
+                is_maker=is_maker,
+                trace=trace,
+                overlay=overlay,
+                interval=interval,
+            )
         # Параметри стратегії → параметри рушія (раніше лишались дефолти,
         # тож sweep/Optuna по market_maker повертали константу).
         return run_event_backtest(
@@ -61,4 +84,6 @@ def run_strategy_backtest(
         funding=funding,
         is_maker=is_maker,
         trace=trace,
+        overlay=overlay,
+        interval=interval,
     )

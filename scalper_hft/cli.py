@@ -44,6 +44,40 @@ def _apply_use_kalman(args: argparse.Namespace, params: dict) -> dict:
     return out
 
 
+def _add_overlay_flag(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--overlay",
+        nargs="?",
+        const="configs/cells/default.yaml",
+        default=None,
+        help="Cell Overlay YAML. Без шляху — configs/cells/default.yaml. Без прапорця шар вимкнено.",
+    )
+
+
+def _policy_from_args(args: argparse.Namespace):
+    """None якщо --overlay не задано."""
+    path = getattr(args, "overlay", None)
+    if not path:
+        return None
+    from scalper_hft.overlay import load_overlay_book, resolve_policy
+
+    settings = get_settings()
+    symbol = args.symbol or (settings.default_symbols[0] if settings.default_symbols else "BTCUSDT")
+    interval = args.interval or settings.default_interval
+    book = load_overlay_book(path)
+    return resolve_policy(book, args.strategy, symbol, interval)
+
+
+def _merge_overlay_params(args: argparse.Namespace, params: dict, overlay) -> dict:
+    from scalper_hft.overlay.resolver import bind_strategy_kwargs
+    from scalper_hft.strategies import REGISTRY
+
+    bound = bind_strategy_kwargs(REGISTRY[args.strategy], overlay.strategy_kwargs())
+    for key, val in bound.items():
+        params.setdefault(key, val)
+    return params
+
+
 def _load_klines(
     symbol: str, interval: str, days: int, base: str | None = None, derive: bool = True, exchange_id: str | None = None
 ) -> pd.DataFrame:
@@ -130,6 +164,9 @@ def cmd_backtest(args: argparse.Namespace) -> None:
     from scalper_hft.strategies import get_strategy
 
     params = _apply_use_kalman(args, dict(args.param_dict))
+    overlay = _policy_from_args(args)
+    if overlay is not None:
+        params = _merge_overlay_params(args, params, overlay)
     if getattr(args, "breakeven_gate", False):
         params["breakeven_gate"] = True
     strategy = get_strategy(args.strategy, **params)
@@ -164,7 +201,14 @@ def cmd_backtest(args: argparse.Namespace) -> None:
         logger.warning("Якість барів: %s", bundle.quality.summary())
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
     res = run_strategy_backtest(
-        df, strategy, cost=cost, trades=trades, funding=funding, position_pct=settings.position_pct
+        df,
+        strategy,
+        cost=cost,
+        trades=trades,
+        funding=funding,
+        position_pct=settings.position_pct,
+        overlay=overlay,
+        interval=args.interval or get_settings().default_interval,
     )
     print("\n" + res.summary())
     _plot_equity(res.equity, args.strategy, args.symbol)
@@ -184,7 +228,11 @@ def cmd_plot(args: argparse.Namespace) -> None:
     from scalper_hft.strategies import get_strategy
     from scalper_hft.visualization.charts import make_backtest_figure
 
-    strategy = get_strategy(args.strategy, **dict(args.param_dict))
+    params = dict(args.param_dict)
+    overlay = _policy_from_args(args)
+    if overlay is not None:
+        params = _merge_overlay_params(args, params, overlay)
+    strategy = get_strategy(args.strategy, **params)
     settings = get_settings()
     bundle = load_research_data(
         args.symbol,
@@ -201,7 +249,14 @@ def cmd_plot(args: argparse.Namespace) -> None:
         sys.exit(1)
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
     res = run_strategy_backtest(
-        df, strategy, cost=cost, trades=bundle.trades, funding=bundle.funding, position_pct=settings.position_pct
+        df,
+        strategy,
+        cost=cost,
+        trades=bundle.trades,
+        funding=bundle.funding,
+        position_pct=settings.position_pct,
+        overlay=overlay,
+        interval=args.interval or settings.default_interval,
     )
     fdf = add_standard_features(df)  # індикатори — лише для графіка
     fig = make_backtest_figure(
@@ -223,19 +278,25 @@ def cmd_plot(args: argparse.Namespace) -> None:
 def cmd_walkforward(args: argparse.Namespace) -> None:
     from scalper_hft.config import get_settings
     from scalper_hft.strategies import get_strategy
+    from scalper_hft.validation.cell_audit import resolve_wf_windows
     from scalper_hft.validation.walk_forward import run_walk_forward
 
     settings = get_settings()
     exchange_id = getattr(args, "exchange", settings.exchange)
+    interval = args.interval or settings.default_interval
     df = _load_klines(
         args.symbol,
-        args.interval,
+        interval,
         args.days,
         base=getattr(args, "base", None),
         derive=getattr(args, "derive", True),
         exchange_id=exchange_id,
     )
-    strategy = get_strategy(args.strategy, **_apply_use_kalman(args, args.param_dict))
+    params = _apply_use_kalman(args, args.param_dict)
+    overlay = _policy_from_args(args)
+    if overlay is not None:
+        params = _merge_overlay_params(args, params, overlay)
+    strategy = get_strategy(args.strategy, **params)
     trades = None
     if strategy.needs_trades:
         from scalper_hft.data.downloader import download_agg_trades
@@ -246,15 +307,18 @@ def cmd_walkforward(args: argparse.Namespace) -> None:
         from scalper_hft.data.downloader import download_funding
 
         funding = download_funding(args.symbol, args.days)
-    settings = get_settings()
+    train, test = resolve_wf_windows(interval, args.train, args.test)
     res = run_walk_forward(
         df,
         strategy,
-        train_bars=args.train,
-        test_bars=args.test,
+        train_bars=train,
+        test_bars=test,
         trades=trades,
         funding=funding,
         position_pct=settings.position_pct,
+        overlay=overlay,
+        interval=interval,
+        is_maker=overlay.execution == "maker" if overlay is not None else False,
     )
     print("\n" + res.summary())
     if res.avg_oos_sharpe < 0.3:
@@ -1688,6 +1752,11 @@ def cmd_sweep(args: argparse.Namespace) -> None:
     intervals = [s.strip() for s in args.intervals.split(",") if s.strip()] if args.intervals else DEFAULT_INTERVALS
 
     with SweepStore("results/sweep.db") as store:
+        overlay_book = None
+        if getattr(args, "overlay", None):
+            from scalper_hft.overlay import load_overlay_book
+
+            overlay_book = load_overlay_book(args.overlay)
         df = run_sweep(
             strategies=strategies,
             symbols=symbols,
@@ -1701,6 +1770,7 @@ def cmd_sweep(args: argparse.Namespace) -> None:
             include_slow=args.all,
             store=store,
             resume=bool(getattr(args, "resume", True)),
+            overlay_book=overlay_book,
         )
 
     out_csv = Path(args.out) if args.out else Path("results/sweep.csv")
@@ -1892,6 +1962,7 @@ def main(argv: list[str] | None = None) -> None:
 
     p = sub.add_parser("backtest", help="Запустити бектест")
     add_common(p)
+    _add_overlay_flag(p)
     p.add_argument(
         "--breakeven-gate", action="store_true", help="Вимикати сигнали, де очікуваний рух (ATR) < round-trip витрат"
     )
@@ -1907,6 +1978,7 @@ def main(argv: list[str] | None = None) -> None:
 
     p = sub.add_parser("plot", help="Інтерактивний HTML-графік бектесту (свічки+індикатори+угоди+SL/TP)")
     add_common(p)
+    _add_overlay_flag(p)
     p.add_argument("--out", default="docs/plots/backtest.html", help="Шлях до HTML-файлу")
     p.add_argument(
         "--bars", type=int, default=20_000, help="Максимум барів на графіку (даунсемплінг; бари угод зберігаються)"
@@ -1919,8 +1991,9 @@ def main(argv: list[str] | None = None) -> None:
 
     p = sub.add_parser("walkforward", help="Walk-forward аналіз")
     add_common(p)
-    p.add_argument("--train", type=int, default=2000, help="Барів у train (IS)")
-    p.add_argument("--test", type=int, default=500, help="Барів у test (OOS)")
+    _add_overlay_flag(p)
+    p.add_argument("--train", type=int, default=None, help="Барів у train (IS). Пропуск = per-TF дефолт")
+    p.add_argument("--test", type=int, default=None, help="Барів у test (OOS). Пропуск = per-TF дефолт")
     p.add_argument("--use-kalman", action="store_true", help="PairsArb: динамічний Kalman hedge ratio")
     p.set_defaults(func=cmd_walkforward)
 
@@ -2277,8 +2350,14 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--days", type=int, default=60, help="Глибина історії, днів")
     p.add_argument("--base", default=None, help="Базовий таймфрейм для ресемплінгу (за замовч. 1m)")
     p.add_argument("--mode", default="backtest", choices=["backtest", "walkforward"], help="Режим кожної клітинки")
-    p.add_argument("--train", type=int, default=2000, help="Барів train для walkforward")
-    p.add_argument("--test", type=int, default=500, help="Барів test (OOS) для walkforward")
+    p.add_argument(
+        "--train",
+        type=int,
+        default=None,
+        help="Барів train для walkforward. Пропуск = per-TF (1h=500/200, 4h=200/100, 1m=4000/2000)",
+    )
+    p.add_argument("--test", type=int, default=None, help="Барів test (OOS). Пропуск = per-TF дефолт")
+    _add_overlay_flag(p)
     p.add_argument("--workers", type=int, default=1, help="Паралельних клітинок (0/1 = послідовно)")
     p.add_argument("--all", action="store_true", help="Включити ML-стратегію та ensemble (повільно)")
     p.add_argument("--out", default=None, help="Шлях CSV-результату (за замовч. results/sweep.csv)")

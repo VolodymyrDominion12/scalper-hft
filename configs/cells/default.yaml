@@ -1,0 +1,86 @@
+# Cell Overlay playbook (Narang: Alpha окремо від політики клітинки).
+# Параметри альфи НЕ підганяються під тікер. Тут лише enablement, час,
+# maker/taker, cost-gate, кластери ліквідності, режимний сон funding.
+#
+# Резолвер: вище score (точніший match) перемагає; нічия — нижче правило в списку.
+
+clusters:
+  majors: [BTCUSDT, ETHUSDT]
+  liquid_alts: [AAVEUSDT, UNIUSDT, LINKUSDT, ADAUSDT, XRPUSDT, AVAXUSDT]
+
+defaults:
+  enabled: false
+  allow_short: true
+  execution: maker
+  min_hold_hours: 0
+  cost_gate: false
+  enabled_when: always
+  funding_annual_min: 0.10
+  size_mult: 1.0
+
+cells:
+  - match: { strategy: "*", interval: [1m, 5m] }
+    enabled: false
+
+  - match: { strategy: "*", cluster: majors }
+    enabled: false
+
+  - match: { strategy: stoch_rsi, interval: [30m, 1h], cluster: liquid_alts }
+    enabled: true
+    min_hold_hours: 4
+    max_trades_per_day: 2
+    execution: maker
+    allow_short: true
+    cost_gate: true
+
+  - match: { strategy: supertrend, interval: [1h], cluster: liquid_alts }
+    enabled: true
+    min_hold_hours: 6
+    execution: maker
+    allow_short: true
+    cost_gate: true
+
+  - match: { strategy: smc_fvg, interval: [1h], cluster: liquid_alts }
+    enabled: true
+    min_hold_hours: 6
+    execution: maker
+    allow_short: true
+    cost_gate: true
+
+  - match: { strategy: funding_carry, cluster: liquid_alts }
+    enabled: true
+    enabled_when: funding_regime
+    funding_annual_min: 0.10
+    execution: maker
+
+  - match: { strategy: regime_supervisor, interval: [1h], cluster: liquid_alts }
+    enabled: true
+    min_hold_hours: 4
+    execution: maker
+    allow_short: true
+
+  - match: { strategy: pairs_arb, interval: [1h] }
+    enabled: true
+    execution: maker
+    cost_gate: false
+
+  - match: { strategy: cross_momentum }
+    enabled: false
+
+  - match: { strategy: mean_reversion }
+    enabled: false
+
+  - match: { strategy: hmm_reversion }
+    enabled: false
+
+  - match: { strategy: cvd_momentum }
+    enabled: false
+
+  - match: { strategy: ob_imbalance }
+    enabled: false
+
+  - match: { strategy: market_maker }
+    enabled: false
+
+  - match: { strategy: basis_reversion }
+    enabled: false

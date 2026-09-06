@@ -293,3 +293,26 @@ def test_handle_capacity_writes_csv(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     loaded, extra = load_capacity_curve(job_dir)
     assert extra["saturation_scale"] == pytest.approx(1.0)
     assert len(loaded) == 2
+
+
+def test_apply_research_prefill_max_days_730() -> None:
+    from scalper_hft.app_pages._common import apply_shared_research_keys
+
+    state: dict[str, object] = {
+        RESEARCH_BT_PREFILL: {
+            "strategy": "mean_reversion",
+            "symbol": "BTCUSDT",
+            "interval": "1h",
+            "days": 730,
+        }
+    }
+    apply_research_bt_prefill(state)
+    assert state["bt_days"] == 730
+
+    rs_state: dict[str, object] = {}
+    apply_shared_research_keys(
+        rs_state,
+        {"strategy": "mean_reversion", "symbol": "BTCUSDT", "interval": "1h", "days": 730},
+    )
+    assert rs_state["rs_days"] == 730
+

@@ -70,7 +70,7 @@ with st.container(border=True):
     with rs3:
         rs_iv = st.selectbox("Таймфрейм", BT_INTERVALS, index=min(1, len(BT_INTERVALS) - 1), key="rs_interval")
     with rs4:
-        rs_days = st.slider("Днів", 14, 365, key="rs_days")
+        rs_days = st.slider("Днів", 14, 730, key="rs_days")
 
 section = st.segmented_control("Розділ", list(RESEARCH_SECTIONS), key="research_section")
 if section is None:
@@ -123,7 +123,7 @@ if section == "Sweep matrix":
         sel_strats = st.multiselect("Стратегії", all_strats, default=all_strats[:5], key="sw_strats")
         sel_symbols = st.multiselect("Символи", SYMBOLS, default=SYMBOLS[:3], key="sw_syms")
         sel_ivs = st.multiselect("Таймфрейми", DEFAULT_INTERVALS, default=["5m", "15m", "1h"], key="sw_ivs")
-        sel_days = st.slider("Днів даних", 14, 180, 60, key="sw_days")
+        sel_days = st.slider("Днів даних", 14, 730, 60, key="sw_days")
         sel_mode = st.segmented_control("Режим", ["backtest", "walkforward"], key="sw_mode")
         if sel_mode is None:
             sel_mode = "backtest"
