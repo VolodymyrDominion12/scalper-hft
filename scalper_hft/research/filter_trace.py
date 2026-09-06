@@ -98,6 +98,47 @@ class FilterTrace:
     def passed_events(self) -> list[SignalEvent]:
         return [e for e in self._events if not e.was_blocked]
 
+    @classmethod
+    def from_dataframe(cls, df: pd.DataFrame | None) -> FilterTrace:
+        """Відновити трейс з таблиці `to_dataframe` (у т.ч. parquet артефактів)."""
+        trace = cls()
+        if df is None or len(df) == 0:
+            return trace
+        work = df.copy()
+        if "ts" not in work.columns:
+            work = work.reset_index()
+            if "index" in work.columns and "ts" not in work.columns:
+                work = work.rename(columns={"index": "ts"})
+        if "ts" not in work.columns:
+            return trace
+        reserved = frozenset({"ts", "raw_signal", "final_signal", "blocked_by", "was_blocked", "side"})
+        for rec in work.to_dict("records"):
+            ts_raw = rec.get("ts")
+            if ts_raw is None or (isinstance(ts_raw, float) and ts_raw != ts_raw):
+                continue
+            blocked_raw = rec.get("blocked_by") or ""
+            if isinstance(blocked_raw, str):
+                blocked = [part for part in blocked_raw.split("|") if part]
+            elif isinstance(blocked_raw, (list, tuple)):
+                blocked = [str(part) for part in blocked_raw if part]
+            else:
+                blocked = []
+            context = {
+                str(key): value
+                for key, value in rec.items()
+                if key not in reserved and value is not None and not (isinstance(value, float) and value != value)
+            }
+            trace.add(
+                SignalEvent(
+                    ts=pd.Timestamp(ts_raw),
+                    raw_signal=int(rec.get("raw_signal") or 0),
+                    final_signal=int(rec.get("final_signal") or 0),
+                    blocked_by=blocked,
+                    context=context,
+                )
+            )
+        return trace
+
 
 def filter_attribution(trace: FilterTrace) -> pd.DataFrame:
     """Атрибуція заблокованих сигналів по фільтрам.

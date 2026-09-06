@@ -11,15 +11,22 @@ from typing import Any
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from scalper_hft.app_pages._common import BT_INTERVALS, PAIR_CHOICES, SYMBOLS, apply_research_bt_prefill
-from scalper_hft.backtest.engine import run_backtest
+from scalper_hft.app_pages._common import (
+    BT_INTERVALS,
+    PAIR_CHOICES,
+    SYMBOLS,
+    apply_research_bt_prefill,
+    capacity_job_payload,
+    job_status_caption,
+    lookup_job,
+    submit_research_job,
+)
 from scalper_hft.backtest.execution import CostModel
 from scalper_hft.config import get_settings
 from scalper_hft.data.access import klines_from_store
-from scalper_hft.data.storage import load_funding, load_trades
 from scalper_hft.features.indicators import add_standard_features
 from scalper_hft.research.dashboard_brief import dsr_verdict, hurdle_note
-from scalper_hft.research.job_artifacts import load_backtest_result, load_pairs_result
+from scalper_hft.research.job_artifacts import load_backtest_result, load_capacity_curve, load_pairs_result
 from scalper_hft.research.jobs import DEFAULT_JOBS_PATH, JobStore, artifacts_dir, fingerprint
 from scalper_hft.research.strategy_book import select_label
 from scalper_hft.strategies import REGISTRY, get_strategy
@@ -28,12 +35,12 @@ from scalper_hft.visualization import (
     auto_indicator_columns,
     find_trade_by_ts,
     make_backtest_figure,
+    make_pairs_figure,
     trade_detail_figure,
     trades_table,
 )
 
 settings = get_settings()
-data_dir = settings.data_dir_abs
 
 apply_research_bt_prefill(st.session_state)
 
@@ -57,9 +64,9 @@ else:
     symbol = st.sidebar.selectbox("Символ", SYMBOLS, key="bt_symbol")
     interval = st.sidebar.selectbox("Таймфрейм", BT_INTERVALS, index=1, key="bt_interval_single")
 days = st.sidebar.slider("Глибина даних, днів", 7, 365, 90 if is_pairs else 30, key="bt_days")
-run_bt = st.sidebar.button("▶ Запустити бектест")
-run_rerun = st.sidebar.button("Перезапустити задачу")
-run_diag = st.sidebar.button("🩺 Діагностика (cohort/stress)")
+run_bt = st.sidebar.button("Запустити бектест", icon=":material/play_arrow:")
+run_rerun = st.sidebar.button("Перезапустити задачу", icon=":material/replay:")
+run_capacity = st.sidebar.button("Capacity (черга)", icon=":material/speed:")
 
 
 def _clear_trade_selection() -> None:
@@ -163,6 +170,62 @@ def _render_bt_chart(view: dict) -> None:
         st.info("Угод за цей період немає — спробуйте іншу стратегію/період.")
 
 
+@st.fragment
+def _render_pairs_chart(res: Any, title: str) -> None:
+    """Спред + маркери угод для pairs_arb (окремий фрагмент)."""
+    if res.spread is None or getattr(res.spread, "empty", True):
+        st.warning("Немає спреду в артефактах.")
+        return
+    st.subheader("Графік спреду")
+    left, right = st.columns([1, 4])
+    with left:
+        ts0 = res.spread.index[0].to_pydatetime()
+        ts1 = res.spread.index[-1].to_pydatetime()
+        st.caption("Вікно графіка")
+        window = st.slider(
+            "Час",
+            min_value=ts0,
+            max_value=ts1,
+            value=(ts0, ts1),
+            format="%d.%m %H:%M",
+            key="pairs_window",
+        )
+        with_trades = st.toggle("Точки входу/виходу", value=True, key="pairs_trades")
+        max_bars = st.select_slider(
+            "Максимум барів",
+            options=[1_000, 5_000, 20_000, 100_000, 500_000],
+            value=20_000,
+            key="pairs_max_bars",
+        )
+        st.caption(f"Угод: {len(res.trades)} · Max DD: {res.metrics.max_drawdown:.1%}")
+    with right:
+        fig = make_pairs_figure(
+            res,
+            start=window[0],
+            end=window[1],
+            max_bars=max_bars,
+            with_trades=with_trades,
+            symbol=title,
+        )
+        st.plotly_chart(fig, width="stretch", key="pairs_fig")
+    st.subheader("Угоди")
+    if res.trades is not None and not res.trades.empty:
+        st.dataframe(
+            trades_table(res, initial_capital=10_000.0),
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "Вхід": st.column_config.DatetimeColumn("Вхід", format="DD.MM.YYYY HH:mm"),
+                "Вихід": st.column_config.DatetimeColumn("Вихід", format="DD.MM.YYYY HH:mm"),
+                "Сторона": st.column_config.TextColumn("Сторона"),
+                "PnL, %": st.column_config.NumberColumn("PnL, %", format="%.3f"),
+                "PnL, $": st.column_config.NumberColumn("PnL, $", format="%.2f"),
+            },
+        )
+    else:
+        st.info("Угод за цей період немає.")
+
+
 st.header("Запуск бектесту")
 if is_pairs:
     _kind = "pairs"
@@ -231,19 +294,28 @@ elif _job.status == "succeeded":
             st.warning("Артефакти ще не записані.")
         else:
             m = pairs_res.metrics
+            ret = pairs_res.equity.pct_change().dropna()
+            n_trials = estimate_n_trials(max(len(get_strategy("pairs_arb").param_space), 1), 40)
+            dsr = deflated_sharpe_ratio(ret.values, n_trials=n_trials)
+            verdict = dsr_verdict(dsr)
+            dsr_label = {"significant": "значущий", "weak": "слабкий", "none": "немає edge"}[verdict]
             with st.container(horizontal=True):
                 st.metric("Дохідність", f"{m.total_return:.2%}", border=True)
                 st.metric("Sharpe (год.)", f"{m.sharpe_hourly:.2f}", border=True)
                 st.metric("Угоди", f"{m.n_trades}", border=True)
                 st.metric("Max DD", f"{m.max_drawdown:.2%}", border=True, delta_color="inverse")
                 st.metric("Profit factor", f"{m.profit_factor:.2f}", border=True)
+                st.metric(
+                    "Deflated Sharpe",
+                    f"{dsr:.3f}",
+                    delta=dsr_label,
+                    delta_color="normal" if verdict == "significant" else "inverse",
+                    border=True,
+                    help=f"> 0.95 = значущий edge після поправки на trials={n_trials}",
+                )
             if m.n_trades:
                 st.caption(hurdle_note(m.avg_trade_return, cost.round_trip_maker(), n_legs=2))
-            fig = go.Figure(
-                go.Scatter(x=pairs_res.equity.index, y=pairs_res.equity.values, mode="lines", name="Equity")
-            )
-            fig.update_layout(title=_title, height=350)
-            st.plotly_chart(fig, width="stretch")
+            st.session_state["pairs_view"] = pairs_res
             with st.expander("Повні метрики"):
                 st.text(m.summary())
     else:
@@ -287,7 +359,12 @@ elif _job.status == "succeeded":
 if st.session_state.get("bt_fp") != _fp:
     if not (_job and _job.status == "succeeded" and not is_pairs):
         st.session_state.pop("bt_view", None)
+    if not (_job and _job.status == "succeeded" and is_pairs):
+        st.session_state.pop("pairs_view", None)
 st.session_state["bt_fp"] = _fp
+
+if st.session_state.get("pairs_view") is not None:
+    _render_pairs_chart(st.session_state["pairs_view"], _title)
 
 if st.session_state.get("bt_view") is not None:
     _render_bt_chart(st.session_state["bt_view"])
@@ -473,59 +550,61 @@ if st.session_state.get("bt_view") is not None:
 
 
 st.header("Діагностика (cohort / stress / capacity)")
-if run_diag:
-    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
-    try:
-        strategy = get_strategy(strategy_name)
-        if is_pairs:
-            st.warning("Діагностика працює для одиночних стратегій (не pairs_arb).")
+st.caption("Cohort і stress — з уже завантаженого результату. Capacity — окрема задача в черзі.")
+_diag_res = None
+if st.session_state.get("bt_view") is not None:
+    _diag_res = st.session_state["bt_view"].get("res")
+elif st.session_state.get("pairs_view") is not None:
+    _diag_res = st.session_state["pairs_view"]
+if _diag_res is None:
+    st.caption("Спочатку дочекайтесь успішного бектесту.")
+else:
+    from scalper_hft.validation.cohort import cohort_report
+    from scalper_hft.validation.stress import stress_report
+
+    ret = _diag_res.equity.pct_change().dropna()
+    with st.expander("Cohort decay (Predictive Marketing)", expanded=False):
+        st.text(cohort_report(_diag_res.trades))
+    with st.expander("Стрес-тест (Narang гл. 10)", expanded=False):
+        rep = stress_report(ret)
+        st.dataframe(rep.round(4), width="stretch")
+        st.caption(
+            "crash = найгірше вікно ×2; liquidity = витрати ×10; "
+            "vol_spike = волатильність ×2; funding_shock = per-bar 0.1%"
+        )
+
+if is_pairs:
+    st.caption("Capacity рахується для одиночних стратегій (не pairs_arb).")
+else:
+    _cap_payload = capacity_job_payload(strategy_name, symbol, interval, days)
+    if run_capacity:
+        submit_research_job("capacity", _cap_payload)
+        st.rerun()
+    _cap_job, _cap_alive = lookup_job("capacity", _cap_payload)
+    if not _cap_alive:
+        st.warning("Research worker не запущений. `uv run python -m scalper_hft.cli job worker`")
+    _cap_level, _cap_msg = job_status_caption(_cap_job)
+    if _cap_level == "empty":
+        st.caption("Capacity ще не ставили — кнопка в сайдбарі.")
+    elif _cap_level == "info":
+        st.info(_cap_msg)
+    elif _cap_level == "error":
+        st.error(_cap_msg)
+    elif _cap_level == "warning":
+        st.warning(_cap_msg)
+    if _cap_job is not None and _cap_job.status == "succeeded":
+        try:
+            curve, extra = load_capacity_curve(artifacts_dir(DEFAULT_JOBS_PATH, _cap_job.id))
+        except FileNotFoundError:
+            st.warning("Артефакти capacity ще не записані.")
         else:
-            df = klines_from_store(symbol, interval, days)
-            if df is None or len(df) < 100:
-                st.warning(f"Немає даних {symbol} {interval} — download спершу")
-            else:
-                trades = (
-                    load_trades(data_dir / f"{symbol}_aggTrades.parquet")
-                    if getattr(strategy, "needs_trades", False)
-                    else None
-                )
-                funding = (
-                    load_funding(data_dir / f"{symbol}_funding.parquet")
-                    if getattr(strategy, "needs_funding", False)
-                    else None
-                )
-                diag_res = run_backtest(
-                    df, strategy, cost=cost, trades=trades, funding=funding, position_pct=settings.position_pct
-                )
-                ret = diag_res.equity.pct_change().dropna()
-
-                with st.expander("Cohort decay (Predictive Marketing)", expanded=False):
-                    from scalper_hft.validation.cohort import cohort_report
-
-                    st.text(cohort_report(diag_res.trades))
-                with st.expander("Стрес-тест (Narang гл. 10)", expanded=False):
-                    from scalper_hft.validation.stress import stress_report
-
-                    rep = stress_report(ret)
-                    st.dataframe(rep.round(4), width="stretch")
-                    st.caption(
-                        "crash = найгірше вікно ×2; liquidity = витрати ×10; "
-                        "vol_spike = волатильність ×2; funding_shock = per-bar 0.1%"
-                    )
-                with st.expander("Capacity (share of wallet)", expanded=False):
-                    from scalper_hft.validation.capacity import capacity_curve, saturation_scale
-
-                    curve = capacity_curve(
-                        df, strategy, scales=[1.0, 2.0, 5.0, 10.0], cost=cost, position_pct=settings.position_pct
-                    )
-                    fig = go.Figure(go.Bar(x=curve["scale"], y=curve["sharpe"]))
-                    fig.update_layout(
-                        title=f"Sharpe при масштабі позицій ×(1..10) — насичення ×{saturation_scale(curve):g}",
-                        xaxis_title="scale",
-                        yaxis_title="Sharpe",
-                        height=320,
-                    )
-                    st.plotly_chart(fig, width="stretch")
-                    st.dataframe(curve.round(4), width="stretch")
-    except Exception as exc:  # noqa: BLE001
-        st.error(f"Діагностика не вдалася: {exc}")
+            sat = extra.get("saturation_scale", "")
+            fig = go.Figure(go.Bar(x=curve["scale"], y=curve["sharpe"]))
+            fig.update_layout(
+                title=f"Sharpe при масштабі позицій ×(1..10) — насичення ×{sat}",
+                xaxis_title="scale",
+                yaxis_title="Sharpe",
+                height=320,
+            )
+            st.plotly_chart(fig, width="stretch")
+            st.dataframe(curve.round(4), width="stretch")

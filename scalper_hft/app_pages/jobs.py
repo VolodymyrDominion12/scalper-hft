@@ -6,6 +6,12 @@ from typing import Literal
 
 import pandas as pd
 import streamlit as st
+from scalper_hft.app_pages._common import (
+    JOB_KINDS,
+    JOB_STATUSES,
+    job_label,
+    job_open_target,
+)
 from scalper_hft.research.jobs import DEFAULT_JOBS_PATH, JobStore
 
 st.title("Задачі")
@@ -23,6 +29,7 @@ with st.container(horizontal=True):
 
 if not alive:
     st.info("Поставте job і запустіть воркер, або відкрийте дашборд без `--no-worker`.")
+    st.page_link("app_pages/help.py", label="Довідка", icon=":material/help:")
 
 
 def _status_color(
@@ -40,8 +47,13 @@ def _status_color(
 
 @st.fragment(run_every=2)
 def _jobs_panel() -> None:
+    with st.container(horizontal=True, vertical_alignment="bottom"):
+        status_pick = st.pills("Статус", ["усі", *JOB_STATUSES], default="усі", key="job_status_filter")
+        kind_pick = st.pills("Тип", ["усі", *JOB_KINDS], default="усі", key="job_kind_filter")
+    status_arg = None if not status_pick or status_pick == "усі" else status_pick
+    kind_arg = None if not kind_pick or kind_pick == "усі" else kind_pick
     with JobStore(DEFAULT_JOBS_PATH) as js:
-        rows = js.list_jobs(limit=200)
+        rows = js.list_jobs(limit=200, status=status_arg, kind=kind_arg)
         worker_on = js.worker_is_alive()
     if not worker_on:
         st.caption("воркер мовчить (немає heartbeat)")
@@ -53,6 +65,7 @@ def _jobs_panel() -> None:
             {
                 "id": j.id,
                 "kind": j.kind,
+                "підпис": job_label(j.kind, j.params),
                 "status": j.status,
                 "progress": f"{j.progress_done}/{j.progress_total}" if j.progress_total else "—",
                 "fp": j.short_fp,
@@ -64,23 +77,38 @@ def _jobs_panel() -> None:
     )
     st.dataframe(table, width="stretch", hide_index=True)
     ids = [j.id for j in rows]
-    selected = st.selectbox("Деталі", ids, format_func=lambda i: f"#{i}", key="job_sel")
+    labels = {j.id: f"#{j.id} · {job_label(j.kind, j.params)}" for j in rows}
+    selected = st.selectbox(
+        "Деталі",
+        ids,
+        format_func=lambda i: labels.get(i, f"#{i}"),
+        key="job_sel",
+    )
     job = next((j for j in rows if j.id == selected), None)
     if job is None:
         return
     st.badge(job.status, color=_status_color(job.status))
-    st.json(job.params)
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("Скасувати", key="job_cancel", disabled=job.status not in {"queued", "running"}):
+    st.caption(job_label(job.kind, job.params))
+    if job.progress_total:
+        st.progress(min(1.0, job.progress_done / job.progress_total))
+    with st.expander("Параметри", icon=":material/data_object:"):
+        st.json(job.params)
+    with st.container(horizontal=True):
+        if st.button(
+            "Скасувати", icon=":material/cancel:", key="job_cancel", disabled=job.status not in {"queued", "running"}
+        ):
             with JobStore(DEFAULT_JOBS_PATH) as js:
                 js.request_cancel(job.id)
             st.rerun()
-    with c2:
-        if st.button("Перезапустити", key="job_rerun"):
+        if st.button("Перезапустити", icon=":material/replay:", key="job_rerun"):
             with JobStore(DEFAULT_JOBS_PATH) as js:
                 js.submit(job.kind, job.params, force=True)
             st.rerun()
+        page, updates = job_open_target(job.kind, job.params)
+        if st.button("Відкрити результат", icon=":material/open_in_new:", key="job_open"):
+            for key, value in updates.items():
+                st.session_state[key] = value
+            st.switch_page(page)
     with JobStore(DEFAULT_JOBS_PATH) as js:
         log = js.tail_log(job.id, n=120)
     if log:

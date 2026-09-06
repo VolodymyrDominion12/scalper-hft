@@ -68,6 +68,9 @@ def save_backtest_result(
         _series_to_frame(res.positions, "position").to_parquet(job_dir / "positions.parquet")
     trades = res.trades if res.trades is not None else pd.DataFrame()
     trades.to_parquet(job_dir / "trades.parquet")
+    trace = getattr(res, "trace", None)
+    if trace is not None and len(trace) > 0:
+        trace.to_dataframe().to_parquet(job_dir / "trace.parquet")
 
 
 def save_cell_audit(job_dir: Path, audit: CellAudit) -> None:
@@ -113,7 +116,15 @@ def load_backtest_result(job_dir: Path) -> BacktestResult:
     params = dict(meta.get("params") or {})
     params["_artifact_kind"] = meta.get("kind", "backtest")
     params["_extra"] = meta.get("extra") or {}
-    return BacktestResult(equity=equity, positions=positions, trades=trades, metrics=metrics, params=params)
+    trace_path = job_dir / "trace.parquet"
+    trace = None
+    if trace_path.exists():
+        from scalper_hft.research.filter_trace import FilterTrace
+
+        trace = FilterTrace.from_dataframe(pd.read_parquet(trace_path))
+    return BacktestResult(
+        equity=equity, positions=positions, trades=trades, metrics=metrics, params=params, trace=trace
+    )
 
 
 def load_pairs_result(job_dir: Path) -> PairsResult:
@@ -142,6 +153,36 @@ def artifact_kind(job_dir: Path) -> str | None:
         return None
     meta = json.loads(path.read_text(encoding="utf-8"))
     return str(meta.get("kind") or "backtest")
+
+
+def save_capacity_curve(
+    job_dir: Path,
+    curve: pd.DataFrame,
+    *,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    """Записати capacity.csv + metrics.json (kind=capacity)."""
+    job_dir.mkdir(parents=True, exist_ok=True)
+    extra = dict(extra or {})
+    curve.to_csv(job_dir / "capacity.csv", index=False)
+    meta = {"kind": "capacity", "metrics": {}, "params": {}, "extra": extra}
+    (job_dir / "metrics.json").write_text(json.dumps(meta, default=str), encoding="utf-8")
+
+
+def load_capacity_curve(job_dir: Path) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Крива Sharpe(scale) і extra з metrics.json."""
+    path = job_dir / "capacity.csv"
+    if not path.exists():
+        raise FileNotFoundError(path)
+    curve = pd.read_csv(path)
+    extra: dict[str, Any] = {}
+    meta_path = job_dir / "metrics.json"
+    if meta_path.exists():
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        raw = meta.get("extra") or {}
+        if isinstance(raw, dict):
+            extra = dict(raw)
+    return curve, extra
 
 
 def calculate_job_artifacts_size(job_dir: Path) -> int:

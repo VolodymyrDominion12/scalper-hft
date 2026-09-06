@@ -8,7 +8,7 @@ import os
 import shutil
 import sqlite3
 import threading
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -138,6 +138,16 @@ def job_log_path(store_path: Path, job_id: int) -> Path:
     return artifacts_dir(store_path, job_id) / "job.log"
 
 
+def _as_filter_list(value: str | Sequence[str] | None) -> list[str]:
+    """Нормалізувати status/kind фільтр: None і порожній список = без фільтра."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        item = value.strip()
+        return [item] if item else []
+    return [str(item) for item in value if str(item).strip()]
+
+
 class JobStore:
     """WAL SQLite черга. Одна job на fingerprint; submit ідемпотентний."""
 
@@ -193,10 +203,31 @@ class JobStore:
         row = self._conn.execute("SELECT * FROM jobs WHERE fingerprint=?", (fp,)).fetchone()
         return self._row_to_job(row) if row else None
 
-    def list_jobs(self, *, limit: int = 100) -> list[Job]:
+    def list_jobs(
+        self,
+        *,
+        limit: int = 100,
+        status: str | Sequence[str] | None = None,
+        kind: str | Sequence[str] | None = None,
+    ) -> list[Job]:
+        """Останні задачі; порожній `status`/`kind` = без фільтра."""
+        clauses: list[str] = []
+        args: list[Any] = []
+        statuses = _as_filter_list(status)
+        kinds = _as_filter_list(kind)
+        if statuses:
+            placeholders = ",".join("?" * len(statuses))
+            clauses.append(f"status IN ({placeholders})")
+            args.extend(statuses)
+        if kinds:
+            placeholders = ",".join("?" * len(kinds))
+            clauses.append(f"kind IN ({placeholders})")
+            args.extend(kinds)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        args.append(int(limit))
         rows = self._conn.execute(
-            "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?",
-            (limit,),
+            f"SELECT * FROM jobs {where} ORDER BY created_at DESC LIMIT ?",
+            args,
         ).fetchall()
         return [self._row_to_job(r) for r in rows]
 
@@ -496,4 +527,3 @@ class JobStore:
             freed_bytes=freed_bytes,
             orphaned_dirs=orphaned_dirs,
         )
-

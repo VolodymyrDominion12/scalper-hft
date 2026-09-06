@@ -137,7 +137,7 @@ def test_apply_research_audit_prefill() -> None:
         }
     }
     apply_research_audit_prefill(state)
-    assert state["au_strat"] == "hmm_reversion"
-    assert state["rg_strat"] == "hmm_reversion"
-    assert state["au_days"] == 30
-    assert state["rg_iv"] == "5m"
+    assert state["rs_strategy"] == "hmm_reversion"
+    assert state["rs_symbol"] == "BTCUSDT"
+    assert state["rs_interval"] == "5m"
+    assert state["rs_days"] == 30

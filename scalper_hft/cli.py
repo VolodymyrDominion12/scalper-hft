@@ -1464,9 +1464,7 @@ def cmd_migrate_to_parquet(args: argparse.Namespace) -> None:
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
 
     symbols = (
-        [s.strip().upper() for s in args.symbol.split(",") if s.strip()]
-        if getattr(args, "symbol", None)
-        else None
+        [s.strip().upper() for s in args.symbol.split(",") if s.strip()] if getattr(args, "symbol", None) else None
     )
     data_dir = _Path(args.data_dir) if getattr(args, "data_dir", None) else None
 
@@ -2085,18 +2083,19 @@ def main(argv: list[str] | None = None) -> None:
         help="Мігрувати всі дані з PostgreSQL у Parquet-файли (data/) і вимкнути postgres-бекенд",
     )
     p.add_argument(
-        "--symbol", default=None,
+        "--symbol",
+        default=None,
         help="Символи через кому (за замовч. — всі з Postgres). Приклад: BTCUSDT,ETHUSDT",
     )
     p.add_argument("--overwrite", action="store_true", help="Перезаписати вже наявні Parquet-файли")
-    p.add_argument("--skip-trades", action="store_true", dest="skip_trades",
-                   help="Не мігрувати aggTrades (великі таблиці)")
-    p.add_argument("--skip-funding", action="store_true", dest="skip_funding",
-                   help="Не мігрувати funding rates")
-    p.add_argument("--data-dir", default=None, dest="data_dir",
-                   help="Директорія для Parquet (за замовч. DATA_DIR з .env)")
-    p.add_argument("--dry-run", action="store_true", dest="dry_run",
-                   help="Показати план міграції без запису файлів")
+    p.add_argument(
+        "--skip-trades", action="store_true", dest="skip_trades", help="Не мігрувати aggTrades (великі таблиці)"
+    )
+    p.add_argument("--skip-funding", action="store_true", dest="skip_funding", help="Не мігрувати funding rates")
+    p.add_argument(
+        "--data-dir", default=None, dest="data_dir", help="Директорія для Parquet (за замовч. DATA_DIR з .env)"
+    )
+    p.add_argument("--dry-run", action="store_true", dest="dry_run", help="Показати план міграції без запису файлів")
     p.set_defaults(func=cmd_migrate_to_parquet)
 
     p = sub.add_parser("mcp", help="Запуск MCP-сервера для трейдінгу (stdio)")
@@ -2114,7 +2113,7 @@ def main(argv: list[str] | None = None) -> None:
     jl = job_sub.add_parser("list", help="Список задач")
     jl.add_argument("--limit", type=int, default=50)
     js = job_sub.add_parser("submit", help="Поставити job з JSON params")
-    js.add_argument("kind", choices=["backtest", "pairs", "sweep", "overfit"])
+    js.add_argument("kind", choices=["backtest", "pairs", "sweep", "overfit", "capacity"])
     js.add_argument("--params", default="{}", help="JSON-об'єкт параметрів")
     js.add_argument("--force", action="store_true", help="Перезапустити навіть succeeded")
     jst = job_sub.add_parser("status", help="Статус і хвіст логу")

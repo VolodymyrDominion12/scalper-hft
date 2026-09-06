@@ -300,3 +300,54 @@ class TestTradeDetail:
         res = self._res()
         with pytest.raises(ValueError):
             trade_detail_figure(df, res, pd.Timestamp("2020-01-01"))
+
+
+class TestPairsFigure:
+    def test_spread_line_and_markers(self) -> None:
+        from scalper_hft.backtest.metrics import compute_metrics
+        from scalper_hft.backtest.pairs import PairsResult
+        from scalper_hft.visualization.charts import make_pairs_figure
+
+        idx = pd.date_range("2025-01-01", periods=80, freq="1h")
+        spread = pd.Series(np.linspace(-0.02, 0.02, 80), index=idx, name="spread")
+        equity = pd.Series(10_000.0 + np.arange(80), index=idx, name="equity")
+        pos = pd.Series(0.0, index=idx)
+        pos.iloc[10:40] = 0.3
+        trades = pd.DataFrame(
+            {
+                "entry_ts": [idx[10]],
+                "exit_ts": [idx[39]],
+                "side": [1],
+                "ret": [0.01],
+            }
+        )
+        res = PairsResult(
+            equity=equity,
+            positions=pos,
+            spread=spread,
+            funding_pnl=0.0,
+            metrics=compute_metrics(equity, trades=trades, exposure=0.3, turnover=0.1),
+            trades=trades,
+        )
+        fig = make_pairs_figure(res, symbol="XRP/BTC")
+        names = {tr.name for tr in fig.data}
+        assert "Спред" in names
+        assert "Equity" in names
+        assert "Лонг-вхід" in names
+
+    def test_empty_spread_raises(self) -> None:
+        from scalper_hft.backtest.metrics import compute_metrics
+        from scalper_hft.backtest.pairs import PairsResult
+        from scalper_hft.visualization.charts import make_pairs_figure
+
+        idx = pd.date_range("2025-01-01", periods=3, freq="1h")
+        equity = pd.Series([1.0, 1.0, 1.0], index=idx)
+        res = PairsResult(
+            equity=equity,
+            positions=pd.Series(dtype=float),
+            spread=pd.Series(dtype=float),
+            funding_pnl=0.0,
+            metrics=compute_metrics(equity, trades=pd.DataFrame(), exposure=0.0, turnover=0.0),
+        )
+        with pytest.raises(ValueError, match="spread"):
+            make_pairs_figure(res)

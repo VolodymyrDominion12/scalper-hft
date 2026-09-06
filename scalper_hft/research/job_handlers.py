@@ -153,6 +153,57 @@ def handle_sweep(
     logger.info("sweep: %d рядків → %s", len(df), out_csv)
 
 
+def handle_capacity(payload: dict[str, Any], job_dir: Path, **_: Any) -> None:
+    from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.config import get_settings
+    from scalper_hft.data.access import ensure_klines
+    from scalper_hft.data.downloader import download_agg_trades, download_funding
+    from scalper_hft.research.job_artifacts import save_capacity_curve
+    from scalper_hft.strategies import get_strategy
+    from scalper_hft.validation.capacity import capacity_curve, saturation_scale
+
+    settings = get_settings()
+    name = str(payload["strategy"])
+    symbol = str(payload["symbol"])
+    interval = str(payload["interval"])
+    days = int(payload["days"])
+    params = dict(payload.get("params") or {})
+    is_maker = bool(payload.get("maker", False))
+    base = str(payload.get("base_interval") or "1m")
+    scales_raw = payload.get("scales") or [1.0, 2.0, 5.0, 10.0]
+    scales = [float(s) for s in scales_raw]
+    strategy = get_strategy(name, **params)
+    df = ensure_klines(symbol, interval, days, base_interval=base, derive=True)
+    if df is None or df.empty:
+        raise RuntimeError(f"немає даних {symbol} {interval}")
+    trades = download_agg_trades(symbol, days) if getattr(strategy, "needs_trades", False) else None
+    funding = download_funding(symbol, days) if getattr(strategy, "needs_funding", False) else None
+    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    curve = capacity_curve(
+        df,
+        strategy,
+        scales=scales,
+        cost=cost,
+        trades=trades,
+        funding=funding,
+        position_pct=settings.position_pct,
+        is_maker=is_maker,
+    )
+    sat = saturation_scale(curve)
+    save_capacity_curve(
+        job_dir,
+        curve,
+        extra={
+            "symbol": symbol,
+            "interval": interval,
+            "days": days,
+            "strategy": name,
+            "saturation_scale": sat,
+        },
+    )
+    logger.info("capacity %s %s %s: saturation ×%s", name, symbol, interval, sat)
+
+
 def handle_overfit(payload: dict[str, Any], job_dir: Path, **_: Any) -> None:
     from scalper_hft.research.job_artifacts import save_cell_audit
     from scalper_hft.validation.cell_audit import audit_cell, default_train_test
@@ -199,6 +250,7 @@ HANDLERS: dict[str, Handler] = {
     "pairs": handle_pairs,
     "sweep": handle_sweep,
     "overfit": handle_overfit,
+    "capacity": handle_capacity,
     "_test_sleep": handle_test_sleep,
 }
 

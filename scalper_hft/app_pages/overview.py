@@ -27,6 +27,7 @@ from scalper_hft.research.dashboard_brief import (
     paper_pair_table,
     sweep_highlights,
 )
+from scalper_hft.research.jobs import DEFAULT_JOBS_PATH, JobStore
 from scalper_hft.research.strategy_book import book_as_rows
 
 settings = get_settings()
@@ -71,6 +72,17 @@ st.caption(
     f"пара ≤ {settings.pair_notional_pct:.0%} · портфель пар ≤ {settings.portfolio_notional_pct:.0%}. "
     "Бектест без комісій не є edge."
 )
+
+with JobStore(DEFAULT_JOBS_PATH) as _js:
+    _worker_alive = _js.worker_is_alive()
+if not _worker_alive:
+    st.warning("Research worker не запущений — задачі залишаться в черзі.")
+    with st.container(horizontal=True):
+        st.page_link("app_pages/jobs.py", label="Черга задач", icon=":material/pending_actions:")
+        st.page_link("app_pages/help.py", label="Як запустити worker", icon=":material/help:")
+if not _PAPER_DB.exists():
+    st.info("Немає paper pairs SQLite. Як зібрати журнал — у Довідці.")
+    st.page_link("app_pages/help.py", label="Довідка", icon=":material/menu_book:")
 
 
 @st.cache_data(ttl="5m", max_entries=8)
@@ -371,6 +383,13 @@ with st.container(horizontal=True):
         help="Свіжий < 2 год, старіючий < 24 год, далі — застарілий",
     )
     st.metric("Барів 1m", f"{kpis['klines_1m']:,}", border=True)
+
+if kpis["stale"] or kpis["missing"]:
+    st.info(
+        "Кеш 1m застарілий або відсутній — оновіть таблицю нижче. "
+        "Застарілі бари = lookahead-ризик на «сьогоднішніх» висновках."
+    )
+    st.page_link("app_pages/help.py", label="Як оновити кеш", icon=":material/help:")
 
 st.header(":material/menu_book: Книга стратегій")
 st.caption("Консолідований статус після walk-forward / DSR / paper. Не плутати з одним in-sample бектестом.")

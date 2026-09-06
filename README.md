@@ -159,11 +159,16 @@ uv pip install -e ".[dashboard]"
 uv run python -m scalper_hft.cli dashboard
 ```
 Не запускайте системний / Anaconda `streamlit` з PATH — пакет `scalper_hft` там немає.
+
+Посібник користувача (запуск, сторінки, глосарій, troubleshooting):
+[docs/DASHBOARD.md](docs/DASHBOARD.md).
+
 Мультисторінка (`st.navigation`, сторінки у `scalper_hft/app_pages/`):
-- **Моніторинг** — кеш даних по символах, paper pairs (SQLite), paper-run CSV;
-- **Бектест** — постановка в чергу (не рахує в UI), графік з артефактів, діагностика;
-- **Дослідження** — enqueue sweep, filter attribution, порівняння equity, MAE/MFE, heatmap;
-- **Задачі** — черга job (`results/jobs.sqlite`), логи, cancel / rerun.
+- **Моніторинг** — книга стратегій, свіжість кешу, paper pairs, топ sweep;
+- **Бектест** — черга `backtest`/`pairs`, графік угод або спреду, діагностика;
+- **Дослідження** — sweep, filter attribution, equity, аудит комірки, режими;
+- **Задачі** — черга job (`results/jobs.sqlite`), логи, cancel / rerun, фільтри;
+- **Довідка** — цей посібник у UI плюс статус worker.
 
 ## Візуалізація бектестів (`scalper_hft/visualization/`)
 

@@ -30,6 +30,7 @@ from scalper_hft.visualization.charts import (
     equity_figure,
     find_trade_by_ts,
     make_backtest_figure,
+    make_pairs_figure,
     trade_detail_figure,
     trades_table,
 )
@@ -45,6 +46,7 @@ __all__ = [
     "equity_figure",
     "find_trade_by_ts",
     "make_backtest_figure",
+    "make_pairs_figure",
     "trade_detail_figure",
     "trades_table",
 ]

@@ -9,7 +9,8 @@
     - «Моніторинг» — кеш даних по символах та paper-результати;
     - «Бектест» — постановка бектесту в чергу, інтерактивний графік угод;
     - «Дослідження» — масовий sweep (enqueue), filter attribution, порівняння;
-    - «Задачі» — черга job, логи, cancel / rerun.
+    - «Задачі» — черга job, логи, cancel / rerun;
+    - «Довідка» — посібник користувача.
 """
 
 from __future__ import annotations
@@ -33,5 +34,6 @@ pages = [
     st.Page("app_pages/backtest.py", title="Бектест", icon=":material/query_stats:"),
     st.Page("app_pages/research.py", title="Дослідження", icon=":material/science:"),
     st.Page("app_pages/jobs.py", title="Задачі", icon=":material/pending_actions:"),
+    st.Page("app_pages/help.py", title="Довідка", icon=":material/help:"),
 ]
 st.navigation(pages).run()

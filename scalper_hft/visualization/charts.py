@@ -61,7 +61,7 @@ def _ukr_plural(n: int, one: str, few: str, many: str) -> str:
     return many
 
 
-def trades_table(result: BacktestResult, initial_capital: float = 10_000.0) -> pd.DataFrame:
+def trades_table(result: BacktestResult | PairsResult, initial_capital: float = 10_000.0) -> pd.DataFrame:
     """Людсько-читабельна таблиця угод для UI (ціни, SL/TP, PnL)."""
     t = result.trades
     out = pd.DataFrame(
@@ -482,6 +482,134 @@ def make_backtest_figure(
     if show_equity:
         fig.update_yaxes(title_text="Equity", row=rows["equity"], col=1, secondary_y=False)
         fig.update_yaxes(title_text="DD, %", row=rows["equity"], col=1, secondary_y=True, showgrid=False)
+    return fig
+
+
+def make_pairs_figure(
+    result: PairsResult,
+    *,
+    start: str | pd.Timestamp | None = None,
+    end: str | pd.Timestamp | None = None,
+    max_bars: int = 20_000,
+    with_trades: bool = True,
+    template: str = "plotly_white",
+    title: str | None = None,
+    symbol: str | None = None,
+) -> go.Figure:
+    """Графік парного бектесту: спред + маркери угод + позиція + equity.
+
+    Без OHLC-свічок — `PairsResult` зберігає log-ratio спред, не ціну ноги.
+    """
+    if result.spread is None or result.spread.empty:
+        raise ValueError("spread порожній — немає що малювати")
+    df = result.spread.rename("close").to_frame()
+    sub_df, sub_trades, sub_pos, sub_eq = _window(df, result, start, end, max_bars)
+
+    fig = make_subplots(
+        rows=3,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.04,
+        row_heights=[0.50, 0.18, 0.32],
+        specs=[[{}], [{}], [{"secondary_y": True}]],
+        subplot_titles=["Спред", "Позиція", "Equity"],
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=sub_df.index,
+            y=sub_df["close"],
+            mode="lines",
+            name="Спред",
+            line=dict(color=EQUITY_COLOR, width=1.2),
+            hovertemplate="Спред: %{y:.5f}<extra></extra>",
+        ),
+        row=1,
+        col=1,
+    )
+    if with_trades:
+        add_trade_markers(fig, sub_trades, df=sub_df, row=1)
+
+    fig.add_hline(y=0, line_dash="dot", line_color="gray", line_width=1, row=2, col=1)
+    fig.add_trace(
+        go.Scatter(
+            x=sub_pos.index,
+            y=sub_pos.clip(lower=0.0),
+            mode="lines",
+            line_shape="hv",
+            line=dict(color=LONG_COLOR, width=1),
+            fill="tozeroy",
+            fillcolor="rgba(0,184,148,0.25)",
+            name="Лонг",
+            legendgroup="position",
+            hovertemplate="Позиція: %{y:.4f}<extra></extra>",
+        ),
+        row=2,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=sub_pos.index,
+            y=sub_pos.clip(upper=0.0),
+            mode="lines",
+            line_shape="hv",
+            line=dict(color=SHORT_COLOR, width=1),
+            fill="tozeroy",
+            fillcolor="rgba(239,83,80,0.25)",
+            name="Шорт",
+            legendgroup="position",
+            hovertemplate="Позиція: %{y:.4f}<extra></extra>",
+        ),
+        row=2,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=sub_eq.index,
+            y=sub_eq.values,
+            mode="lines",
+            name="Equity",
+            legendgroup="equity",
+            line=dict(color=EQUITY_COLOR, width=1.5),
+            fill="tozeroy",
+            fillcolor="rgba(44,62,80,0.08)",
+            hovertemplate="Equity: %{y:,.2f}<extra></extra>",
+        ),
+        row=3,
+        col=1,
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=sub_eq.index,
+            y=drawdown_series(sub_eq) * 100.0,
+            mode="lines",
+            name="Просадка, %",
+            legendgroup="equity",
+            line=dict(color=SL_COLOR, width=1),
+            fill="tozeroy",
+            fillcolor="rgba(231,76,60,0.15)",
+            hovertemplate="Просадка: %{y:.2f}%<extra></extra>",
+        ),
+        row=3,
+        col=1,
+        secondary_y=True,
+    )
+    head = f"{symbol} · " if symbol else ""
+    n_bars = _ukr_plural(len(sub_df), "бар", "бари", "барів")
+    n_tr = _ukr_plural(len(result.trades), "угода", "угоди", "угод")
+    fig.update_layout(
+        title=title or f"{head}Pairs · {len(sub_df):,} {n_bars} · {len(result.trades)} {n_tr}",
+        template=template,
+        height=780,
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.0, font=dict(size=10)),
+        margin=dict(l=10, r=10, t=70, b=10),
+    )
+    fig.update_xaxes(rangeslider_visible=True, row=3, col=1)
+    fig.update_yaxes(title_text="Спред", row=1, col=1)
+    fig.update_yaxes(title_text="Позиція", row=2, col=1)
+    fig.update_yaxes(title_text="Equity", row=3, col=1, secondary_y=False)
+    fig.update_yaxes(title_text="DD, %", row=3, col=1, secondary_y=True, showgrid=False)
     return fig
 
 
