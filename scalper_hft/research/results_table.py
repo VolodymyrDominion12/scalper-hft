@@ -213,12 +213,18 @@ def filter_sweep_results(
     return view.reset_index(drop=True)
 
 
-def row_actions(mode: str | None) -> list[str]:
-    """Кнопки рядка: завжди деталі бектесту; для walk-forward ще аудит."""
-    actions = [OPEN_DETAILS_LABEL]
-    if str(mode or "") == "walkforward":
-        actions.append(OPEN_AUDIT_LABEL)
-    return actions
+def row_actions(_mode: str | None = None) -> list[str]:
+    """Кнопки рядка: деталі бектесту і аудит комірки.
+
+    Завжди той самий list[str] з двох підписів: Arrow не вміє змішувати
+    str і list (і надійніше, коли довжина списку однакова в усіх рядках).
+    """
+    return [OPEN_DETAILS_LABEL, OPEN_AUDIT_LABEL]
+
+
+def open_action_cells(modes: Sequence[str | None]) -> list[list[str]]:
+    """Колонка ButtonColumn: однорідні списки підписів, без змішування зі str."""
+    return [row_actions(mode) for mode in modes]
 
 
 def is_audit_action(label: str) -> bool:

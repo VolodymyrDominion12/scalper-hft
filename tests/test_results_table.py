@@ -66,11 +66,21 @@ def test_display_columns_keep_canonical_order() -> None:
     assert all(c in SWEEP_DISPLAY_KEYS for c in cols)
 
 
-def test_row_actions_walkforward_adds_audit() -> None:
-    assert "Аудит" not in "".join(row_actions("backtest"))
-    assert any("Аудит" in a for a in row_actions("walkforward"))
+def test_row_actions_always_details_and_audit() -> None:
+    assert row_actions("backtest") == row_actions("walkforward")
+    assert any("Деталі" in a for a in row_actions(None))
+    assert any("Аудит" in a for a in row_actions("backtest"))
     assert is_audit_action(":material/fact_check: Аудит")
     assert not is_audit_action(":material/candlestick_chart: Деталі")
+
+
+def test_open_action_cells_are_homogeneous_lists() -> None:
+    from scalper_hft.research.results_table import open_action_cells
+
+    cells = open_action_cells(["backtest", "walkforward", "backtest"])
+    assert all(isinstance(cell, list) for cell in cells)
+    assert len({len(cell) for cell in cells}) == 1
+    assert all(all(isinstance(label, str) for label in cell) for cell in cells)
 
 
 def test_job_matches_combo_optional_days() -> None:

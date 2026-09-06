@@ -27,7 +27,7 @@ from scalper_hft.research.results_table import (
     filter_sweep_results,
     is_audit_action,
     job_matches_combo,
-    row_actions,
+    open_action_cells,
 )
 from scalper_hft.validation.cell_audit import default_train_test
 
@@ -271,10 +271,8 @@ def render_sweep_explorer(
 
     cols = display_columns(view)
     shown = view[cols].copy()
-    shown["open"] = [
-        (acts if len(acts) > 1 else acts[0])
-        for acts in (row_actions(str(r["mode"]) if "mode" in shown.columns else None) for _, r in shown.iterrows())
-    ]
+    modes = shown["mode"].astype(str).tolist() if "mode" in shown.columns else [None] * len(shown)
+    shown["open"] = open_action_cells(modes)
     payloads = [row.to_dict() for _, row in view.iterrows()]
     st.session_state[f"{key_prefix}_row_payloads"] = payloads
     st.dataframe(
