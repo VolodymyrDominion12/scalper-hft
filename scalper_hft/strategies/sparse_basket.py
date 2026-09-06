@@ -133,6 +133,28 @@ class SparseBasketArb(Strategy):
         self.sparsity_k = int(sparsity_k)
         self.l1_penalty = float(l1_penalty)
 
+    def _causal_spread(self, basket_df: pd.DataFrame) -> pd.Series:
+        """Спред кошика з вагами, переоціненими ЛИШЕ на минулих даних.
+
+        Box–Tiao ваги на вікні [i - 2*lookback, i) з refit кожні lookback//2
+        барів. Бар i використовує ваги, пораховані без бару i і пізніших.
+        """
+        n = len(basket_df)
+        fit_window = self.lookback * 2
+        refit_every = max(self.lookback // 2, 1)
+        lp = np.log(basket_df).values
+        out = np.full(n, np.nan)
+        w: pd.Series | None = None
+        for i in range(fit_window, n):
+            if w is None or (i - fit_window) % refit_every == 0:
+                w = compute_sparse_basket_weights(
+                    basket_df.iloc[i - fit_window : i],
+                    sparsity_k=self.sparsity_k,
+                    l1_penalty=self.l1_penalty,
+                )
+            out[i] = float(lp[i] @ w.values)
+        return pd.Series(out, index=basket_df.index)
+
     def generate_signals(
         self,
         df: pd.DataFrame,
@@ -152,14 +174,9 @@ class SparseBasketArb(Strategy):
             std = close.rolling(self.lookback, min_periods=20).std().replace(0, np.nan)
             z = (close - ma) / std
         else:
-            weights = compute_sparse_basket_weights(
-                basket_df.tail(self.lookback * 2),
-                sparsity_k=self.sparsity_k,
-                l1_penalty=self.l1_penalty,
-            )
-            # Спред кошика (rolling)
-            log_prices = np.log(basket_df)
-            spread = (log_prices * weights).sum(axis=1)
+            # Спред кошика з КАУЗАЛЬНИМИ вагами (expanding refit на минулих
+            # даних; раніше ваги фітились на tail() всієї історії — lookahead)
+            spread = self._causal_spread(basket_df)
             ma = spread.rolling(self.lookback, min_periods=20).mean()
             std = spread.rolling(self.lookback, min_periods=20).std().replace(0, np.nan)
             z = (spread - ma) / std

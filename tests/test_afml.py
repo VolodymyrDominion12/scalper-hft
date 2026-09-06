@@ -140,15 +140,19 @@ class TestTripleBarrier:
         assert len(bad) == 0, f"t1 ≤ t0 у {len(bad)} рядках (lookahead!)"
 
     def test_get_labels_sign_matches_ret(self):
-        """Лейбл має збігатися зі знаком фактичного ret."""
+        """Лейбли консистентні з бар'єрами: pt → +1, sl → −1, vb → 0.
+
+        З high/low шляхом знак close-to-close ret на t1 може не збігатися
+        з лейблом (фітиль торкнувся бар'єра, close відступив) — це коректно:
+        угода закрилась би за ціною бар'єра.
+        """
         from scalper_hft.ml.labeling import label_from_ohlcv
 
         df = _make_df(300)
         events = label_from_ohlcv(df, pt=0.5, sl=0.5, holding_bars=10)
-        # для non-zero label: знак ret має збігатися зі знаком label
-        non_zero = events[(events["label"] != 0) & events["ret"].notna()]
-        sign_match = (np.sign(non_zero["ret"]) == non_zero["label"]).mean()
-        assert sign_match >= 0.90, f"Знак label та ret збігається лише у {sign_match:.2%}"
+        assert (events.loc[events["barrier"] == "pt", "label"] == 1).all()
+        assert (events.loc[events["barrier"] == "sl", "label"] == -1).all()
+        assert (events.loc[events["barrier"] == "vb", "label"] == 0).all()
 
     def test_add_vertical_barrier_ordering(self):
         from scalper_hft.ml.labeling import add_vertical_barrier

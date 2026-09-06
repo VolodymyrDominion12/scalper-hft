@@ -72,6 +72,9 @@ class PairsArb(Strategy):
         df: DataFrame з колонками leg1/leg2 (ціни закриття перпів).
         Сигнал на закритті t → виконання t+1 (рушій робить shift).
         """
+        # Скидаємо betas на початку: інакше при early-return сюди потрапляє
+        # застаріле значення з ПОПЕРЕДНЬОГО виклику (stale-bleed у pairs.py).
+        self.betas = None
         if "leg1" not in df.columns or "leg2" not in df.columns:
             return pd.Series(0, index=df.index, dtype=int)
 

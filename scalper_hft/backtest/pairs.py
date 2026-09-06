@@ -231,34 +231,9 @@ def _extract_trades(pos: pd.Series, strat_ret: pd.Series) -> pd.DataFrame:
     flip (+→− без проміжного 0) весь flip-бар зараховується новій позиції —
     задокументоване наближення.
     """
-    rows: list[dict] = []
-    cur = 0.0
-    entry_ts = None
-    cum = 0.0
-    for ts, p in pos.items():
-        if p != cur:
-            if cur != 0 and entry_ts is not None:
-                exit_extra = strat_ret.get(ts, 0.0) if p == 0 else 0.0
-                rows.append(
-                    {
-                        "entry_ts": entry_ts,
-                        "exit_ts": ts,
-                        "side": int(cur / abs(cur)) if cur else 0,
-                        "ret": cum + exit_extra,
-                    }
-                )
-            entry_ts = ts if p != 0 else None
-            cum = 0.0
-            cur = p
-        if cur != 0 and entry_ts is not None:
-            cum += strat_ret.get(ts, 0.0)
-    if cur != 0 and entry_ts is not None:
-        rows.append({"entry_ts": entry_ts, "exit_ts": pos.index[-1], "side": int(cur / abs(cur)), "ret": cum})
-    return (
-        pd.DataFrame(rows, columns=["entry_ts", "exit_ts", "side", "ret"])
-        if rows
-        else pd.DataFrame(columns=["entry_ts", "exit_ts", "side", "ret"])
-    )
+    from scalper_hft.backtest.engine import _extract_run_trades
+
+    return _extract_run_trades(pos, strat_ret)
 
 
 def run_pairs_walk_forward(

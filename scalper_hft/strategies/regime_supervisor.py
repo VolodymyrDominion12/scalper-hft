@@ -78,9 +78,9 @@ class RegimeSupervisor(Strategy):
             hmm_fit_bars=int(self.get("hmm_fit_bars", 2000)),
         )
 
-        # Онлайн-блендер (ініціалізується при першому виклику)
-        self._contextual_hedge: Any = None  # ContextualHedgeBlend
-        self._exp3_bandit: Any = None  # Exp3Bandit
+        # Стан онлайн-блендера НЕ кешується між викликами generate_signals:
+        # інакше повторний прогін (WF-вікна, sweep) продовжує навчання з
+        # попереднього стану → невідтворювані бектести. Свіжий стан на виклик.
         self._prev_sigs: np.ndarray | None = None  # сигнали минулого бару для hedge update
 
     @classmethod
@@ -207,13 +207,13 @@ class RegimeSupervisor(Strategy):
         eta = self.get("hedge_eta", None)
         eta_val = float(eta) if eta is not None else None
 
-        if self._contextual_hedge is None:
-            self._contextual_hedge = ContextualHedgeBlend(
-                n_experts=n,
-                regimes=_STRUCTURE_REGIMES,
-                eta=eta_val,
-            )
-        blend = self._contextual_hedge
+        # Свіжий блендер на кожен виклик: онлайн-навчання починається з нуля
+        # для кожного датасету (відтворюваність бектестів/WF-вікон).
+        blend = ContextualHedgeBlend(
+            n_experts=n,
+            regimes=_STRUCTURE_REGIMES,
+            eta=eta_val,
+        )
 
         ret = close.pct_change().fillna(0.0)
         sigs = sig_df.values  # (T, N)

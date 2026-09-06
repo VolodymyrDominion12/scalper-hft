@@ -52,79 +52,185 @@ class BacktestResult:
         return self.metrics.profit_factor
 
 
-def _fill_price(prev_close: pd.Series, close: pd.Series, ts) -> float:
-    """Ціна виконання за моделлю рушія: закриття бару, що передує бару позиції.
+def _extract_run_trades(pos: pd.Series, strat_ret: pd.Series) -> pd.DataFrame:
+    """Угоди з run-ів константної позиції (pairs/delta-neutral семантика).
 
-    Рішення приймається на закритті бару t, позиція діє з бару t+1 → філ
-    за ціною close[t]. Якщо попереднього бару немає — fallback на close[ts].
+    ret угоди = Σ strat_ret по барах [entry .. exit] включно при виході у flat
+    (exit-комісія бару закриття лишається в угоді), [entry .. exit) при flip;
+    відкрита наприкінці — [entry .. останній бар]. Векторизовано.
     """
-    px = prev_close.get(ts, np.nan)
-    if not np.isfinite(px):
-        px = close.get(ts, np.nan)
-    return float(px) if np.isfinite(px) else float("nan")
+    cols = ["entry_ts", "exit_ts", "side", "ret"]
+    p = pos.to_numpy(dtype=float)
+    n = len(p)
+    if n == 0 or not np.any(p != 0):
+        return pd.DataFrame(columns=cols)
+    sr = strat_ret.to_numpy(dtype=float)
+    cum = np.concatenate(([0.0], np.cumsum(sr)))
+
+    change = np.empty(n, dtype=bool)
+    change[0] = p[0] != 0.0
+    change[1:] = p[1:] != p[:-1]
+    starts = np.flatnonzero(change)
+
+    rows: list[dict] = []
+    for i, s in enumerate(starts):
+        v = p[s]
+        if v == 0.0:
+            continue
+        if i + 1 < len(starts):
+            x = int(starts[i + 1])
+            exit_ts = pos.index[x]
+            end_incl = x if p[x] == 0.0 else x - 1  # flat: бар x у угоді; flip: ні
+        else:
+            exit_ts = pos.index[-1]
+            end_incl = n - 1
+        rows.append(
+            {
+                "entry_ts": pos.index[s],
+                "exit_ts": exit_ts,
+                "side": int(np.sign(v)),
+                "ret": float(cum[end_incl + 1] - cum[s]),
+            }
+        )
+    return pd.DataFrame(rows, columns=cols)
+
+
+def _simulate_maker_fills(
+    target_vals: np.ndarray,
+    close_vals: np.ndarray,
+    low_vals: np.ndarray,
+    high_vals: np.ndarray,
+    *,
+    adverse_bps: float = 0.0001,
+    prob_touch: float = 0.5,
+    seed: int = 42,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Симуляція Queue Position та Adverse Selection для maker-ордерів.
+
+    Модель "chase": поки цільова позиція не заповнена, ліміт переставляється
+    на close попереднього бару. Філ на барі i, якщо low[i] < close[i-1]
+    (buy) / high[i] > close[i-1] (sell); рівність — з імовірністю prob_touch.
+
+    Векторизовано по сегментах константного target (parity з колишнім
+    Python-циклом — той самий rng і ті самі умови по бару).
+
+    Повертає (actual_pos, adverse_penalties).
+    """
+    n = len(target_vals)
+    actual = np.zeros(n)
+    adverse = np.zeros(n)
+    if n < 2:
+        if n == 1:
+            actual[0] = 0.0
+        return actual, actual.copy()
+
+    rng = np.random.default_rng(seed)  # відтворюваність бектестів
+    rands = rng.random(n)
+
+    close_prev = np.empty(n)
+    close_prev[0] = np.nan
+    close_prev[1:] = close_vals[:-1]
+    buy_fill = (low_vals < close_prev) | ((low_vals == close_prev) & (rands < prob_touch))
+    sell_fill = (high_vals > close_prev) | ((high_vals == close_prev) & (rands < prob_touch))
+    buy_fill[0] = False
+    sell_fill[0] = False
+
+    # сегменти константного target
+    seg_change = np.empty(n, dtype=bool)
+    seg_change[0] = True
+    seg_change[1:] = target_vals[1:] != target_vals[:-1]
+    seg_starts = np.flatnonzero(seg_change)
+    seg_ends = np.append(seg_starts[1:], n)
+
+    curr = 0.0
+    for s, e in zip(seg_starts, seg_ends, strict=True):
+        tp = target_vals[s]
+        if tp == curr:
+            actual[s:e] = curr
+            continue
+        s0 = max(int(s), 1)  # цикл оригіналу починається з бару 1
+        mask = buy_fill[s0:e] if tp > curr else sell_fill[s0:e]
+        if mask.any():
+            f = s0 + int(np.argmax(mask))  # перший бар філу
+            actual[s:f] = curr
+            adverse[f] += abs(tp - curr) * adverse_bps
+            curr = tp
+            actual[f:e] = curr
+        else:
+            actual[s:e] = curr  # unfilled — позиція лишається
+    return actual, adverse
 
 
 def _extract_trades(positions: pd.Series, ret: pd.Series, fees: pd.Series, close: pd.Series) -> pd.DataFrame:
-    """Виділення окремих угод з позиційної серії (вхід/вихід).
+    """Виділення окремих угод з позиційної серії (вхід/вихід) — векторизовано.
+
+    Угода = максимальний run константної ненульової позиції:
+    ціновий PnL = Σ ret×pos по барах run-у; комісія бару зміни позиції
+    розщеплюється пропорційно сторонам (exit-частка — закритій позиції,
+    entry-частка — новій), як у попередній циклічній версії.
 
     Окрім часових міток додаються `entry_price`/`exit_price` — ціни виконання
     за моделлю рушія (потрібні для візуалізації точок входу/виходу).
-
-    Облік комісій на угоду: fee бару зміни позиції розщеплюється пропорційно
-    розмірам сторін — exit-частка йде закритій позиції, entry-частка новій.
-    Раніше fee бару закриття (або половина flip-бару) губилась → per-trade
-    ret/avg_trade_return були завищені на ~одну сторону витрат (equity не
-    страждала — там fee врахована через turnover).
     """
+    cols = ["entry_ts", "exit_ts", "side", "ret", "entry_price", "exit_price"]
+    p = positions.to_numpy(dtype=float)
+    n = len(p)
+    if n == 0 or not np.any(p != 0):
+        return pd.DataFrame(columns=cols)
+
+    r = ret.to_numpy(dtype=float)
+    f = fees.to_numpy(dtype=float)
+    c = close.to_numpy(dtype=float)
+    prev_c = np.empty(n)
+    prev_c[0] = np.nan
+    prev_c[1:] = c[:-1]
+
+    # межі run-ів (бари, де позиція змінюється)
+    change = np.empty(n, dtype=bool)
+    change[0] = p[0] != 0.0
+    change[1:] = p[1:] != p[:-1]
+    starts = np.flatnonzero(change)
+    ends = np.append(starts[1:], n)  # кінець run-у = початок наступного (exclusive)
+
+    turnover = np.abs(np.diff(p, prepend=0.0))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        rate_eff = np.where(turnover > 0, f / turnover, 0.0)
+
+    pnl_bar = p * r
+    # префіксні суми для O(1) сум по run-ах
+    pnl_cum = np.concatenate(([0.0], np.cumsum(pnl_bar)))
+
     rows: list[dict] = []
-    cur_pos = 0
-    entry_ts = None
-    cum_ret = 0.0
-    prev_close = close.shift(1)
-    for ts, pos in positions.items():
-        if pos != cur_pos:
-            turnover = abs(pos - cur_pos)
-            fee_bar = fees.get(ts, 0.0)
-            # ефективна ставка на барі зміни (fee/turnover, вкл. adverse)
-            rate_eff = fee_bar / turnover if turnover > 0 else 0.0
-            exit_fee = rate_eff * abs(cur_pos) if cur_pos != 0 else 0.0
-            if cur_pos != 0 and entry_ts is not None:
-                # закриття старої позиції: ціновий PnL вже накопичено за бари
-                # [entry..ts-1]; додаємо exit-частку комісії цього бару.
-                rows.append(
-                    {
-                        "entry_ts": entry_ts,
-                        "exit_ts": ts,
-                        "side": int(cur_pos / abs(cur_pos)) if cur_pos else 0,
-                        "ret": cum_ret - exit_fee,
-                        "entry_price": _fill_price(prev_close, close, entry_ts),
-                        "exit_price": _fill_price(prev_close, close, ts),
-                    }
-                )
-            if pos != 0:
-                # відкриття (з flat або flip): бар ts — перший активний бар нової
-                # позиції: PnL бару мінус entry-частка комісії.
-                entry_ts = ts
-                cum_ret = ret.get(ts, 0.0) * pos - (fee_bar - exit_fee)
-            else:
-                entry_ts = None
-                cum_ret = 0.0
-            cur_pos = pos
-        elif cur_pos != 0 and entry_ts is not None:
-            # без зміни позиції: fee на таких барах = 0 (turnover немає)
-            cum_ret += ret.get(ts, 0.0) * cur_pos
-    if cur_pos != 0 and entry_ts is not None:
+    for i, s in enumerate(starts):
+        pos_v = p[s]
+        if pos_v == 0.0:
+            continue
+        e = int(ends[i])
+        prev_pos = p[s - 1] if s > 0 else 0.0
+        # entry-частка комісії: fee бару входу мінус exit-частка попередньої
+        entry_fee = f[s] - rate_eff[s] * abs(prev_pos)
+        price_pnl = pnl_cum[e] - pnl_cum[s]
+        if i + 1 < len(starts):
+            x = int(starts[i + 1])  # бар виходу = перший бар наступного run-у
+            exit_fee = rate_eff[x] * abs(pos_v)
+            exit_ts = positions.index[x]
+            trade_ret = price_pnl - entry_fee - exit_fee
+        else:
+            # позиція лишилась відкритою до кінця — без exit-комісії
+            x = n - 1
+            exit_ts = positions.index[-1]
+            trade_ret = price_pnl - entry_fee
         rows.append(
             {
-                "entry_ts": entry_ts,
-                "exit_ts": positions.index[-1],
-                "side": int(cur_pos / abs(cur_pos)) if cur_pos else 0,
-                "ret": cum_ret,
-                "entry_price": _fill_price(prev_close, close, entry_ts),
-                "exit_price": _fill_price(prev_close, close, positions.index[-1]),
+                "entry_ts": positions.index[s],
+                "exit_ts": exit_ts,
+                "side": int(np.sign(pos_v)),
+                "ret": float(trade_ret),
+                "entry_price": float(prev_c[s]) if np.isfinite(prev_c[s]) else float(c[s]),
+                "exit_price": float(prev_c[x]) if np.isfinite(prev_c[x]) else float(c[x]),
             }
         )
-    return pd.DataFrame(rows, columns=["entry_ts", "exit_ts", "side", "ret", "entry_price", "exit_price"])
+    return pd.DataFrame(rows, columns=cols)
 
 
 def _attach_exit_levels(trades: pd.DataFrame, levels: pd.DataFrame | None) -> pd.DataFrame:
@@ -172,12 +278,15 @@ def run_backtest(
     filter_trace = None
     if trace:
         signals, filter_trace = strategy.generate_signals_traced(df, trades=trades, funding=funding)
-    elif getattr(strategy, "needs_trades", False):
-        signals = strategy.generate_signals(df, trades=trades)
-    elif getattr(strategy, "needs_funding", False):
-        signals = strategy.generate_signals(df, funding=funding)
     else:
-        signals = strategy.generate_signals(df)
+        # Передаємо ОБИДВА потоки, якщо стратегія їх потребує (ensemble/
+        # supervisor з mixed-дітьми): раніше needs_trades блокував funding.
+        kwargs: dict = {}
+        if getattr(strategy, "needs_trades", False):
+            kwargs["trades"] = trades
+        if getattr(strategy, "needs_funding", False):
+            kwargs["funding"] = funding
+        signals = strategy.generate_signals(df, **kwargs)
     if len(signals) != len(df):
         raise ValueError("Довжина сигналів не збігається з даними")
 
@@ -202,48 +311,12 @@ def run_backtest(
 
     if is_maker:
         # Симуляція Queue Position та Adverse Selection для Maker-ордерів
-        actual_pos = np.zeros(len(df))
-        adverse_penalties = np.zeros(len(df))
-
-        target_vals = target_pos.values
-        close_vals = close.values
-        low_vals = df["low"].values
-        high_vals = df["high"].values
-
-        # Налаштування мікроструктури
-        adverse_bps = 0.0001  # 1 bps penalty for adverse selection
-        prob_touch = 0.5  # 50% chance to fill if low/high equals limit
-
-        curr_pos = 0.0
-        rng = np.random.default_rng(42)  # Для відтворюваності бектестів
-        rands = rng.random(len(df))
-
-        for i in range(1, len(df)):
-            t_pos = target_vals[i]
-            if t_pos != curr_pos:
-                limit_px = close_vals[i - 1]
-                low_px = low_vals[i]
-                high_px = high_vals[i]
-
-                filled = False
-                if t_pos > curr_pos:  # Buy order
-                    if low_px < limit_px:
-                        filled = True
-                        adverse_penalties[i] += abs(t_pos - curr_pos) * adverse_bps
-                    elif low_px == limit_px and rands[i] < prob_touch:
-                        filled = True
-                elif t_pos < curr_pos:  # Sell order
-                    if high_px > limit_px:
-                        filled = True
-                        adverse_penalties[i] += abs(curr_pos - t_pos) * adverse_bps
-                    elif high_px == limit_px and rands[i] < prob_touch:
-                        filled = True
-
-                if filled:
-                    curr_pos = t_pos
-
-            actual_pos[i] = curr_pos
-
+        actual_pos, adverse_penalties = _simulate_maker_fills(
+            target_pos.to_numpy(dtype=float),
+            close.to_numpy(dtype=float),
+            df["low"].to_numpy(dtype=float),
+            df["high"].to_numpy(dtype=float),
+        )
         pos = pd.Series(actual_pos, index=df.index)
         adv_penalty_series = pd.Series(adverse_penalties, index=df.index)
     else:

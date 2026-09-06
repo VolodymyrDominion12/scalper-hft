@@ -29,11 +29,16 @@ DEFAULT_TREND_THRESHOLD: Final[float] = 0.35
 
 
 def volatility_regime(close: pd.Series, lookback: int = 60, percentile_window: int = 500) -> pd.Series:
-    """Режим волатильності: low / normal / high за процентилем останньої реалізованої волатильності."""
+    """Режим волатильності: low / normal / high за процентилем останньої реалізованої волатильності.
+
+    rolling-ранг рахується на numpy-масивах (raw=True): той самий результат,
+    що й pandas-варіант, але без конструювання Series на кожне вікно
+    (на 1m×90д порядку ~0.3s замість ~17s).
+    """
     log_ret = pd.Series(np.log(close / close.shift(1)), index=close.index)
     rv = log_ret.rolling(lookback, min_periods=lookback // 2).std()
     pct = rv.rolling(percentile_window, min_periods=percentile_window // 2).apply(
-        lambda x: (x.iloc[-1] >= x).mean(), raw=False
+        lambda x: (x[-1] >= x).mean(), raw=True
     )
     regime = pd.Series("normal", index=close.index, dtype=object)
     regime[pct > 0.8] = "high"

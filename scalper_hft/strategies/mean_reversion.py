@@ -56,10 +56,14 @@ class MeanReversionScalper(Strategy):
     def generate_signals(
         self, df: pd.DataFrame, trades: pd.DataFrame | None = None, funding: pd.DataFrame | None = None
     ) -> pd.Series:
-        from scalper_hft.features.indicators import rsi
+        from scalper_hft.features.indicators import bollinger, rsi
         from scalper_hft.features.regimes import trend_strength, volatility_regime
 
         f = add_standard_features(df)
+        # bb_period з param_space реально впливає на сигнали (раніше смуги
+        # завжди рахувались з періодом 20 — параметр був мертвим для Optuna)
+        bb = bollinger(f["close"], int(self.get("bb_period", 20)), 2.0)
+        f["bb_mid"], f["bb_up"], f["bb_low"] = bb["bb_mid"], bb["bb_up"], bb["bb_low"]
         rsi_val = rsi(f["close"], int(self.get("rsi_period", 14)))
         close = f["close"]
         mid = f["bb_mid"]

@@ -394,72 +394,67 @@ def _param_combinations(strategy) -> int:
 
 
 def cmd_overfit(args: argparse.Namespace) -> None:
-    """Повний аудит на перенавчання: WF + sensitivity + deflated Sharpe + CV."""
-    from scalper_hft.backtest.engine import run_backtest
-    from scalper_hft.backtest.execution import CostModel
-    from scalper_hft.config import get_settings
-    from scalper_hft.strategies import get_strategy
-    from scalper_hft.validation.deflated_sharpe import deflated_sharpe_ratio, estimate_n_trials
-    from scalper_hft.validation.sensitivity import parameter_sensitivity
-    from scalper_hft.validation.walk_forward import run_walk_forward
-
-    df = _load_klines(
-        args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", True)
-    )
-    strategy = get_strategy(args.strategy, **_apply_use_kalman(args, args.param_dict))
-    settings = get_settings()
-    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
-    trades = None
-    if strategy.needs_trades:
-        from scalper_hft.data.downloader import download_agg_trades
-
-        trades = download_agg_trades(args.symbol, args.days)
-    funding = None
-    if strategy.needs_funding:
-        from scalper_hft.data.downloader import download_funding
-
-        funding = download_funding(args.symbol, args.days)
+    """Повний аудит на перенавчання: WF + sensitivity (OOS) + DSR (OOS) + CSCV PBO + вердикт."""
+    from scalper_hft.validation.cell_audit import audit_cell, cell_verdict
 
     print("═" * 60)
-    print(f"AUDIT: стратегія {args.strategy}, {args.symbol} {args.interval}, {len(df)} барів")
+    print(f"AUDIT: стратегія {args.strategy}, {args.symbol} {args.interval}, {args.days} днів")
     print("═" * 60)
 
-    # 1) walk-forward
-    res_wf = run_walk_forward(
-        df,
-        strategy,
+    audit = audit_cell(
+        args.strategy,
+        args.symbol,
+        args.interval,
+        args.days,
         train_bars=args.train,
         test_bars=args.test,
-        trades=trades,
-        funding=funding,
-        position_pct=settings.position_pct,
+        with_cscv=True,
+        strategy_params=_apply_use_kalman(args, args.param_dict),
     )
+    if audit.status != "ok":
+        logger.error("Аудит не вдався: %s", audit.error)
+        sys.exit(1)
+
     print("\n[1] WALK-FORWARD")
-    print(res_wf.summary())
-
-    # 2) sensitivity головного параметра
-    if strategy.param_space:
-        pname = next(iter(strategy.param_space))
-        lo, hi, step = strategy.param_space[pname]
-        values = [lo + i * step for i in range(int((hi - lo) / step) + 1)][:15]
-        res_sens = parameter_sensitivity(df, strategy, pname, values, cost=cost, trades=trades, funding=funding)
-        print("\n[2] ЧУТЛИВІСТЬ ДО ПАРАМЕТРА", pname)
-        print(res_sens.summary())
-
-    # 3) deflated Sharpe на повному наборі
-    res_full = run_backtest(df, strategy, cost=cost, trades=trades, funding=funding, position_pct=settings.position_pct)
-    equity = res_full.equity
-    ret = equity.pct_change().dropna()
-    n_trials = estimate_n_trials(
-        param_combinations=_param_combinations(strategy),
-        backtests_per_combo=args.trials or 1,
+    print(
+        f"  вікон: {audit.n_windows} | avg IS Sharpe: {audit.avg_is_sharpe:+.3f} | "
+        f"avg OOS Sharpe: {audit.avg_oos_sharpe:+.3f}"
     )
-    dsr = deflated_sharpe_ratio(ret.values, n_trials=n_trials)
-    print("\n[3] DEFLATED SHARPE (коригування на множинне тестування)")
-    print(f"    raw Sharpe: {res_full.metrics.sharpe:.3f} | trials: {n_trials} | DSR: {dsr:.3f}")
-    print("    DSR > 0.95 → edge статистично значущий після коригування")
+    print(
+        f"  частка вікон OOS>0: {audit.oos_pos_frac:.0%} | деградація IS→OOS: {audit.degradation:.1%} | "
+        f"OOS угод: {audit.n_trades_oos}"
+    )
+    for w in audit.windows:
+        print(
+            f"  [{w['window_idx']}] IS {w['train_start']}:{w['train_end']} → OOS {w['test_start']}:{w['test_end']} "
+            f"| IS SR {w['is_sharpe']:+.2f} | OOS SR {w['oos_sharpe']:+.2f} | ret {w['oos_return']:+.2%} "
+            f"| {w['n_trades']} угод"
+        )
 
-    print("\n" + res_full.summary())
+    print("\n[2] ЧУТЛИВІСТЬ ДО ПАРАМЕТРА (сітка на OOS-регіоні)")
+    if audit.sens_param:
+        sm = f"{audit.smoothness:.2f}" if audit.smoothness is not None else "nan"
+        print(f"  параметр: {audit.sens_param} | smoothness: {sm} | точок: {audit.sens_n}")
+    if audit.sens_error:
+        print(f"  помилка sensitivity: {audit.sens_error}")
+
+    print("\n[3] DEFLATED SHARPE (на конкатенованих OOS-дохідностях)")
+    dsr_s = f"{audit.dsr:.3f}" if audit.dsr is not None else "nan"
+    print(f"  DSR: {dsr_s} | trials: {audit.n_trials_dsr} | DSR > 0.95 → edge статистично значущий")
+
+    print("\n[4] CSCV PBO (Bailey–López de Prado)")
+    pbo_s = f"{audit.pbo:.3f}" if audit.pbo is not None else "n/a"
+    print(f"  PBO: {pbo_s} | PBO < 0.5 → перенавчання малоймовірне")
+
+    print("\n[5] ПОВНИЙ БЕКТЕСТ (інфо, IS-забруднений)")
+    print(
+        f"  return {audit.bt_total_return:+.2%} | Sharpe {audit.bt_sharpe:.2f} | maxDD {audit.bt_max_dd:.2%} | "
+        f"угод {audit.bt_n_trades} | PF {audit.bt_profit_factor:.2f} | win {audit.bt_win_rate:.0%}"
+    )
+
+    label, reasons = cell_verdict(audit)
+    print("\n" + "═" * 60)
+    print(f"ВЕРДИКТ: {label}" + (f"\n  причини: {reasons}" if reasons else ""))
 
 
 def cmd_ml(args: argparse.Namespace) -> None:

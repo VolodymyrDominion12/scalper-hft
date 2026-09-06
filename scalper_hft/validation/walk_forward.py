@@ -69,7 +69,11 @@ class WalkForwardResult:
 
 
 def _sharpe_from_equity(equity: pd.Series) -> float:
-    """Обчислення per-period Sharpe Ratio (без ануалізації).
+    """Per-window Sharpe у t-stat-подібній шкалі: mean/std × √n_барів вікна.
+
+    УВАГА: шкала відрізняється від BacktestMetrics.sharpe (ануалізований,
+    metrics.py) — пороги на кшталт OOS_SHARPE_MIN у cell_audit стосуються
+    САМЕ цієї per-window шкали і не порівнянні з bt_sharpe напряму.
     Використовується для порівняння IS та OOS вікон однакового розміру.
     """
     ret = equity.pct_change().dropna()

@@ -31,7 +31,8 @@ def _ok(**over: object) -> CellAudit:
         "oos_pos_frac": 0.60,
         "dsr": 0.97,
         "smoothness": 0.40,
-        "bt_n_trades": 40,
+        "n_trades_oos": 40,
+        "bt_n_trades": 55,
     }
     base.update(over)
     return CellAudit(**base)  # type: ignore[arg-type]
@@ -70,7 +71,8 @@ def test_cell_verdict_pass() -> None:
         ("oos_pos_frac", 0.49),
         ("dsr", 0.95),
         ("smoothness", 0.30),
-        ("bt_n_trades", 29),
+        ("n_trades_oos", 29),
+        ("pbo", 0.6),
     ],
 )
 def test_cell_verdict_fail_at_threshold(field: str, value: float) -> None:
@@ -80,20 +82,30 @@ def test_cell_verdict_fail_at_threshold(field: str, value: float) -> None:
 
 
 def test_cell_verdict_nan_and_missing() -> None:
-    label, why = cell_verdict(_ok(avg_oos_sharpe=None, dsr=float("nan"), smoothness=None, bt_n_trades=None))
+    label, why = cell_verdict(_ok(avg_oos_sharpe=None, dsr=float("nan"), smoothness=None, n_trades_oos=None))
     assert label == "FAIL"
     assert "avg_oos_sharpe=nan" in why
     assert "DSR=nan" in why
     assert "smoothness=nan" in why
-    assert "n_trades=nan" in why
+    assert "n_trades_oos=nan" in why
 
 
-def test_cell_verdict_1m_requires_100_trades() -> None:
-    fail, why = cell_verdict(_ok(interval="1m", bt_n_trades=99))
+def test_cell_verdict_1m_requires_100_oos_trades() -> None:
+    """Гейт на OOS-угоди: багато full-sample угод не рятує тонкий OOS."""
+    fail, why = cell_verdict(_ok(interval="1m", n_trades_oos=99, bt_n_trades=500))
     assert fail == "FAIL"
-    assert "n_trades=99<100" in why
-    passed, _ = cell_verdict(_ok(interval="1m", bt_n_trades=100))
+    assert "n_trades_oos=99<100" in why
+    passed, _ = cell_verdict(_ok(interval="1m", n_trades_oos=100))
     assert passed == "PASS"
+
+
+def test_cell_verdict_pbo_checked_only_when_present() -> None:
+    # pbo=None → CSCV не запускався → не гейтиться
+    passed, _ = cell_verdict(_ok(pbo=None))
+    assert passed == "PASS"
+    fail, why = cell_verdict(_ok(pbo=0.75))
+    assert fail == "FAIL"
+    assert "PBO=0.75" in why
 
 
 def test_cell_verdict_from_series() -> None:
