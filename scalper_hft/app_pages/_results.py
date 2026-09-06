@@ -152,6 +152,48 @@ def list_combo_jobs(
     ]
 
 
+_SHOW_QUALITY_LABEL = ":material/analytics: Показати"
+
+
+def render_backtest_job_picker(jobs: list[Job], *, key_prefix: str = "tq_jobs") -> None:
+    """Таблиця наявних бектестів: «Якість угод» не залежить лише від слайдера днів."""
+    if not jobs:
+        return
+    table = pd.DataFrame(
+        [
+            {
+                "id": j.id,
+                "days": j.params.get("days"),
+                "status": j.status,
+                "created": (j.created_at or "")[:19],
+                "error": (j.error or "")[:80],
+            }
+            for j in jobs
+        ]
+    )
+    table["open"] = _SHOW_QUALITY_LABEL
+    st.session_state[f"{key_prefix}_row_payloads"] = table[["id"]].to_dict("records")
+    st.dataframe(
+        table,
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "id": st.column_config.NumberColumn("Job", format="%d", help="Ідентифікатор задачі в черзі."),
+            "days": st.column_config.NumberColumn("Днів", format="%d", help="Глибина історії цього бектесту."),
+            "status": st.column_config.TextColumn("Статус", help="succeeded — можна відкрити аналіз угод."),
+            "created": st.column_config.TextColumn("Створено", help="Час постановки задачі (UTC)."),
+            "error": st.column_config.TextColumn("Помилка", help="Текст, якщо задача failed."),
+            "open": st.column_config.ButtonColumn(
+                "Якість",
+                help="Показати MAE/MFE і розподіл PnL цього бектесту на цій сторінці.",
+                on_click=_on_results_row_action,
+                key=f"{key_prefix}_open_btn",
+            ),
+        },
+        key=f"{key_prefix}_grid",
+    )
+
+
 def render_sweep_explorer(
     df: pd.DataFrame,
     *,

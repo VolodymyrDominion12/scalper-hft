@@ -245,6 +245,11 @@ def mae_mfe_analysis(trades_df: pd.DataFrame, df_bars: pd.DataFrame) -> pd.DataF
         side = int(trade.get("side", 0))
         entry_px = float(trade.get("entry_price", float("nan")))
         ret = float(trade.get("ret", float("nan")))
+        if not np.isfinite(entry_px) or entry_px <= 0:
+            if "close" in df_bars.columns:
+                nearest = df_bars["close"].reindex([entry_ts], method="nearest")
+                if not nearest.empty:
+                    entry_px = float(nearest.iloc[0])
         if side == 0 or not np.isfinite(entry_px) or entry_px <= 0:
             continue
 

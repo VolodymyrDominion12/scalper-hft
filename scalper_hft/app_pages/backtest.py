@@ -22,6 +22,7 @@ from scalper_hft.app_pages._common import (
     lookup_job,
     submit_research_job,
 )
+from scalper_hft.app_pages._results import trade_column_config
 from scalper_hft.backtest.execution import CostModel
 from scalper_hft.config import get_settings
 from scalper_hft.data.access import klines_from_store
@@ -155,17 +156,7 @@ def _render_bt_chart(view: dict) -> None:
             trades_table(res, initial_capital=10_000.0),
             width="stretch",
             hide_index=True,
-            column_config={
-                "Вхід": st.column_config.DatetimeColumn("Вхід", format="DD.MM.YYYY HH:mm"),
-                "Вихід": st.column_config.DatetimeColumn("Вихід", format="DD.MM.YYYY HH:mm"),
-                "Сторона": st.column_config.TextColumn("Сторона"),
-                "Ціна входу": st.column_config.NumberColumn("Ціна входу", format="%.2f"),
-                "Ціна виходу": st.column_config.NumberColumn("Ціна виходу", format="%.2f"),
-                "SL": st.column_config.NumberColumn("SL", format="%.2f"),
-                "TP": st.column_config.NumberColumn("TP", format="%.2f"),
-                "PnL, %": st.column_config.NumberColumn("PnL, %", format="%.3f"),
-                "PnL, $": st.column_config.NumberColumn("PnL, $", format="%.2f"),
-            },
+            column_config=trade_column_config(),
         )
     else:
         st.info("Угод за цей період немає — спробуйте іншу стратегію/період.")
@@ -215,13 +206,7 @@ def _render_pairs_chart(res: Any, title: str) -> None:
             trades_table(res, initial_capital=10_000.0),
             width="stretch",
             hide_index=True,
-            column_config={
-                "Вхід": st.column_config.DatetimeColumn("Вхід", format="DD.MM.YYYY HH:mm"),
-                "Вихід": st.column_config.DatetimeColumn("Вихід", format="DD.MM.YYYY HH:mm"),
-                "Сторона": st.column_config.TextColumn("Сторона"),
-                "PnL, %": st.column_config.NumberColumn("PnL, %", format="%.3f"),
-                "PnL, $": st.column_config.NumberColumn("PnL, $", format="%.2f"),
-            },
+            column_config=trade_column_config(),
         )
     else:
         st.info("Угод за цей період немає.")
