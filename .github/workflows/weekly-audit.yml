@@ -27,26 +27,18 @@ jobs:
       - name: Юніт-тести
         run: uv run pytest tests/ -q
 
-      - name: Завантажити 1h дані валідованих ніг (365д)
+      - name: Завантажити 1h дані ніг ядра + моніторингу (3y)
         run: |
           uv run python -m scalper_hft.cli download \
-            --symbol BTCUSDT,ETHUSDT,XRPUSDT,LINKUSDT --interval 1h --days 365 --funding
+            --symbol BTCUSDT,ETHUSDT,XRPUSDT,LINKUSDT --interval 1h --days 1095 --funding
 
-      - name: Аудит pairs XRP/BTC, BTC/ETH, LINK/BTC
+      - name: Перевалідація пар на поточному коді (3y, 49 WF-вікон)
         run: |
-          uv run python -m scalper_hft.cli pairs --strategy pairs_arb \
-            --leg1 XRPUSDT --leg2 BTCUSDT --interval 1h --days 365 --maker --walkforward \
-            -p entry_z=2.0 -p exit_z=0.3 -p lookback=480
-          uv run python -m scalper_hft.cli pairs --strategy pairs_arb \
-            --leg1 BTCUSDT --leg2 ETHUSDT --interval 1h --days 365 --maker --walkforward \
-            -p entry_z=2.0 -p exit_z=0.3 -p lookback=240
-          uv run python -m scalper_hft.cli pairs --strategy pairs_arb \
-            --leg1 LINKUSDT --leg2 BTCUSDT --interval 1h --days 365 --maker --walkforward \
-            -p entry_z=2.0 -p exit_z=0.3 -p lookback=240
+          uv run python experiments/iter5_pairs_revalidate.py
 
-      - name: Портфель трьох пар
+      - name: Портфель (дефолт = перевалідоване ядро LINK/BTC)
         run: |
-          uv run python -m scalper_hft.cli pairs-portfolio --interval 1h --days 365 --position-pct 0.3
+          uv run python -m scalper_hft.cli pairs-portfolio --interval 1h --days 1095 --position-pct 0.3
 
       - name: Telegram — OOS / DD / funding wake-up
         if: always()
@@ -57,20 +49,23 @@ jobs:
           from scalper_hft.live.telegram import send_telegram
           from scalper_hft.strategies.pairs_arb import PairsArb
 
+          # Ядро (перевалідація 2026-09-07) + моніторинг.
           specs = [
-              ("XRPUSDT", "BTCUSDT", dict(entry_z=2.0, exit_z=0.3, lookback=480)),
-              ("BTCUSDT", "ETHUSDT", dict(entry_z=2.0, exit_z=0.3, lookback=240)),
-              ("LINKUSDT", "BTCUSDT", dict(entry_z=2.0, exit_z=0.3, lookback=240)),
+              ("LINKUSDT", "BTCUSDT", dict(entry_z=2.0, exit_z=0.3, lookback=120), "ядро"),
+              ("LINKUSDT", "BTCUSDT", dict(entry_z=2.0, exit_z=0.3, lookback=240), "альт"),
+              ("XRPUSDT", "BTCUSDT", dict(entry_z=2.0, exit_z=0.3, lookback=480), "моніторинг"),
+              ("BTCUSDT", "ETHUSDT", dict(entry_z=2.0, exit_z=0.3, lookback=240), "моніторинг"),
+              ("LINKUSDT", "ETHUSDT", dict(entry_z=2.0, exit_z=0.3, lookback=240), "моніторинг"),
           ]
-          lines = ["Weekly pairs audit"]
-          for a, b, p in specs:
-              d1 = download_klines(a, "1h", 365)
-              d2 = download_klines(b, "1h", 365)
-              f1 = download_funding(a, 365)
-              f2 = download_funding(b, 365)
+          lines = ["Weekly pairs audit (3y WF)"]
+          for a, b, p, tag in specs:
+              d1 = download_klines(a, "1h", 1095)
+              d2 = download_klines(b, "1h", 1095)
+              f1 = download_funding(a, 1095)
+              f2 = download_funding(b, 1095)
               wf = run_pairs_walk_forward(d1, d2, PairsArb(**p), f1, f2, maker_execution=True, position_pct=0.3)
               lines.append(
-                  f"{a}/{b}: OOS={wf['avg_oos_sharpe']:+.3f} вікон>0={wf['positive_windows']:.0%} n={wf['n_windows']}"
+                  f"{a}/{b} [{tag}]: OOS={wf['avg_oos_sharpe']:+.3f} вікон>0={wf['positive_windows']:.0%} n={wf['n_windows']}"
               )
 
           high = False
