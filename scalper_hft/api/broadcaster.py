@@ -29,7 +29,7 @@ class ConnectionManager:
         """Надіслати JSON повідомлення всім підключеним клієнтам."""
         if not self.active_connections:
             return
-        
+
         payload = json.dumps(message)
         for connection in list(self.active_connections):
             try:

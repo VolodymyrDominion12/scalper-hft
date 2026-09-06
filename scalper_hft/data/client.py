@@ -37,23 +37,23 @@ class ExchangeClient:
         """auth=True — лише коли потрібні приватні ендпоінти (торгівля).
 
         Для завантаження даних (публічні klines/trades/funding) ключі НЕ
-        передаються. 
+        передаються.
         """
         self.exchange_id = exchange_id
         meta = ExchangeRegistry.get(exchange_id)
-        
+
         params: dict[str, Any] = {
             "enableRateLimit": True,
             "options": {"defaultType": market_type},
         }
         if auth and api_key and api_secret:
             params.update({"apiKey": api_key, "secret": api_secret})
-            
+
         self.exchange: ccxt.Exchange = meta.ccxt_class(params)  # type: ignore[arg-type]
-        
+
         if str(exchange_id).lower().endswith("testnet") and hasattr(self.exchange, "set_sandbox_mode"):
             self.exchange.set_sandbox_mode(True)
-            
+
         self.market_type = market_type
         self._market_cache: dict[str, dict[str, Any]] = {}
 

@@ -83,7 +83,9 @@ def load_research_data(
     from scalper_hft.data.access import ensure_klines
     from scalper_hft.data.downloader import download_agg_trades, download_funding
 
-    klines = ensure_klines(symbol, interval, days, base_interval=base, derive=derive, force=force, exchange_id=exchange_id)
+    klines = ensure_klines(
+        symbol, interval, days, base_interval=base, derive=derive, force=force, exchange_id=exchange_id
+    )
     trades = None
     funding = None
     if strategy is not None and getattr(strategy, "needs_trades", False):

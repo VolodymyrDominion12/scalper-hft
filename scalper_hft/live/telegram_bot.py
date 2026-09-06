@@ -43,8 +43,8 @@ logger = logging.getLogger(__name__)
 
 # ─── Константи ────────────────────────────────────────────────────────────────
 
-RATE_LIMIT_MAX = 30   # максимум команд
-RATE_LIMIT_SEC = 60   # за цей час (секунди)
+RATE_LIMIT_MAX = 30  # максимум команд
+RATE_LIMIT_SEC = 60  # за цей час (секунди)
 
 _HELP_TEXT = """
 🤖 *Scalper HFT Bot — команди*
@@ -66,6 +66,7 @@ _HELP_TEXT = """
 
 
 # ─── Rate limiter ──────────────────────────────────────────────────────────────
+
 
 class _RateLimiter:
     """Sliding-window rate limiter на chat_id."""
@@ -90,6 +91,7 @@ class _RateLimiter:
 
 
 # ─── Bot ──────────────────────────────────────────────────────────────────────
+
 
 class TelegramBotServer:
     """Async Telegram Bot для моніторингу та управління ботами.
@@ -246,8 +248,11 @@ class TelegramBotServer:
             # Намагаємось прочитати таблицю bots (є в UnifiedTradeStore Sprint 2)
             try:
                 import sqlite3
+
                 conn = sqlite3.connect(self._store.path)
-                df = pd.read_sql_query("SELECT bot_id, exchange, symbol, interval, strategy, mode, status, last_heartbeat FROM bots", conn)
+                df = pd.read_sql_query(
+                    "SELECT bot_id, exchange, symbol, interval, strategy, mode, status, last_heartbeat FROM bots", conn
+                )
                 conn.close()
             except Exception:
                 df = pd.DataFrame()
@@ -257,7 +262,11 @@ class TelegramBotServer:
                 snapshot = self._store.load_runtime()
                 if snapshot:
                     status = "running" if snapshot else "unknown"
-                    await self._reply(update, f"🤖 Paper runner: `{status}`\n_(таблиця bots з'явиться в Sprint 2)_", parse_mode="Markdown")
+                    await self._reply(
+                        update,
+                        f"🤖 Paper runner: `{status}`\n_(таблиця bots з'явиться в Sprint 2)_",
+                        parse_mode="Markdown",
+                    )
                 else:
                     await self._reply(update, "🤖 Активних ботів не знайдено.")
                 return
@@ -293,7 +302,11 @@ class TelegramBotServer:
 
         try:
             self._write_control(no_new_entries=True)
-            await self._reply(update, "⏸ *Пауза увімкнена* — нові входи заблоковано.\nВідкриті позиції залишаються.\n/resume <PIN> для відновлення.", parse_mode="Markdown")
+            await self._reply(
+                update,
+                "⏸ *Пауза увімкнена* — нові входи заблоковано.\nВідкриті позиції залишаються.\n/resume <PIN> для відновлення.",
+                parse_mode="Markdown",
+            )
         except Exception as exc:
             await self._reply(update, f"⚠️ Помилка запису control.json: {exc}")
 
@@ -331,6 +344,7 @@ class TelegramBotServer:
 
             # Малюємо PNG через matplotlib
             import matplotlib
+
             matplotlib.use("Agg")
             import matplotlib.dates as mdates
             import matplotlib.pyplot as plt
@@ -364,8 +378,7 @@ class TelegramBotServer:
             # Зберегти в буфер
             buf = io.BytesIO()
             plt.tight_layout()
-            fig.savefig(buf, format="png", dpi=120, bbox_inches="tight",
-                        facecolor=fig.get_facecolor())
+            fig.savefig(buf, format="png", dpi=120, bbox_inches="tight", facecolor=fig.get_facecolor())
             plt.close(fig)
             buf.seek(0)
 
@@ -453,11 +466,15 @@ class TelegramBotServer:
             return False
         if not self._is_allowed(chat_id):
             import asyncio
+
             asyncio.ensure_future(self._reply(update, "⛔ Доступ заборонено."))
             return False
         if not self._limiter.is_allowed(chat_id):
             import asyncio
-            asyncio.ensure_future(self._reply(update, f"⏳ Rate limit: максимум {RATE_LIMIT_MAX} команд за {RATE_LIMIT_SEC}с."))
+
+            asyncio.ensure_future(
+                self._reply(update, f"⏳ Rate limit: максимум {RATE_LIMIT_MAX} команд за {RATE_LIMIT_SEC}с.")
+            )
             return False
         return True
 
@@ -529,11 +546,7 @@ class TelegramBotServer:
         if not token:
             raise RuntimeError("TELEGRAM_BOT_TOKEN не налаштовано в .env")
 
-        app = (
-            Application.builder()
-            .token(token)
-            .build()
-        )
+        app = Application.builder().token(token).build()
 
         handlers = [
             ("help", self._cmd_help),

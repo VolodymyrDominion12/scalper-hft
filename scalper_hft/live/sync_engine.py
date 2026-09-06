@@ -160,7 +160,9 @@ class SyncEngine:
             )
             logger.info(
                 "SyncEngine.sync_account: balance=%.2f available=%.2f upnl=%.2f",
-                balance, available, unrealized_pnl,
+                balance,
+                available,
+                unrealized_pnl,
             )
         except Exception as exc:
             logger.error("SyncEngine.sync_account: помилка: %s", exc)
@@ -238,23 +240,21 @@ class SyncEngine:
         if exchange_class is None:
             raise RuntimeError(f"ccxt не підтримує exchange: {self._exchange_id}")
 
-        self._exchange = exchange_class({
-            "apiKey": settings.binance_api_key,
-            "secret": settings.binance_api_secret,
-            "enableRateLimit": True,
-            "options": {"defaultType": "future"},
-        })
+        self._exchange = exchange_class(
+            {
+                "apiKey": settings.binance_api_key,
+                "secret": settings.binance_api_secret,
+                "enableRateLimit": True,
+                "options": {"defaultType": "future"},
+            }
+        )
         return self._exchange
 
     def _fetch_unrealized_pnl(self, exchange: Any) -> float:
         """Отримати загальний unrealized PnL з відкритих позицій."""
         try:
             positions = exchange.fetch_positions()
-            total = sum(
-                float(p.get("unrealizedPnl") or 0)
-                for p in positions
-                if float(p.get("contracts", 0) or 0) > 0
-            )
+            total = sum(float(p.get("unrealizedPnl") or 0) for p in positions if float(p.get("contracts", 0) or 0) > 0)
             return total
         except Exception:
             return 0.0

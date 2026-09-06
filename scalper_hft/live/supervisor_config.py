@@ -44,28 +44,32 @@ class SupervisorConfig:
         p = Path(path)
         if not p.exists():
             raise FileNotFoundError(f"Конфіг {p} не знайдено.")
-            
+
         with p.open("r", encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
 
         # Parse families
         families = []
         for f_dict in raw.get("families", []):
-            families.append(FamilyConfig(
-                name=f_dict.get("name", "unknown"),
-                allocation=float(f_dict.get("allocation", 1.0)),
-            ))
+            families.append(
+                FamilyConfig(
+                    name=f_dict.get("name", "unknown"),
+                    allocation=float(f_dict.get("allocation", 1.0)),
+                )
+            )
 
         # Parse strategies
         strategies = []
         for s_dict in raw.get("strategies", []):
-            strategies.append(StrategyConfig(
-                id=s_dict.get("id", "unknown"),
-                family=s_dict.get("family", "unknown"),
-                preferred_regimes=s_dict.get("preferred_regimes", []),
-                params=s_dict.get("params", {}),
-                allocation_weight=float(s_dict.get("allocation_weight", 1.0)),
-            ))
+            strategies.append(
+                StrategyConfig(
+                    id=s_dict.get("id", "unknown"),
+                    family=s_dict.get("family", "unknown"),
+                    preferred_regimes=s_dict.get("preferred_regimes", []),
+                    params=s_dict.get("params", {}),
+                    allocation_weight=float(s_dict.get("allocation_weight", 1.0)),
+                )
+            )
 
         return cls(
             name=raw.get("name", "default_supervisor"),

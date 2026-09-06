@@ -357,9 +357,7 @@ class PairsEngine:
             return "symbol_mismatch"
 
         fill_px = (
-            event.last_filled_price
-            if event.last_filled_price > 0
-            else (o1.limit_price if is_leg1 else o2.limit_price)
+            event.last_filled_price if event.last_filled_price > 0 else (o1.limit_price if is_leg1 else o2.limit_price)
         )
 
         if self.legging_mode == "strict_both":

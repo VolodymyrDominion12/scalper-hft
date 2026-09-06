@@ -400,7 +400,17 @@ class PaperStore:
 
         self._conn.execute(
             "INSERT INTO positions (ts, exchange, symbol, side, size, entry_price, mark_price, unrealized_pnl, mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (str(ts_val), str(exchange), str(symbol), str(side), float(size), float(entry_price), mark_price, unrealized_pnl, str(mode)),
+            (
+                str(ts_val),
+                str(exchange),
+                str(symbol),
+                str(side),
+                float(size),
+                float(entry_price),
+                mark_price,
+                unrealized_pnl,
+                str(mode),
+            ),
         )
         self._conn.commit()
 

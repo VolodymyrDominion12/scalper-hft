@@ -51,18 +51,22 @@ def _extract_positions(store: PaperStore) -> list[dict[str, Any]]:
     positions: list[dict[str, Any]] = []
     if pos_df is not None and not pos_df.empty:
         for _, p in pos_df.iterrows():
-            positions.append({
-                "id": p.get("id") if hasattr(p, "get") else None,
-                "symbol": str(p.get("symbol", "")),
-                "side": str(p.get("side", "flat")),
-                "size": float(p.get("size", 0.0) or 0.0),
-                "entry_price": float(p.get("entry_price", 0.0) or 0.0),
-                "mark_price": float(p.get("mark_price", 0.0) or 0.0) if pd.notna(p.get("mark_price")) else 0.0,
-                "unrealized_pnl": float(p.get("unrealized_pnl", 0.0) or 0.0) if pd.notna(p.get("unrealized_pnl")) else 0.0,
-                "exchange": str(p.get("exchange", "binance")),
-                "mode": str(p.get("mode", "paper")),
-                "ts": str(p.get("ts", "")),
-            })
+            positions.append(
+                {
+                    "id": p.get("id") if hasattr(p, "get") else None,
+                    "symbol": str(p.get("symbol", "")),
+                    "side": str(p.get("side", "flat")),
+                    "size": float(p.get("size", 0.0) or 0.0),
+                    "entry_price": float(p.get("entry_price", 0.0) or 0.0),
+                    "mark_price": float(p.get("mark_price", 0.0) or 0.0) if pd.notna(p.get("mark_price")) else 0.0,
+                    "unrealized_pnl": float(p.get("unrealized_pnl", 0.0) or 0.0)
+                    if pd.notna(p.get("unrealized_pnl"))
+                    else 0.0,
+                    "exchange": str(p.get("exchange", "binance")),
+                    "mode": str(p.get("mode", "paper")),
+                    "ts": str(p.get("ts", "")),
+                }
+            )
     return positions
 
 
@@ -71,15 +75,17 @@ def _extract_accounts(store: PaperStore) -> list[dict[str, Any]]:
     accounts = []
     if hasattr(acc_df, "iterrows"):
         for _, a in acc_df.iterrows():
-            accounts.append({
-                "exchange": a["exchange"],
-                "mode": a["mode"],
-                "balance": float(a["balance"]),
-                "unrealized_pnl": float(a["unrealized_pnl"]),
-                "margin_used": float(a["margin_used"]),
-                "available": float(a["available"]),
-                "ts": str(a["ts"]),
-            })
+            accounts.append(
+                {
+                    "exchange": a["exchange"],
+                    "mode": a["mode"],
+                    "balance": float(a["balance"]),
+                    "unrealized_pnl": float(a["unrealized_pnl"]),
+                    "margin_used": float(a["margin_used"]),
+                    "available": float(a["available"]),
+                    "ts": str(a["ts"]),
+                }
+            )
     return accounts
 
 
@@ -88,17 +94,19 @@ def _extract_bots(store: PaperStore) -> list[dict[str, Any]]:
     bots = []
     if hasattr(bots_df, "iterrows"):
         for _, b in bots_df.iterrows():
-            bots.append({
-                "bot_id": str(b["bot_id"]),
-                "exchange": str(b["exchange"]),
-                "symbol": str(b["symbol"]),
-                "interval": str(b["interval"]),
-                "strategy": str(b["strategy"]),
-                "mode": str(b["mode"]),
-                "status": str(b["status"]),
-                "started_at": str(b["started_at"]),
-                "last_heartbeat": str(b["last_heartbeat"]),
-            })
+            bots.append(
+                {
+                    "bot_id": str(b["bot_id"]),
+                    "exchange": str(b["exchange"]),
+                    "symbol": str(b["symbol"]),
+                    "interval": str(b["interval"]),
+                    "strategy": str(b["strategy"]),
+                    "mode": str(b["mode"]),
+                    "status": str(b["status"]),
+                    "started_at": str(b["started_at"]),
+                    "last_heartbeat": str(b["last_heartbeat"]),
+                }
+            )
     return bots
 
 
@@ -107,17 +115,19 @@ def _extract_trades(store: PaperStore, limit: int = 20) -> list[dict[str, Any]]:
     trades = []
     if hasattr(trades_df, "tail"):
         for _, t in trades_df.tail(limit).iloc[::-1].iterrows():
-            trades.append({
-                "ts": str(t.get("ts", "")),
-                "pair": str(t.get("pair", "")),
-                "symbol": str(t.get("symbol", "")),
-                "side": str(t.get("side", "")),
-                "size": float(t.get("size", 0.0)),
-                "entry_price": float(t.get("entry_price", 0.0) or 0.0),
-                "exit_price": float(t.get("exit_price", 0.0) or 0.0),
-                "pnl": float(t.get("pnl", 0.0) or 0.0),
-                "kind": str(t.get("kind", "")),
-            })
+            trades.append(
+                {
+                    "ts": str(t.get("ts", "")),
+                    "pair": str(t.get("pair", "")),
+                    "symbol": str(t.get("symbol", "")),
+                    "side": str(t.get("side", "")),
+                    "size": float(t.get("size", 0.0)),
+                    "entry_price": float(t.get("entry_price", 0.0) or 0.0),
+                    "exit_price": float(t.get("exit_price", 0.0) or 0.0),
+                    "pnl": float(t.get("pnl", 0.0) or 0.0),
+                    "kind": str(t.get("kind", "")),
+                }
+            )
     return trades
 
 
@@ -133,30 +143,34 @@ async def sqlite_watcher() -> None:
                 ctrl = load_control()
 
                 # Кожну секунду: позиції та стан управління
-                await manager.broadcast({
-                    "type": "positions_update",
-                    "data": positions,
-                    "count": len(positions),
-                    "ts": datetime.datetime.now(datetime.UTC).isoformat(),
-                })
+                await manager.broadcast(
+                    {
+                        "type": "positions_update",
+                        "data": positions,
+                        "count": len(positions),
+                        "ts": datetime.datetime.now(datetime.UTC).isoformat(),
+                    }
+                )
 
                 # Кожні 2 секунди: акаунти та боти
                 if tick % 2 == 0:
                     accounts = _extract_accounts(store)
                     bots = _extract_bots(store)
-                    await manager.broadcast({
-                        "type": "telemetry_update",
-                        "data": {
-                            "accounts": accounts,
-                            "bots": bots,
-                            "control": {
-                                "pause": ctrl.pause,
-                                "no_new_entries": ctrl.no_new_entries,
-                                "flatten": ctrl.flatten,
+                    await manager.broadcast(
+                        {
+                            "type": "telemetry_update",
+                            "data": {
+                                "accounts": accounts,
+                                "bots": bots,
+                                "control": {
+                                    "pause": ctrl.pause,
+                                    "no_new_entries": ctrl.no_new_entries,
+                                    "flatten": ctrl.flatten,
+                                },
                             },
-                        },
-                        "ts": datetime.datetime.now(datetime.UTC).isoformat(),
-                    })
+                            "ts": datetime.datetime.now(datetime.UTC).isoformat(),
+                        }
+                    )
         except asyncio.CancelledError:
             break
         except Exception as e:
@@ -230,15 +244,17 @@ async def update_control(
         flatten=req.flatten,
     )
     # Миттєво сповіщаємо клієнтів через WS
-    await manager.broadcast({
-        "type": "control_update",
-        "data": {
-            "pause": ctrl.pause,
-            "no_new_entries": ctrl.no_new_entries,
-            "flatten": ctrl.flatten,
-        },
-        "ts": datetime.datetime.now(datetime.UTC).isoformat(),
-    })
+    await manager.broadcast(
+        {
+            "type": "control_update",
+            "data": {
+                "pause": ctrl.pause,
+                "no_new_entries": ctrl.no_new_entries,
+                "flatten": ctrl.flatten,
+            },
+            "ts": datetime.datetime.now(datetime.UTC).isoformat(),
+        }
+    )
     return {
         "status": "ok",
         "control": {
@@ -303,12 +319,14 @@ async def close_position(
     )
     # Миттєво розсилаємо оновлення
     positions = _extract_positions(store)
-    await manager.broadcast({
-        "type": "positions_update",
-        "data": positions,
-        "count": len(positions),
-        "ts": datetime.datetime.now(datetime.UTC).isoformat(),
-    })
+    await manager.broadcast(
+        {
+            "type": "positions_update",
+            "data": positions,
+            "count": len(positions),
+            "ts": datetime.datetime.now(datetime.UTC).isoformat(),
+        }
+    )
     return {"status": "ok", "message": f"Позицію {req.symbol} закрито"}
 
 
@@ -334,21 +352,25 @@ async def emergency_flatten(token_payload: dict[str, Any] = Depends(verify_token
             closed += 1
 
     positions = _extract_positions(store)
-    await manager.broadcast({
-        "type": "positions_update",
-        "data": positions,
-        "count": len(positions),
-        "ts": datetime.datetime.now(datetime.UTC).isoformat(),
-    })
-    await manager.broadcast({
-        "type": "control_update",
-        "data": {
-            "pause": ctrl.pause,
-            "no_new_entries": ctrl.no_new_entries,
-            "flatten": ctrl.flatten,
-        },
-        "ts": datetime.datetime.now(datetime.UTC).isoformat(),
-    })
+    await manager.broadcast(
+        {
+            "type": "positions_update",
+            "data": positions,
+            "count": len(positions),
+            "ts": datetime.datetime.now(datetime.UTC).isoformat(),
+        }
+    )
+    await manager.broadcast(
+        {
+            "type": "control_update",
+            "data": {
+                "pause": ctrl.pause,
+                "no_new_entries": ctrl.no_new_entries,
+                "flatten": ctrl.flatten,
+            },
+            "ts": datetime.datetime.now(datetime.UTC).isoformat(),
+        }
+    )
     return {
         "status": "ok",
         "message": f"Аварійний Kill-Switch активовано: закрито {closed} позицій, торгівлю призупинено.",
@@ -374,12 +396,14 @@ async def create_mock_position(
         mode=req.mode,
     )
     positions = _extract_positions(store)
-    await manager.broadcast({
-        "type": "positions_update",
-        "data": positions,
-        "count": len(positions),
-        "ts": datetime.datetime.now(datetime.UTC).isoformat(),
-    })
+    await manager.broadcast(
+        {
+            "type": "positions_update",
+            "data": positions,
+            "count": len(positions),
+            "ts": datetime.datetime.now(datetime.UTC).isoformat(),
+        }
+    )
     return {"status": "ok", "message": f"Створено тестову позицію {req.symbol}", "data": req.model_dump()}
 
 
@@ -392,6 +416,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         return
 
     from fastapi.security import HTTPAuthorizationCredentials
+
     try:
         verify_token(HTTPAuthorizationCredentials(scheme="Bearer", credentials=token))
     except Exception:
@@ -430,13 +455,16 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 # Можливість обробляти команди від клієнта через WS
                 try:
                     import json
+
                     cmd = json.loads(data)
                     if cmd.get("action") == "ping":
-                        await websocket.send_json({
-                            "type": "pong",
-                            "echo_ts": cmd.get("ts"),
-                            "server_ts": time.time(),
-                        })
+                        await websocket.send_json(
+                            {
+                                "type": "pong",
+                                "echo_ts": cmd.get("ts"),
+                                "server_ts": time.time(),
+                            }
+                        )
                 except Exception:
                     pass
     except WebSocketDisconnect:

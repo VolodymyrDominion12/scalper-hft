@@ -152,8 +152,7 @@ class RegimeDetector:
         n_fit = min(self.hmm_fit_bars, len(obs))
         if n_fit < self.n_hmm_states * 10:
             logger.warning(
-                "RegimeDetector: замало даних для HMM (%d барів < %d × 10). "
-                "HMM вимкнено.",
+                "RegimeDetector: замало даних для HMM (%d барів < %d × 10). HMM вимкнено.",
                 n_fit,
                 self.n_hmm_states,
             )

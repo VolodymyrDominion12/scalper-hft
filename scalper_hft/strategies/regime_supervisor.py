@@ -83,39 +83,37 @@ class RegimeSupervisor(Strategy):
         self._exp3_bandit: Any = None  # Exp3Bandit
         self._prev_sigs: np.ndarray | None = None  # сигнали минулого бару для hedge update
 
-
     @classmethod
     def from_config(cls, config_path: str) -> RegimeSupervisor:
         from scalper_hft.live.supervisor_config import SupervisorConfig
         from scalper_hft.strategies import get_strategy
-        
+
         cfg = SupervisorConfig.from_yaml(config_path)
-        
+
         # Створюємо базовий Supervisor
         sup = cls(blend_mode="contextual_hedge")
         sup._strat_names = []
         sup._strats = []
-        
+
         # Ініціалізуємо суб-стратегії
         for s in cfg.strategies:
             strat_cls = get_strategy(s.family, **s.params)  # базове ім'я - це family
             if not strat_cls:
                 logger.warning(f"Стратегію {s.family} ({s.id}) не знайдено, пропускаємо.")
                 continue
-                
+
             inst = strat_cls
             # Перевизначаємо preferred_regimes з конфігу
             if s.preferred_regimes:
                 inst.preferred_regimes = frozenset(s.preferred_regimes)
-                
+
             sup._strat_names.append(s.id)
             sup._strats.append(inst)
-            
+
         sup.needs_trades = any(s.needs_trades for s in sup._strats)
         sup.needs_funding = any(s.needs_funding for s in sup._strats)
-        
-        return sup
 
+        return sup
 
     # ────────────────────────────────────────────────────────────────────────
     # Batch (бектест)
@@ -171,15 +169,17 @@ class RegimeSupervisor(Strategy):
         for i, (idx, row) in enumerate(sig_df.iterrows()):
             structure = str(regime_df.loc[idx, "structure"]) if idx in regime_df.index else "range"
             vol = str(regime_df.loc[idx, "vol"]) if idx in regime_df.index else "normal"
-            weights = np.array([
-                regime_capital_weight(
-                    frozenset(s.preferred_regimes),
-                    structure,
-                    vol,
-                    unfavorable=unfavorable,
-                )
-                for s in self._strats
-            ])
+            weights = np.array(
+                [
+                    regime_capital_weight(
+                        frozenset(s.preferred_regimes),
+                        structure,
+                        vol,
+                        unfavorable=unfavorable,
+                    )
+                    for s in self._strats
+                ]
+            )
             total_w = weights.sum()
             if total_w > 0:
                 result.iloc[i] = float(np.dot(row.values, weights / total_w))
@@ -231,15 +231,17 @@ class RegimeSupervisor(Strategy):
                 blend.step(strat_rets, prev_regime)
 
             # Базові ваги з taxonomy (static prior) — модифікуємо Hedge-ваги
-            prior = np.array([
-                regime_capital_weight(
-                    frozenset(s.preferred_regimes),
-                    regime,
-                    str(regime_df.iloc[t].get("vol", "normal") if t < len(regime_df) else "normal"),
-                    unfavorable=unfavorable,
-                )
-                for s in self._strats
-            ])
+            prior = np.array(
+                [
+                    regime_capital_weight(
+                        frozenset(s.preferred_regimes),
+                        regime,
+                        str(regime_df.iloc[t].get("vol", "normal") if t < len(regime_df) else "normal"),
+                        unfavorable=unfavorable,
+                    )
+                    for s in self._strats
+                ]
+            )
 
             # Фінальні ваги: Hedge-ваги × static prior
             hedge_w = blend.weights(regime)

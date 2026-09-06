@@ -81,4 +81,3 @@ def save_control(
     tmp_file.replace(p)
     logger.info("control.json збережено (%s): %s", p, current)
     return load_control(p)
-

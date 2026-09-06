@@ -89,7 +89,9 @@ def _tail_days(df: pd.DataFrame, days: int) -> pd.DataFrame:
     return trimmed if not trimmed.empty else df  # кеш коротший за запит — що є, те й повертаємо
 
 
-def _derive_klines(symbol: str, interval: str, days: int, base_interval: str, *, force: bool, exchange_id: str | None = None) -> pd.DataFrame:
+def _derive_klines(
+    symbol: str, interval: str, days: int, base_interval: str, *, force: bool, exchange_id: str | None = None
+) -> pd.DataFrame:
     """Завантажити базу (інкрементально) і ресемплінгом отримати цільовий інтервал.
 
     Похідний ряд не зберігається: джерело істини — лише base_interval.

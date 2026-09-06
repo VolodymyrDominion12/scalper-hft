@@ -394,7 +394,9 @@ class PostgresStore:
                 elif table == "funding":
                     cur.execute("DELETE FROM funding WHERE symbol = %s", (symbol,))
                     cols = ["symbol", "ts", "funding_rate"]
-                    rows = [(symbol, pd.Timestamp(str(ts)).to_pydatetime(), float(r)) for ts, r in df["fundingRate"].items()]
+                    rows = [
+                        (symbol, pd.Timestamp(str(ts)).to_pydatetime(), float(r)) for ts, r in df["fundingRate"].items()
+                    ]
                 else:  # pragma: no cover
                     raise ValueError(f"невідома таблиця {table}")
 

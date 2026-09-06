@@ -10,6 +10,7 @@ import ccxt
 @dataclass(frozen=True)
 class ExchangeMeta:
     """Метадані біржі для scalper-hft."""
+
     id: str
     ccxt_class: type[ccxt.Exchange]
     default_maker_fee: float
@@ -20,7 +21,7 @@ class ExchangeMeta:
 
 class ExchangeRegistry:
     """Глобальний реєстр бірж."""
-    
+
     _registry: dict[str, ExchangeMeta] = {
         "binance": ExchangeMeta(
             id="binance",
@@ -64,7 +65,7 @@ class ExchangeRegistry:
                     default_taker_fee=0.0005,
                 )
             raise ValueError(f"Невідома біржа: {exchange_id}")
-        
+
         # Make a copy for testnet if needed
         meta = cls._registry[base_id]
         if clean_id != base_id:

@@ -160,9 +160,7 @@ class ContextualHedgeBlend:
             raise ValueError("Потрібно щонайменше 2 експерти")
         self.n = n_experts
         self.regimes = list(regimes)
-        self._blenders: dict[str, HedgeBlend] = {
-            r: HedgeBlend(n_experts=n_experts, eta=eta) for r in regimes
-        }
+        self._blenders: dict[str, HedgeBlend] = {r: HedgeBlend(n_experts=n_experts, eta=eta) for r in regimes}
         # глобальний fallback (не прив'язаний до режиму)
         self._global = HedgeBlend(n_experts=n_experts, eta=eta)
         self._bar_counts: dict[str, int] = {r: 0 for r in regimes}
@@ -208,4 +206,3 @@ class ContextualHedgeBlend:
     def bar_counts(self) -> dict[str, int]:
         """Кількість барів накопичена per-regime (корисна для діагностики)."""
         return dict(self._bar_counts)
-

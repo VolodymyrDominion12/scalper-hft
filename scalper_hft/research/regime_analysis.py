@@ -89,16 +89,18 @@ def compare_strategies_by_regime(
             mask = regime_df["label"] == regime_label
             r_regime = ret_aligned[mask]
 
-            rows.append({
-                "strategy": strat_name,
-                "regime": regime_label,
-                "sharpe": _sharpe(r_regime, periods_per_year),
-                "profit_factor": _profit_factor(r_regime),
-                "win_rate": _win_rate(r_regime),
-                "n_bars": int(mask.sum()),
-                "pct_time": float(mask.sum() / len(mask) * 100),
-                "total_return_pct": float(r_regime.sum() * 100),
-            })
+            rows.append(
+                {
+                    "strategy": strat_name,
+                    "regime": regime_label,
+                    "sharpe": _sharpe(r_regime, periods_per_year),
+                    "profit_factor": _profit_factor(r_regime),
+                    "win_rate": _win_rate(r_regime),
+                    "n_bars": int(mask.sum()),
+                    "pct_time": float(mask.sum() / len(mask) * 100),
+                    "total_return_pct": float(r_regime.sum() * 100),
+                }
+            )
 
     df = pd.DataFrame(rows).set_index(["strategy", "regime"])
     return df
@@ -127,13 +129,15 @@ def regime_performance_attribution(
         for regime_label in sorted(regime_df["label"].unique()):
             mask = regime_df["label"] == regime_label
             regime_total = ret_aligned[mask].sum()
-            rows.append({
-                "strategy": strat_name,
-                "regime": regime_label,
-                "contribution_pct": float(regime_total / total * 100) if total != 0 else 0.0,
-                "pct_time": float(mask.sum() / len(mask) * 100),
-                "cumulative_return": float(regime_total * 100),
-            })
+            rows.append(
+                {
+                    "strategy": strat_name,
+                    "regime": regime_label,
+                    "contribution_pct": float(regime_total / total * 100) if total != 0 else 0.0,
+                    "pct_time": float(mask.sum() / len(mask) * 100),
+                    "cumulative_return": float(regime_total * 100),
+                }
+            )
 
     return pd.DataFrame(rows).set_index(["strategy", "regime"])
 
@@ -163,16 +167,18 @@ def supervisor_vs_baseline(
     for name, ret in all_returns.items():
         r = ret.dropna()
         cum = (1 + r).cumprod()
-        rows.append({
-            "strategy": name,
-            "sharpe": _sharpe(r, periods_per_year),
-            "profit_factor": _profit_factor(r),
-            "win_rate": _win_rate(r),
-            "max_drawdown_pct": _max_drawdown(cum) * 100,
-            "total_return_pct": float((cum.iloc[-1] - 1) * 100) if len(cum) > 0 else 0.0,
-            "n_bars": len(r),
-            "is_supervisor": name == "regime_supervisor",
-        })
+        rows.append(
+            {
+                "strategy": name,
+                "sharpe": _sharpe(r, periods_per_year),
+                "profit_factor": _profit_factor(r),
+                "win_rate": _win_rate(r),
+                "max_drawdown_pct": _max_drawdown(cum) * 100,
+                "total_return_pct": float((cum.iloc[-1] - 1) * 100) if len(cum) > 0 else 0.0,
+                "n_bars": len(r),
+                "is_supervisor": name == "regime_supervisor",
+            }
+        )
 
     df = pd.DataFrame(rows).set_index("strategy")
     # Сортуємо за Sharpe (supervisor першим якщо він кращий)

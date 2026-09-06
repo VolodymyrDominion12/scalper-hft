@@ -11,7 +11,7 @@ from scalper_hft.config import get_settings
 
 class CacheManager:
     """Керує структурою директорій кешу та індексом (cache_index.json).
-    
+
     Для кожної біржі створюється окрема піддиректорія (напр. data/binance/).
     """
 
@@ -48,14 +48,14 @@ class CacheManager:
         ex = exchange_id.lower().strip()
         if ex not in self.index["exchanges"]:
             self.index["exchanges"][ex] = {}
-        
+
         ex_data = self.index["exchanges"][ex]
         if symbol not in ex_data:
             ex_data[symbol] = []
-            
+
         if interval not in ex_data[symbol]:
             ex_data[symbol].append(interval)
-            
+
         self._save_index()
 
     def get_downloaded_symbols(self, exchange_id: str) -> list[str]:

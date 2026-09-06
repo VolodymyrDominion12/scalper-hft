@@ -110,4 +110,3 @@ def notify_risk_block(
         text += f"\nDrawdown: `{dd_pct:.2f}%`"
     text += "\n/resume <PIN> для відновлення"
     return send_telegram(text)
-
