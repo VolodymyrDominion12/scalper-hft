@@ -52,17 +52,73 @@ journalctl --user -u scalper-record -f   # логи
 ```
 
 ### Варіант B — VPS (рекомендовано для 24/7; робиться тегом за DEPLOY_PLAN)
-1. На VPS: клон репо та checkout тегу, `.venv` з `--extra live` (websockets).
-2. **Виправити шлях** у `deploy/scalper-record.service`: `WorkingDirectory` і
-   `ExecStart` мають вказувати на каталог VPS (зараз там шлях машини розробника!).
-3. `sudo cp deploy/scalper-record.service /etc/systemd/system/` →
-   `sudo systemctl daemon-reload` → `sudo systemctl enable --now scalper-record`.
-4. Контроль: `sudo systemctl status scalper-record`, `du -sh data/*depth5*.parquet`.
 
-> ⚠ Примітка: юніт зараз записує **лише BTCUSDT** і в лупі робить одну сесію
-> на 1440 хв, після чого `Restart=always` перезапускає (append у той самий файл).
-> Для кількох символів — окремий інстанс на символ (systemd template
-> `scalper-record@.service`, `ExecStart=…/record_loop.sh %i 1440`).
+**Куди класти юніт і що правити (відповідь на «куди перенести»):**
+
+1. **Файл юніта кладеться в системний каталог systemd:**
+   ```bash
+   sudo cp deploy/scalper-record.service /etc/systemd/system/scalper-record.service
+   ```
+   (або на рівні користувача: `~/.config/systemd/user/scalper-record.service` —
+   тоді без `sudo`, але сервіс працює лише поки користувач залогінений, якщо не
+   ввімкнено `loginctl enable-linger $USER`).
+
+2. **ОБОВ'ЯЗКОВО виправити шляхи у файлі ДО копіювання** — зараз там шлях
+   машини розробника (`User=volodymyr`,
+   `WorkingDirectory=/home/volodymyr/PycharmProjects/scalper-hft`,
+   `ExecStart=…/scripts/record_loop.sh BTCUSDT 1440`). На VPS мають бути ваш
+   користувач і каталог репо, напр.:
+   ```ini
+   User=<VPS_USER>
+   WorkingDirectory=/home/<VPS_USER>/scalper-hft
+   ExecStart=/home/<VPS_USER>/scalper-hft/scripts/record_loop.sh BTCUSDT 1440
+   ```
+   Заміна без ручного редагування (на VPS, у каталозі репо):
+   ```bash
+   sed -i "s|User=volodymyr|User=$(whoami)|; \
+           s|/home/volodymyr/PycharmProjects/scalper-hft|$PWD|g" deploy/scalper-record.service
+   grep -E "User=|WorkingDirectory|ExecStart" deploy/scalper-record.service   # перевірка
+   ```
+
+3. **Вимоги до каталогу на VPS** (щоб юніт стартував):
+   - репо на `$PWD` (той самий, що в `WorkingDirectory`);
+   - venv із websockets: `cd $PWD && uv sync --extra live` (або
+     `.venv/bin/pip install websockets`);
+   - `scripts/record_loop.sh` виконуваний: `chmod +x scripts/record_loop.sh`;
+   - ключі/`.env` НЕ потрібні (публічний стрім).
+
+4. **Запуск і контроль:**
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now scalper-record
+   sudo systemctl status scalper-record          # active (running)
+   journalctl -u scalper-record -f               # логи
+   du -sh data/*depth5*.parquet                  # файл росте
+   ```
+
+5. **Кілька символів** — юніт зараз записує лише `BTCUSDT`. Для кожного
+   символу — окремий інстанс (systemd template):
+   ```ini
+   # /etc/systemd/system/scalper-record@.service
+   [Service]
+   Type=simple
+   User=<VPS_USER>
+   WorkingDirectory=/home/<VPS_USER>/scalper-hft
+   ExecStart=/home/<VPS_USER>/scalper-hft/scripts/record_loop.sh %i 1440
+   Restart=always
+   RestartSec=10
+   [Install]
+   WantedBy=multi-user.target
+   ```
+   ```bash
+   sudo systemctl enable --now scalper-record@BTCUSDT.service \
+                          scalper-record@LINKUSDT.service \
+                          scalper-record@XRPUSDT.service \
+                          scalper-record@ETHUSDT.service
+   ```
+
+> ⚠ Примітка: юніт у репо (`deploy/scalper-record.service`) залишається шаблоном
+> зі шляхом машини розробника; на VPS завжди правте копію (п.2) перед `cp`.
 
 ## Крок 3. Скільки даних і чи росте файл
 

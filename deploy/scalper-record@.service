@@ -1,0 +1,33 @@
+# systemd template: безперервний запис depth5 для ОДНОГО символу (%i)
+#
+# Приклад: scalper-record@BTCUSDT.service, scalper-record@LINKUSDT.service ...
+#
+# Встановлення на VPS (попередньо виправте User/WorkingDirectory/ExecStart
+# під вашого користувача і каталог репо — зараз шлях машини розробника):
+#   sudo cp deploy/scalper-record@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now scalper-record@BTCUSDT.service \
+#                          scalper-record@LINKUSDT.service \
+#                          scalper-record@XRPUSDT.service \
+#                          scalper-record@ETHUSDT.service
+#
+# Дані: data/{SYMBOL}_depth5.parquet (append у кожній сесії).
+# Ключі/.env НЕ потрібні (публічний стрім /public/ws/{sym}@depth5@100ms).
+
+[Unit]
+Description=scalper-hft depth5 recorder for %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=volodymyr
+WorkingDirectory=/home/volodymyr/PycharmProjects/scalper-hft
+# --minutes 1440 = одна сесія на добу; після завершення Restart підхопить наступну
+ExecStart=/home/volodymyr/PycharmProjects/scalper-hft/scripts/record_loop.sh %i 1440
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
