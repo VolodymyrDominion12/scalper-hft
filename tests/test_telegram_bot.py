@@ -365,6 +365,54 @@ def test_write_and_read_control(tmp_path: Path) -> None:
     assert data["no_new_entries"] is False
 
 
+def test_cmd_bots_empty(tmp_path: Path) -> None:
+    """/bots без ботів → інформативне повідомлення."""
+    server = _make_server(tmp_path)
+    update = _make_update(chat_id=123456789)
+    ctx = _make_ctx()
+    _run(server._cmd_bots(update, ctx))
+    text = update.message.reply_text.call_args[0][0]
+    assert "бот" in text.lower() or "немає" in text.lower()
+
+
+def test_cmd_bots_with_registry(tmp_path: Path) -> None:
+    server = _make_server(tmp_path)
+    server._store.upsert_bot(
+        bot_id="pairs_xrp_btc",
+        exchange="binance",
+        symbol="XRP/BTC",
+        interval="1h",
+        strategy="pairs_arb",
+        mode="paper",
+        status="running",
+    )
+    update = _make_update(chat_id=123456789)
+    ctx = _make_ctx()
+    _run(server._cmd_bots(update, ctx))
+    text = update.message.reply_text.call_args[0][0]
+    assert "pairs_xrp_btc" in text or "XRP" in text
+
+
+def test_cmd_risk_with_snapshot(tmp_path: Path) -> None:
+    """/risk з runtime snapshot показує денний DD."""
+    server = _make_server(tmp_path)
+    payload = {
+        "account": {
+            "cash": 9800.0,
+            "day_start_equity": 10_000.0,
+            "consecutive_losses": 2,
+            "equity": 9800.0,
+        }
+    }
+    server._store.save_runtime(payload)
+    update = _make_update(chat_id=123456789)
+    ctx = _make_ctx()
+    _run(server._cmd_risk(update, ctx))
+    text = update.message.reply_text.call_args[0][0]
+    assert "DD" in text or "збит" in text.lower()
+    assert "2" in text
+
+
 def test_control_merges_existing_keys(tmp_path: Path) -> None:
     """_write_control доповнює існуючі ключі, не перезаписує всі."""
     server = _make_server(tmp_path)
