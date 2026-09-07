@@ -400,6 +400,11 @@ def main(argv: list[str] | None = None) -> None:
 
     p = sub.add_parser("dashboard", help="Запуск Streamlit-дашборду (інтерпретатор цього venv)")
     p.add_argument("--port", type=int, default=None, help="Порт Streamlit (за замовч. 8501)")
+    p.add_argument(
+        "--address",
+        default=None,
+        help="Bind address Streamlit (за замовч. DASHBOARD_HOST або 127.0.0.1)",
+    )
     p.add_argument("--no-worker", action="store_true", help="Не піднімати research worker разом із дашбордом")
     p.set_defaults(func=_cli_pkg.cmd_dashboard)
 

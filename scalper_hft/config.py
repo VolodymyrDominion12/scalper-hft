@@ -20,6 +20,21 @@ DEFAULT_API_SECRET_KEY = "scalper_dev_secret_key_minimum_32_bytes_long_jwt"
 _LOCAL_API_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
+def _parse_csv_tuple(raw: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    if not raw.strip():
+        return default
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
+def _default_api_cors_origins() -> tuple[str, ...]:
+    return (
+        "http://127.0.0.1:8501",
+        "http://localhost:8501",
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+    )
+
+
 def _env_float(key: str, default: float) -> float:
     raw = os.getenv(key)
     if raw is None or raw.strip() == "":
@@ -106,11 +121,15 @@ class Settings:
 
     # Dashboard Auth
     dashboard_password_hash: str = field(default_factory=lambda: os.getenv("DASHBOARD_PASSWORD_HASH", ""))
+    dashboard_host: str = field(default_factory=lambda: os.getenv("DASHBOARD_HOST", "127.0.0.1"))
 
     # API
     api_host: str = field(default_factory=lambda: os.getenv("API_HOST", "0.0.0.0"))
     api_port: int = field(default_factory=lambda: _env_int("API_PORT", 8000))
     api_secret_key: str = field(default_factory=lambda: os.getenv("API_SECRET_KEY", DEFAULT_API_SECRET_KEY))
+    api_cors_origins: tuple[str, ...] = field(
+        default_factory=lambda: _parse_csv_tuple(os.getenv("API_CORS_ORIGINS", ""), _default_api_cors_origins())
+    )
 
     @property
     def postgres_conninfo(self) -> str:
@@ -170,6 +189,19 @@ def require_safe_api_bind(host: str, settings: Settings) -> None:
         raise RuntimeError(
             f"API на {host} з дефолтним API_SECRET_KEY заборонено. "
             "Задайте власний API_SECRET_KEY у .env або біндіть на 127.0.0.1."
+        )
+
+
+def require_dashboard_password(host: str, settings: Settings) -> None:
+    """Fail-closed: публічний bind дашборду без пароля заборонено."""
+    bind = (host or settings.dashboard_host or "127.0.0.1").strip()
+    if bind in _LOCAL_API_HOSTS:
+        return
+    pwd_hash = (settings.dashboard_password_hash or "").strip()
+    if not pwd_hash:
+        raise RuntimeError(
+            f"Dashboard на {bind} без DASHBOARD_PASSWORD_HASH заборонено. "
+            "Задайте bcrypt-хеш (cli dashboard-hash) або біндіть на 127.0.0.1."
         )
 
 

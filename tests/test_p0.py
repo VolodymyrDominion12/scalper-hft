@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import dataclasses
 from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
+import pytest
 from scalper_hft.backtest.engine import run_backtest
 from scalper_hft.backtest.execution import CostModel
 from scalper_hft.live.account import PaperAccount
@@ -329,6 +331,33 @@ def test_require_safe_api_bind_custom_key_public_ok() -> None:
 
     settings = SimpleNamespace(api_secret_key="my-own-strong-key-32-bytes-minimum!!")
     require_safe_api_bind("0.0.0.0", settings)
+
+
+def test_require_dashboard_password_public_without_hash() -> None:
+    from scalper_hft.config import require_dashboard_password
+
+    settings = SimpleNamespace(dashboard_password_hash="", dashboard_host="127.0.0.1")
+    with pytest.raises(RuntimeError, match="DASHBOARD_PASSWORD_HASH"):
+        require_dashboard_password("0.0.0.0", settings)
+
+
+def test_require_dashboard_password_localhost_ok() -> None:
+    from scalper_hft.config import require_dashboard_password
+
+    settings = SimpleNamespace(dashboard_password_hash="", dashboard_host="127.0.0.1")
+    require_dashboard_password("127.0.0.1", settings)
+
+
+def test_api_cors_origins_no_wildcard_default() -> None:
+    from scalper_hft.config import get_settings, set_settings
+
+    orig = get_settings()
+    try:
+        set_settings(dataclasses.replace(orig, api_cors_origins=("http://127.0.0.1:8501",)))
+        settings = get_settings()
+        assert "*" not in settings.api_cors_origins
+    finally:
+        set_settings(orig)
 
 
 # ── control plane + тижневий ліміт + silent attrition у LiveTrader ──────────

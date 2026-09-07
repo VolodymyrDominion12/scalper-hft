@@ -236,12 +236,21 @@ def cmd_dashboard(args: argparse.Namespace) -> None:
     """Запуск Streamlit-дашборду тим самим Python, що й CLI (не Anaconda PATH)."""
     import subprocess
 
+    from scalper_hft.config import get_settings, require_dashboard_password
+
+    settings = get_settings()
+    bind = args.address or settings.dashboard_host or "127.0.0.1"
+    try:
+        require_dashboard_password(bind, settings)
+    except RuntimeError as exc:
+        fail(str(exc))
+
     script = Path(__file__).resolve().parent / "dashboard.py"
     try:
         import streamlit  # noqa: F401
     except ImportError:
         fail("Немає streamlit. Встановіть: uv pip install -e '.[dashboard]'")
-    cmd = [sys.executable, "-m", "streamlit", "run", str(script)]
+    cmd = [sys.executable, "-m", "streamlit", "run", str(script), "--server.address", bind]
     if args.port is not None:
         cmd.extend(["--server.port", str(args.port)])
     worker_proc = None

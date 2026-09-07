@@ -13,6 +13,7 @@ STRATEGY      ?= pairs_arb
 LEG1          ?= XRPUSDT
 LEG2          ?= BTCUSDT
 MINUTES       ?= 60
+JOBS          ?= 1
 
 # ==============================================================================
 # Допомога
@@ -139,6 +140,19 @@ report: ## Згенерувати повний markdown-звіт у docs/reports
 
 coint-scan: ## Сканування коінтеграції між основними символами
 	$(PYTHON) -m scalper_hft.cli coint-scan --symbols "BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT" --interval $(INTERVAL) --days $(DAYS)
+
+# ==============================================================================
+# Черга задач та воркери (Research Jobs)
+# ==============================================================================
+.PHONY: worker job-list job-prune
+worker: ## Запустити воркер дослідницьких задач (JOBS=1)
+	$(PYTHON) -m scalper_hft.cli job worker --jobs $(JOBS)
+
+job-list: ## Переглянути список задач у черзі
+	$(PYTHON) -m scalper_hft.cli job list
+
+job-prune: ## Очистити застарілі задачі та звільнити диск (вік >= 14 днів)
+	$(PYTHON) -m scalper_hft.cli job prune --days 14
 
 # ==============================================================================
 # Paper Trading

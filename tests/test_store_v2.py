@@ -448,3 +448,110 @@ def test_sync_engine_double_start_noop(tmp_path: Path) -> None:
     engine.start()  # другий виклик — без помилок
     assert engine.is_running
     engine.stop()
+
+
+def test_sync_engine_live_positions_kill_switch(tmp_path: Path) -> None:
+    """Live sync_positions з account → halt_if_drift при розходженні."""
+    from scalper_hft.live.account import PaperAccount
+    from scalper_hft.live.reconcile import KillSwitch
+
+    store = PaperStore(tmp_path / "s.sqlite")
+    account = PaperAccount(10_000.0)
+    account.open_position("BTCUSDT", "long", 0.1, 60_000.0, pd.Timestamp("2024-01-01"))
+    engine = SyncEngine(
+        store,
+        mode="live",
+        account=account,
+        scope={"BTCUSDT"},
+        dry_run=False,
+    )
+    mock_exchange = MagicMock()
+    mock_exchange.fetch_positions.return_value = []
+
+    with patch.object(engine, "_get_exchange", return_value=mock_exchange):
+        with pytest.raises(KillSwitch):
+            engine.sync_positions()
+
+
+def test_sync_engine_live_fills_logs_missing(tmp_path: Path) -> None:
+    """sync_fills записує біржові fills, яких немає локально."""
+    store = PaperStore(tmp_path / "s.sqlite")
+    engine = SyncEngine(store, mode="live", scope={"BTCUSDT"}, dry_run=False)
+    mock_exchange = MagicMock()
+    mock_exchange.fetch_my_trades.return_value = [
+        {
+            "id": "999001",
+            "symbol": "BTC/USDT:USDT",
+            "side": "buy",
+            "amount": 0.01,
+            "price": 50000.0,
+            "timestamp": 1_700_000_000_000,
+        }
+    ]
+    mock_exchange.load_markets.return_value = {"BTC/USDT:USDT": {}}
+
+    with patch.object(engine, "_get_exchange", return_value=mock_exchange):
+        engine.sync_fills()
+
+    orders = store.all_orders()
+    assert len(orders) == 1
+    assert orders.iloc[0]["status"] == "exchange_sync"
+    assert "999001" in str(orders.iloc[0]["reason"])
+
+
+def test_sync_engine_kill_switch_callback(tmp_path: Path) -> None:
+    """on_kill_switch отримує reason при drift (як у _run_loop)."""
+    from scalper_hft.live.account import PaperAccount
+    from scalper_hft.live.reconcile import KillSwitch
+
+    store = PaperStore(tmp_path / "s.sqlite")
+    account = PaperAccount(10_000.0)
+    account.open_position("ETHUSDT", "long", 1.0, 3000.0, pd.Timestamp("2024-01-01"))
+    fired: list[str] = []
+    engine = SyncEngine(
+        store,
+        mode="live",
+        account=account,
+        scope={"ETHUSDT"},
+        dry_run=False,
+        on_kill_switch=fired.append,
+    )
+    mock_exchange = MagicMock()
+    mock_exchange.fetch_positions.return_value = []
+
+    with patch.object(engine, "_get_exchange", return_value=mock_exchange):
+        try:
+            engine.sync_positions()
+        except KillSwitch as exc:
+            if engine._on_kill_switch is not None:
+                engine._on_kill_switch(str(exc))
+
+    assert fired and "ETHUSDT" in fired[0]
+
+
+def test_store_thread_safe_writes(tmp_path: Path) -> None:
+    """Паралельні записи в PaperStore не падають (WAL + lock)."""
+    import threading
+
+    store = PaperStore(tmp_path / "s.sqlite")
+
+    def writer(i: int) -> None:
+        for j in range(20):
+            store.log_order(
+                pd.Timestamp("2024-01-01"),
+                f"p{i}",
+                "BTCUSDT",
+                "buy",
+                0.01,
+                50000.0,
+                "test",
+                f"{i}-{j}",
+            )
+
+    threads = [threading.Thread(target=writer, args=(i,)) for i in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5.0)
+
+    assert len(store.all_orders()) == 80

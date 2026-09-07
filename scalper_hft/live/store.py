@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +32,8 @@ class PaperStore:
     def __init__(self, path: Path | str | None = None) -> None:
         self.path = Path(path) if path is not None else Path("results") / "paper_pairs.sqlite"
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.path, timeout=15.0)
+        self._lock = threading.RLock()
+        self._conn = sqlite3.connect(self.path, timeout=15.0, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._init()
         self._migrate()
@@ -170,13 +172,31 @@ class PaperStore:
         self._conn.commit()
 
     def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
 
     def __enter__(self) -> PaperStore:
         return self
 
     def __exit__(self, *_: Any) -> None:
         self.close()
+
+    def _write(self, sql: str, params: tuple[Any, ...] | list[Any] = ()) -> None:
+        with self._lock:
+            self._conn.execute(sql, params)
+            self._conn.commit()
+
+    def _fetchone(self, sql: str, params: tuple[Any, ...] | list[Any] = ()) -> sqlite3.Row | None:
+        with self._lock:
+            return self._conn.execute(sql, params).fetchone()
+
+    def _fetchall(self, sql: str, params: tuple[Any, ...] | list[Any] = ()) -> list[sqlite3.Row]:
+        with self._lock:
+            return self._conn.execute(sql, params).fetchall()
+
+    def _read_sql(self, sql: str, params: tuple[Any, ...] | list[Any] = ()) -> pd.DataFrame:
+        with self._lock:
+            return pd.read_sql_query(sql, self._conn, params=params)
 
     # ─── v1: equity / orders / trades / months ───────────────────────────────
 
@@ -190,11 +210,10 @@ class PaperStore:
         exchange: str = "binance",
         mode: str = "paper",
     ) -> None:
-        self._conn.execute(
+        self._write(
             "INSERT INTO equity (ts, pair, equity, cash, realized_pnl, exchange, mode) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (str(ts), pair, equity, cash, realized_pnl, exchange, mode),
         )
-        self._conn.commit()
 
     def log_order(
         self,
@@ -209,11 +228,10 @@ class PaperStore:
         exchange: str = "binance",
         mode: str = "paper",
     ) -> None:
-        self._conn.execute(
+        self._write(
             "INSERT INTO orders (ts, pair, symbol, side, size, price, status, reason, exchange, mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (str(ts), pair, symbol, side, size, price, status, reason, exchange, mode),
         )
-        self._conn.commit()
 
     def log_trade(
         self,
@@ -224,7 +242,7 @@ class PaperStore:
         mode: str = "paper",
     ) -> None:
         kind = str(trade.get("type", "trade"))
-        self._conn.execute(
+        self._write(
             "INSERT INTO trades (ts, pair, symbol, side, size, entry_price, exit_price, pnl, kind, exchange, mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 str(ts),
@@ -240,83 +258,70 @@ class PaperStore:
                 mode,
             ),
         )
-        self._conn.commit()
 
     def log_month(self, pair: str, month: str, pnl: float) -> None:
-        self._conn.execute(
+        self._write(
             "INSERT OR REPLACE INTO months (pair, month, pnl) VALUES (?, ?, ?)",
             (pair, month, pnl),
         )
-        self._conn.commit()
 
     def set_meta(self, key: str, value: str) -> None:
-        self._conn.execute("INSERT OR REPLACE INTO meta (k, v) VALUES (?, ?)", (key, value))
-        self._conn.commit()
+        self._write("INSERT OR REPLACE INTO meta (k, v) VALUES (?, ?)", (key, value))
 
     def get_meta(self, key: str, default: str = "") -> str:
-        row = self._conn.execute("SELECT v FROM meta WHERE k = ?", (key,)).fetchone()
+        row = self._fetchone("SELECT v FROM meta WHERE k = ?", (key,))
         return str(row["v"]) if row else default
 
     def recent_equity(self, limit: int = 500) -> pd.DataFrame:
-        return pd.read_sql_query(
+        return self._read_sql(
             "SELECT ts, pair, equity, cash, realized_pnl FROM equity ORDER BY id DESC LIMIT ?",
-            self._conn,
             params=(limit,),
         )
 
     def recent_orders(self, limit: int = 200) -> pd.DataFrame:
-        return pd.read_sql_query(
+        return self._read_sql(
             "SELECT ts, pair, symbol, side, size, price, status, reason FROM orders ORDER BY id DESC LIMIT ?",
-            self._conn,
             params=(limit,),
         )
 
     def all_equity(self) -> pd.DataFrame:
-        return pd.read_sql_query(
-            "SELECT ts, pair, equity, cash, realized_pnl FROM equity ORDER BY id",
-            self._conn,
-        )
+        return self._read_sql("SELECT ts, pair, equity, cash, realized_pnl FROM equity ORDER BY id")
 
     def all_orders(self) -> pd.DataFrame:
-        return pd.read_sql_query(
-            "SELECT ts, pair, symbol, side, size, price, status, reason FROM orders ORDER BY id",
-            self._conn,
-        )
+        return self._read_sql("SELECT ts, pair, symbol, side, size, price, status, reason FROM orders ORDER BY id")
 
     def all_trades(self) -> pd.DataFrame:
-        return pd.read_sql_query(
-            "SELECT ts, pair, symbol, side, size, entry_price, exit_price, pnl, kind FROM trades ORDER BY id",
-            self._conn,
+        return self._read_sql(
+            "SELECT ts, pair, symbol, side, size, entry_price, exit_price, pnl, kind FROM trades ORDER BY id"
         )
 
     def all_months(self) -> pd.DataFrame:
-        return pd.read_sql_query("SELECT pair, month, pnl FROM months ORDER BY month, pair", self._conn)
+        return self._read_sql("SELECT pair, month, pnl FROM months ORDER BY month, pair")
 
     def fill_stats(self, pair: str | None = None) -> dict[str, int]:
         if pair:
-            rows = self._conn.execute(
+            rows = self._fetchall(
                 "SELECT status, COUNT(*) AS n FROM orders WHERE pair = ? GROUP BY status",
                 (pair,),
-            ).fetchall()
+            )
         else:
-            rows = self._conn.execute("SELECT status, COUNT(*) AS n FROM orders GROUP BY status").fetchall()
+            rows = self._fetchall("SELECT status, COUNT(*) AS n FROM orders GROUP BY status")
         return {str(r["status"]): int(r["n"]) for r in rows}
 
     def save_runtime(self, payload: dict[str, Any], snapshot_id: str = "runtime") -> None:
         """Атомарно замінити runtime-знімок (рахунок + engine)."""
         body = json.dumps(payload, default=str)
         saved_at = str(pd.Timestamp.now(tz="UTC").tz_convert(None))
-        self._conn.execute(
+        self._write(
             "INSERT OR REPLACE INTO snapshots (id, payload, saved_at) VALUES (?, ?, ?)",
             (snapshot_id, body, saved_at),
         )
-        self._conn.commit()
 
     def load_runtime(self, snapshot_id: str = "runtime") -> dict[str, Any] | None:
-        row = self._conn.execute(
+        row = self._fetchone(
             "SELECT payload FROM snapshots WHERE id = ?",
             (snapshot_id,),
-        ).fetchone()
+        )
         if row is None:
             return None
         data = json.loads(str(row["payload"]))
@@ -335,34 +340,32 @@ class PaperStore:
         available: float,
     ) -> None:
         """Зберегти знімок балансу рахунку."""
-        self._conn.execute(
+        self._write(
             "INSERT INTO accounts (ts, exchange, mode, balance, unrealized_pnl, margin_used, available) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (str(ts), exchange, mode, balance, unrealized_pnl, margin_used, available),
         )
-        self._conn.commit()
 
     def latest_account(self, exchange: str = "binance", mode: str = "paper") -> dict[str, Any] | None:
         """Останній знімок балансу для біржі/режиму."""
-        row = self._conn.execute(
+        row = self._fetchone(
             "SELECT * FROM accounts WHERE exchange = ? AND mode = ? ORDER BY id DESC LIMIT 1",
             (exchange, mode),
-        ).fetchone()
+        )
         if row is None:
             return None
         return dict(row)
 
     def recent_accounts(self, exchange: str = "binance", mode: str = "paper", limit: int = 200) -> pd.DataFrame:
-        return pd.read_sql_query(
-            "SELECT ts, exchange, mode, balance, unrealized_pnl, margin_used, available FROM accounts WHERE exchange = ? AND mode = ? ORDER BY id DESC LIMIT ?",
-            self._conn,
+        return self._read_sql(
+            "SELECT ts, exchange, mode, balance, unrealized_pnl, margin_used, available "
+            "FROM accounts WHERE exchange = ? AND mode = ? ORDER BY id DESC LIMIT ?",
             params=(exchange, mode, limit),
         )
 
     def all_accounts(self) -> pd.DataFrame:
         """Усі знімки балансів по біржах і режимах."""
-        return pd.read_sql_query(
-            "SELECT ts, exchange, mode, balance, unrealized_pnl, margin_used, available FROM accounts ORDER BY id",
-            self._conn,
+        return self._read_sql(
+            "SELECT ts, exchange, mode, balance, unrealized_pnl, margin_used, available FROM accounts ORDER BY id"
         )
 
     # ─── v2: positions ────────────────────────────────────────────────────────
@@ -398,7 +401,7 @@ class PaperStore:
         else:
             ts_val = ts if ts is not None else pd.Timestamp.now(tz="UTC")
 
-        self._conn.execute(
+        self._write(
             "INSERT INTO positions (ts, exchange, symbol, side, size, entry_price, mark_price, unrealized_pnl, mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 str(ts_val),
@@ -412,7 +415,6 @@ class PaperStore:
                 str(mode),
             ),
         )
-        self._conn.commit()
 
     def open_positions(self, exchange: str | None = None, mode: str | None = None) -> pd.DataFrame:
         """Останній знімок позицій (по одному рядку на symbol, з найбільшим id)."""
@@ -437,7 +439,7 @@ class PaperStore:
                      AND p.symbol = latest.symbol AND p.mode = latest.mode
             WHERE p.size > 0
         """
-        return pd.read_sql_query(sql, self._conn, params=params)
+        return self._read_sql(sql, params=tuple(params))
 
     # ─── v2: bots ─────────────────────────────────────────────────────────────
 
@@ -455,41 +457,40 @@ class PaperStore:
         """Зареєструвати або оновити бота в реєстрі."""
         now = str(pd.Timestamp.now(tz="UTC").tz_convert(None))
         config_json = json.dumps(config or {}, default=str)
-        existing = self._conn.execute("SELECT bot_id FROM bots WHERE bot_id = ?", (bot_id,)).fetchone()
-        if existing:
-            self._conn.execute(
-                "UPDATE bots SET status = ?, last_heartbeat = ?, config_json = ? WHERE bot_id = ?",
-                (status, now, config_json, bot_id),
-            )
-        else:
-            self._conn.execute(
-                "INSERT INTO bots (bot_id, exchange, symbol, interval, strategy, mode, status, started_at, last_heartbeat, config_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (bot_id, exchange, symbol, interval, strategy, mode, status, now, now, config_json),
-            )
-        self._conn.commit()
+        with self._lock:
+            existing = self._conn.execute("SELECT bot_id FROM bots WHERE bot_id = ?", (bot_id,)).fetchone()
+            if existing:
+                self._conn.execute(
+                    "UPDATE bots SET status = ?, last_heartbeat = ?, config_json = ? WHERE bot_id = ?",
+                    (status, now, config_json, bot_id),
+                )
+            else:
+                self._conn.execute(
+                    "INSERT INTO bots (bot_id, exchange, symbol, interval, strategy, mode, status, started_at, last_heartbeat, config_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (bot_id, exchange, symbol, interval, strategy, mode, status, now, now, config_json),
+                )
+            self._conn.commit()
 
     def update_bot_heartbeat(self, bot_id: str, status: str = "running") -> None:
         """Оновити timestamp останнього heartbeat бота."""
         now = str(pd.Timestamp.now(tz="UTC").tz_convert(None))
-        self._conn.execute(
+        self._write(
             "UPDATE bots SET last_heartbeat = ?, status = ? WHERE bot_id = ?",
             (now, status, bot_id),
         )
-        self._conn.commit()
 
     def set_bot_status(self, bot_id: str, status: str) -> None:
         """Встановити статус бота (running/paused/stopped/error)."""
-        self._conn.execute("UPDATE bots SET status = ? WHERE bot_id = ?", (status, bot_id))
-        self._conn.commit()
+        self._write("UPDATE bots SET status = ? WHERE bot_id = ?", (status, bot_id))
 
     def all_bots(self) -> pd.DataFrame:
         """Всі зареєстровані боти."""
-        return pd.read_sql_query(
-            "SELECT bot_id, exchange, symbol, interval, strategy, mode, status, started_at, last_heartbeat FROM bots ORDER BY started_at DESC",
-            self._conn,
+        return self._read_sql(
+            "SELECT bot_id, exchange, symbol, interval, strategy, mode, status, started_at, last_heartbeat "
+            "FROM bots ORDER BY started_at DESC"
         )
 
     def schema_version(self) -> int:
         """Повернути поточну версію схеми."""
-        row = self._conn.execute("SELECT version FROM schema_version").fetchone()
+        row = self._fetchone("SELECT version FROM schema_version")
         return int(row[0]) if row else 1

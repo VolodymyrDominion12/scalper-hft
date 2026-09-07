@@ -86,6 +86,8 @@ delta-neutral `funding_arb` потребують двох ніг — у пер-�
 
 ## Швидкий старт
 
+> 📖 **Повний посібник з досліджень, запусків усіх команд та воркерів:** див. [docs/RESEARCH_GUIDE.md](docs/RESEARCH_GUIDE.md), а також інтерактивний ноутбук [notebooks/research.ipynb](notebooks/research.ipynb).
+
 ```bash
 # 1. ключі (лише для live; дані та бектести працюють без них)
 cp .env.example .env   # встав BINANCE_API_KEY / BINANCE_API_SECRET

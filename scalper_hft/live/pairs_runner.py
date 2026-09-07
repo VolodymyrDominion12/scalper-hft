@@ -26,7 +26,7 @@ from scalper_hft.config import get_settings
 from scalper_hft.data.client import ExchangeClient
 from scalper_hft.live.account import PaperAccount
 from scalper_hft.live.bar_clock import daemon_sleep_sec
-from scalper_hft.live.control import DEFAULT_CONTROL_PATH, ControlState, load_control
+from scalper_hft.live.control import DEFAULT_CONTROL_PATH, ControlState, load_control, save_control
 from scalper_hft.live.fills import both_or_neither, decide_fill
 from scalper_hft.live.reconcile import reconcile_exchange_state
 from scalper_hft.live.risk_gate import CooldownState, correlated_size_mult, decide_entry, open_pair_size_pcts
@@ -38,6 +38,34 @@ from scalper_hft.strategies.base import Strategy
 from scalper_hft.strategies.pairs_arb import PairsArb
 
 logger = logging.getLogger(__name__)
+
+
+def _sync_kill_switch(reason: str) -> None:
+    """Callback SyncEngine: зупинити торгівлю при drift позицій."""
+    logger.critical("SyncEngine KillSwitch: %s", reason)
+    save_control(pause=True, flatten=True)
+
+
+def _make_sync_engine(
+    store: PaperStore | None,
+    *,
+    account: PaperAccount,
+    scope: set[str],
+    dry_run: bool,
+    mode: str,
+) -> SyncEngine | None:
+    if store is None:
+        return None
+    return SyncEngine(
+        store=store,
+        exchange_id="binance",
+        mode=mode,
+        account=account,
+        scope=scope,
+        dry_run=dry_run,
+        on_kill_switch=_sync_kill_switch,
+    )
+
 
 # Пари за замовчуванням для paper-портфеля — перевалідація 2026-09-07
 # (поточний код, 3y 2023-09..2026-09, 1h maker, 49 WF-вікон; див.
@@ -890,7 +918,13 @@ class PairsPaperRunner:
             leg1, leg2, self.strategy, self.account, store=store, n_pairs=n_pairs, is_maker=is_maker
         )
         mode = "paper" if self._dry_run else "live"
-        self.sync_engine = SyncEngine(store=store, exchange_id="binance", mode=mode) if store else None
+        self.sync_engine = _make_sync_engine(
+            store,
+            account=self.account,
+            scope={self.leg1, self.leg2},
+            dry_run=self._dry_run,
+            mode=mode,
+        )
         self._last_ts: pd.Timestamp | None = None
         if restore and store is not None:
             payload = payload or store.load_runtime()
@@ -1066,7 +1100,14 @@ class PairsPortfolioRunner:
         self._last_week: tuple[int, int] | None = None
         self.enable_vol_target = False
         mode = "paper" if self._dry_run else "live"
-        self.sync_engine = SyncEngine(store=store, exchange_id="binance", mode=mode) if store else None
+        all_legs = {cfg["leg1"] for cfg in self.configs} | {cfg["leg2"] for cfg in self.configs}
+        self.sync_engine = _make_sync_engine(
+            store,
+            account=self.account,
+            scope=all_legs,
+            dry_run=self._dry_run,
+            mode=mode,
+        )
 
         if payload:
             for r in self.runners:

@@ -192,12 +192,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="scalper-hft API", version="1.0.0", lifespan=lifespan)
 
+_settings = get_settings()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=list(_settings.api_cors_origins),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 
