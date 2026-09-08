@@ -117,15 +117,15 @@ def _queue_fill_features(
     close = df["close"]
     vol_frac = (_atr_from_ohlc(df) / close.replace(0, np.nan)).fillna(0.0).to_numpy(dtype=float)
 
-    imbalance = np.zeros(n)
-    vpin = np.full(n, 0.5)
+    imbalance: np.ndarray = np.zeros(n)
+    vpin: np.ndarray = np.full(n, 0.5)
     if trades is not None and not trades.empty and "side" in trades.columns:
         from scalper_hft.features.indicators import _infer_resample, cvd_from_trades
 
         try:
             cvd = cvd_from_trades(trades, resample=_infer_resample(df))
-            br = cvd["buy_ratio"].reindex(df.index).ffill()
-            br = br.clip(0.0, 1.0).fillna(0.5).to_numpy(dtype=float)
+            br_series = cvd["buy_ratio"].reindex(df.index).ffill()
+            br: np.ndarray = br_series.clip(0.0, 1.0).fillna(0.5).to_numpy(dtype=float)
             imbalance = 2.0 * br - 1.0
             vpin = np.abs(imbalance)
         except (ValueError, KeyError):
