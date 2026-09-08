@@ -51,6 +51,14 @@ class CostModel:
     def round_trip_maker(self) -> float:
         return 2 * self.maker_cost_per_side()
 
+    def taker_roundtrip_cost(self) -> float:
+        """Аліас для round_trip_taker."""
+        return self.round_trip_taker()
+
+    def maker_roundtrip_cost(self) -> float:
+        """Аліас для round_trip_maker."""
+        return self.round_trip_maker()
+
     def cost(self, side_is_maker: bool) -> float:
         return self.maker_cost_per_side() if side_is_maker else self.taker_cost_per_side()
 

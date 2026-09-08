@@ -137,3 +137,89 @@ class TestEquity:
         ex.fetch_balance = _bal  # type: ignore[method-assign]
         c = _client(ex)
         assert c.fetch_usdt_equity() == pytest.approx(777.0)
+
+
+class TestRateLimitRetry:
+    def test_retries_on_rate_limit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """RateLimitExceeded → backoff і повтор; успіх на 3-й спробі."""
+        import ccxt
+
+        monkeypatch.setattr("time.sleep", lambda s: None)  # без реального сну
+        ex = FakeExchange()
+        fails = {"n": 0}
+
+        def _flaky(*a, **kw) -> dict[str, Any]:
+            fails["n"] += 1
+            if fails["n"] < 3:
+                raise ccxt.RateLimitExceeded("429")
+            return {"id": "ok", "status": "open"}
+
+        ex.create_order = _flaky  # type: ignore[method-assign]
+        c = _client(ex)
+        out = c.create_order("BTCUSDT", "limit", "buy", 0.1, 100.0, post_only=True)
+        assert out["id"] == "ok"
+        assert fails["n"] == 3
+
+    def test_raises_after_max_retries(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import ccxt
+
+        monkeypatch.setattr("time.sleep", lambda s: None)
+        ex = FakeExchange()
+
+        def _always_fail(*a, **kw) -> dict[str, Any]:
+            raise ccxt.RateLimitExceeded("418 ban")
+
+        ex.create_order = _always_fail  # type: ignore[method-assign]
+        c = _client(ex)
+        with pytest.raises(ccxt.RateLimitExceeded):
+            c.create_order("BTCUSDT", "market", "sell", 0.1)
+
+    def test_non_rate_limit_error_not_retried(self) -> None:
+        """Інші помилки (відхилення ордера) НЕ ретраються — не маскуємо."""
+        import ccxt
+
+        ex = FakeExchange()
+        calls = {"n": 0}
+
+        def _bad(*a, **kw) -> dict[str, Any]:
+            calls["n"] += 1
+            raise ccxt.InsufficientFunds("margin")
+
+        ex.create_order = _bad  # type: ignore[method-assign]
+        c = _client(ex)
+        with pytest.raises(ccxt.InsufficientFunds):
+            c.create_order("BTCUSDT", "market", "buy", 0.1)
+        assert calls["n"] == 1
+
+
+class TestClockSync:
+    def test_offset_computed(self) -> None:
+        import time as _time
+
+        ex = FakeExchange()
+        ex.fetch_time = lambda: int(_time.time() * 1000) + 200  # type: ignore[attr-defined]
+        c = _client(ex)
+        offset = c.server_time_offset_ms()
+        assert offset is not None and 100 < offset < 500
+
+    def test_assert_passes_on_small_drift(self) -> None:
+        import time as _time
+
+        ex = FakeExchange()
+        ex.fetch_time = lambda: int(_time.time() * 1000)  # type: ignore[attr-defined]
+        c = _client(ex)
+        assert abs(c.assert_clock_synced(max_drift_ms=1000.0)) < 1000.0
+
+    def test_assert_raises_on_big_drift(self) -> None:
+        import time as _time
+
+        ex = FakeExchange()
+        ex.fetch_time = lambda: int(_time.time() * 1000) + 60_000  # type: ignore[attr-defined]
+        c = _client(ex)
+        with pytest.raises(RuntimeError, match="Розсинхрон"):
+            c.assert_clock_synced(max_drift_ms=1000.0)
+
+    def test_no_fetch_time_graceful(self) -> None:
+        c = _client(FakeExchange())  # без fetch_time
+        assert c.server_time_offset_ms() is None
+        assert c.assert_clock_synced() == 0.0  # warn, не падає

@@ -37,7 +37,12 @@ class MockOrder:
 
 @dataclass
 class MockExchangeClient:
-    """Мок біржі: create_order/cancel_order/fetch_order/fetch_positions/fetch_klines."""
+    """Мок біржі: create_order/cancel_order/fetch_order/fetch_positions/fetch_klines.
+
+    Taker-ордери (post_only=False: IOC chase / market unwind) філяться одразу
+    за ціною кепа — це відповідає поведінці реальної біржі для ліквідних
+    інструментів. Прапорці fail_* моделюють збої.
+    """
 
     orders: dict[str, MockOrder] = field(default_factory=dict)  # oid -> MockOrder
     positions: list[dict] = field(default_factory=list)
@@ -47,10 +52,16 @@ class MockExchangeClient:
     _next_oid: int = 1
     created_calls: list[dict] = field(default_factory=list)
     canceled_oids: list[str] = field(default_factory=list)
+    auto_fill_taker: bool = True
+    fail_place_symbols: frozenset[str] = frozenset()
+    fail_market_orders: bool = False
+    fail_fetch_positions: bool = False
 
     def create_order(
         self, symbol, order_type, side, amount, price=None, params=None, post_only=False, client_order_id=None
     ):
+        if symbol in self.fail_place_symbols or (order_type == "market" and self.fail_market_orders):
+            raise RuntimeError(f"exchange down for {symbol}")
         oid = f"ex{self._next_oid}"
         self._next_oid += 1
         reduce_only = bool((params or {}).get("reduceOnly", False))
@@ -61,6 +72,12 @@ class MockExchangeClient:
         self.created_calls.append(
             {"symbol": symbol, "type": order_type, "side": side, "post_only": post_only, "reduce_only": reduce_only}
         )
+        # taker (chase IOC / unwind market) — миттєвий філ за ціною кепа/ринку
+        if not post_only and self.auto_fill_taker:
+            o.status = "filled"
+            o.filled_qty = o.size
+            o.avg_price = o.price or 99.0
+            return {"id": oid, "status": "filled", "filled": o.size, "average": o.avg_price}
         return {"id": oid, "status": "open", "filled": 0.0}
 
     def cancel_order(self, order_id, symbol):
@@ -83,6 +100,8 @@ class MockExchangeClient:
         return {"id": o.order_id, "status": o.status, "filled": o.filled_qty, "average": o.avg_price, "price": o.price}
 
     def fetch_positions(self, symbols=None):
+        if self.fail_fetch_positions:
+            raise RuntimeError("exchange unreachable")
         return list(self.positions)
 
     def fetch_klines(self, symbol, timeframe, since_ms, limit=1000):
@@ -192,7 +211,7 @@ def test_strict_both_partial_neither() -> None:
 
 
 def test_chase_mode_one_filled_other_chased() -> None:
-    """chase: одна нога maker-філ, інша → taker chase (якщо drift ≤ max)."""
+    """chase: одна нога maker-філ, інша → РЕАЛЬНИЙ taker IOC на біржі."""
     client = MockExchangeClient()
     adapter = _make_adapter(client, legging="chase")
     ts0 = pd.Timestamp("2025-01-01 00:00")
@@ -204,6 +223,66 @@ def test_chase_mode_one_filled_other_chased() -> None:
     action = adapter.on_bar(ts1, 101, 99, 100, 50.5, 49.5, 50.0, signal=1.0)
     assert "filled:chase" in action
     assert adapter.have == 1
+    # chase — це РЕАЛЬНИЙ taker-ордер на біржі (не локальне букування)
+    chase_calls = [c for c in client.created_calls if not c["post_only"]]
+    assert len(chase_calls) == 1 and chase_calls[0]["symbol"] == "BBB"
+    assert chase_calls[0]["type"] == "limit"  # IOC limit з ціновим кепом
+
+
+def test_chase_failure_unwinds_with_real_order() -> None:
+    """Chase не виконано біржею → реальний reduce-only unwind maker-ноги."""
+    client = MockExchangeClient(auto_fill_taker=False)  # chase не філиться
+    adapter = _make_adapter(client, legging="chase")
+    ts0 = pd.Timestamp("2025-01-01 00:00")
+    ts1 = pd.Timestamp("2025-01-01 01:00")
+    adapter._quote(ts0, want=1, p1=100.0, p2=50.0)
+    lo1, _ = adapter._live_pending
+    client.fill_order(lo1.exchange_order_id, 100.0)  # leg1 maker-філ
+    action = adapter.on_bar(ts1, 101, 99, 100, 50.5, 49.5, 50.0, signal=1.0)
+    assert "chase_failed" in action
+    assert adapter.have == 0
+    # unwind = реальний market reduce-only ордер на заповнену ногу
+    unwind_calls = [c for c in client.created_calls if c["type"] == "market"]
+    assert len(unwind_calls) == 1
+    assert unwind_calls[0]["symbol"] == "AAA" and unwind_calls[0]["reduce_only"]
+    # локальна позиція закрита (без одноногого ризику в обліку)
+    assert "AAA/BBB:AAA" not in adapter.account.positions
+
+
+def test_unwind_exchange_failure_killswitch() -> None:
+    """Якщо unwind не підтверджений біржею → KillSwitch (fail-closed):
+    на біржі лишилась однонога позиція, торгувати далі небезпечно."""
+    client = MockExchangeClient(auto_fill_taker=False, fail_market_orders=True)
+    adapter = _make_adapter(client, legging="chase")
+    ts0 = pd.Timestamp("2025-01-01 00:00")
+    ts1 = pd.Timestamp("2025-01-01 01:00")
+    adapter._quote(ts0, want=1, p1=100.0, p2=50.0)
+    lo1, _ = adapter._live_pending
+    client.fill_order(lo1.exchange_order_id, 100.0)  # leg1 maker-філ
+    with pytest.raises(KillSwitch, match="unwind"):
+        adapter.on_bar(ts1, 101, 99, 100, 50.5, 49.5, 50.0, signal=1.0)
+
+
+def test_quote_rollback_on_second_leg_failure() -> None:
+    """Друга нога не розмістилась → першу скасовано (rollback), входу немає."""
+    client = MockExchangeClient(fail_place_symbols=frozenset({"BBB"}))
+    adapter = _make_adapter(client)
+    action = adapter._quote(pd.Timestamp("2025-01-01"), want=1, p1=100.0, p2=50.0)
+    assert "quote_failed" in action
+    assert adapter._live_pending is None and adapter.pending is None
+    # єдиний розміщений ордер (AAA) скасовано — немає сирітських ордерів
+    assert len(client.canceled_oids) == 1
+    assert adapter.n_unfilled == 1
+
+
+def test_reconcile_runtime_fetch_error_killswitch() -> None:
+    """Помилка fetch_positions під час роботи → KillSwitch (fail-closed)."""
+    client = MockExchangeClient()
+    adapter = _make_adapter(client)
+    adapter.start_live()
+    client.fail_fetch_positions = True
+    with pytest.raises(KillSwitch, match="fetch_positions"):
+        adapter.reconcile_runtime()
 
 
 def test_cancel_pending_cancels_real_orders() -> None:

@@ -104,6 +104,10 @@ class PairsLiveAdapter(PairsEngine):
         """
         if not hasattr(self.client, "fetch_positions"):
             raise RuntimeError("Live адаптер потребує клієнт з fetch_positions")
+        # Clock sync: розсинхрон >1s ламає підписані запити (timestamp/recvWindow)
+        check_clock = getattr(self.client, "assert_clock_synced", None)
+        if callable(check_clock):
+            check_clock(max_drift_ms=1000.0)  # RuntimeError при розсинхроні
         raw_pos = self.client.fetch_positions()
         ex_pos = parse_exchange_positions(raw_pos)
         scope = {self.leg1, self.leg2}

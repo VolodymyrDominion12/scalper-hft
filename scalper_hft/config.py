@@ -13,9 +13,11 @@ from scalper_hft.symbols import CANONICAL_SYMBOLS
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(_PROJECT_ROOT / ".env")
 
-#: Дефолтний dev-ключ JWT для API. У будь-якому non-localhost оточенні
-#: МАЄ бути перевизначений через API_SECRET_KEY у .env.
-DEFAULT_API_SECRET_KEY = "scalper_dev_secret_key_minimum_32_bytes_long_jwt"
+#: Дефолтного JWT-секрета НЕМАЄ (раніше був захардкоджений dev-ключ у сорцях —
+#: відомий ключ = відкритий доступ до керування ботом з публічного інтерфейсу).
+#: Константа лишена для сумісності тестів/імпортам: її значення — порожній
+#: рядок, який require_safe_api_bind відхиляє на non-localhost бінді.
+DEFAULT_API_SECRET_KEY = ""
 
 _LOCAL_API_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
@@ -77,6 +79,11 @@ class Settings:
     max_open_positions: int = field(default_factory=lambda: _env_int("MAX_OPEN_POSITIONS", 1))
     daily_loss_limit: float = field(default_factory=lambda: _env_float("DAILY_LOSS_LIMIT", 0.03))
     weekly_loss_limit: float = field(default_factory=lambda: _env_float("WEEKLY_LOSS_LIMIT", 0.06))
+    # Peak-to-trough DD breaker: просідання від історичного піку equity →
+    # halt + авто-flatten (на відміну від daily/weekly — якір не зсувається)
+    max_drawdown_pct: float = field(default_factory=lambda: _env_float("MAX_DRAWDOWN_PCT", 0.10))
+    # Жорсткий ліміт плеча: сумарний ноціонал позицій ≤ equity × MAX_LEVERAGE
+    max_leverage: float = field(default_factory=lambda: _env_float("MAX_LEVERAGE", 3.0))
     max_consecutive_losses: int = field(default_factory=lambda: _env_int("MAX_CONSECUTIVE_LOSSES", 3))
     cooldown_losses: int = field(default_factory=lambda: _env_int("COOLDOWN_LOSSES", 2))
     cooldown_hours: float = field(default_factory=lambda: _env_float("COOLDOWN_HOURS", 12.0))
@@ -128,7 +135,7 @@ class Settings:
     dashboard_host: str = field(default_factory=lambda: os.getenv("DASHBOARD_HOST", "127.0.0.1"))
 
     # API
-    api_host: str = field(default_factory=lambda: os.getenv("API_HOST", "0.0.0.0"))
+    api_host: str = field(default_factory=lambda: os.getenv("API_HOST", "127.0.0.1"))
     api_port: int = field(default_factory=lambda: _env_int("API_PORT", 8000))
     api_secret_key: str = field(default_factory=lambda: os.getenv("API_SECRET_KEY", DEFAULT_API_SECRET_KEY))
     api_cors_origins: tuple[str, ...] = field(
@@ -186,15 +193,18 @@ def require_live_credentials(settings: Settings) -> None:
 
 
 def require_safe_api_bind(host: str, settings: Settings) -> None:
-    """Fail-closed: дефолтний JWT-секрет дозволений лише на localhost.
+    """Fail-closed: слабкий JWT-секрет дозволений лише на localhost.
 
-    API з відомим dev-ключем на публічному інтерфейсі = відкритий доступ
-    до керування ботом. У повідомленні немає значення ключа.
+    Відхиляє на non-localhost бінді: порожній/дефолтний секрет, або коротший
+    за 32 символи (JWT HS256 мінімум). У повідомленні немає значення ключа.
     """
-    if host not in _LOCAL_API_HOSTS and settings.api_secret_key == DEFAULT_API_SECRET_KEY:
+    if host in _LOCAL_API_HOSTS:
+        return
+    key = settings.api_secret_key or ""
+    if key == DEFAULT_API_SECRET_KEY or len(key) < 32:
         raise RuntimeError(
-            f"API на {host} з дефолтним API_SECRET_KEY заборонено. "
-            "Задайте власний API_SECRET_KEY у .env або біндіть на 127.0.0.1."
+            f"API на {host} з порожнім/слабким API_SECRET_KEY заборонено. "
+            "Задайте власний ключ (≥32 символи) у .env або біндіть на 127.0.0.1."
         )
 
 

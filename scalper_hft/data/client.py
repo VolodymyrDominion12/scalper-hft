@@ -11,6 +11,7 @@ Live-стріми (WebSocket) винесені в scalper_hft.live — тут л
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import ccxt
@@ -149,15 +150,80 @@ class ExchangeClient:
         params: dict[str, Any] | None = None,
         post_only: bool = False,
         client_order_id: str | None = None,
+        max_retries: int = 3,
     ) -> dict[str, Any]:
         """Створення ордера. post_only=True — лімітний maker-ордер (Binance:
-        відхиляється, якщо перетнув би спред) — для збору maker-комісій."""
+        відхиляється, якщо перетнув би спред) — для збору maker-комісій.
+
+        Rate-limit стійкість: ccxt.RateLimitExceeded (HTTP 418/429, код -1003)
+        → експоненційний backoff (0.5s, 1s, 2s). Інші помилки — одразу вгору
+        (не маскуємо реальні відхилення ордера).
+        """
         params = dict(params or {})
         if post_only:
             params["postOnly"] = True
         if client_order_id:
             params["newClientOrderId"] = client_order_id
-        return self.exchange.create_order(symbol, order_type, side, amount, price, params)
+        delay = 0.5
+        for attempt in range(max_retries):
+            try:
+                return self.exchange.create_order(symbol, order_type, side, amount, price, params)
+            except ccxt.RateLimitExceeded:
+                if attempt == max_retries - 1:
+                    raise
+                logger.warning(
+                    "Rate limit на create_order %s (спроба %d/%d) — backoff %.1fs",
+                    symbol,
+                    attempt + 1,
+                    max_retries,
+                    delay,
+                )
+                time.sleep(delay)
+                delay *= 2.0
+        raise RuntimeError("unreachable")  # для type-checker
+
+    # ── Clock sync (live: timestamp-ордери потребують синхронного часу) ───────
+    def fetch_server_time_ms(self) -> int | None:
+        """Серверний час біржі (ms) або None, якщо біржа не підтримує."""
+        fetch_time = getattr(self.exchange, "fetch_time", None)
+        if not callable(fetch_time):
+            return None
+        try:
+            return int(fetch_time())
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("fetch_time: %s", exc)
+            return None
+
+    def server_time_offset_ms(self) -> float | None:
+        """Оцінка (server − local) з компенсацією половини RTT. None — н/д."""
+        fetch_time = getattr(self.exchange, "fetch_time", None)
+        if not callable(fetch_time):
+            return None
+        t0 = time.time() * 1000.0
+        try:
+            server = float(fetch_time())
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("fetch_time: %s", exc)
+            return None
+        t1 = time.time() * 1000.0
+        local_mid = t0 + (t1 - t0) / 2.0
+        return server - local_mid
+
+    def assert_clock_synced(self, max_drift_ms: float = 1000.0) -> float:
+        """Fail-closed для live: |offset| > max_drift_ms → RuntimeError.
+
+        Розсинхрон часу ламає timestamp/recvWindow підписи запитів і логіку
+        барових меж. Повертає виміряний offset (ms)."""
+        offset = self.server_time_offset_ms()
+        if offset is None:
+            logger.warning("Біржа не підтримує fetch_time — clock sync не перевірено")
+            return 0.0
+        if abs(offset) > max_drift_ms:
+            raise RuntimeError(
+                f"Розсинхрон годинника з біржею: {offset:+.0f} ms > ±{max_drift_ms:.0f} ms. "
+                "Увімкніть NTP (chrony/systemd-timesyncd) на хості."
+            )
+        return offset
 
     def cancel_order(self, order_id: str, symbol: str) -> dict[str, Any]:
         return self.exchange.cancel_order(order_id, symbol)

@@ -12,7 +12,14 @@ import pandas as pd
 from scalper_hft.config import get_settings
 from scalper_hft.live.account import PaperAccount
 from scalper_hft.live.fills import both_or_neither, decide_fill
-from scalper_hft.live.risk_gate import CooldownState, correlated_size_mult, decide_entry, open_pair_size_pcts
+from scalper_hft.live.risk_gate import (
+    CooldownState,
+    DrawdownBreaker,
+    correlated_size_mult,
+    decide_entry,
+    leverage_ok,
+    open_pair_size_pcts,
+)
 from scalper_hft.live.store import PaperStore
 from scalper_hft.live.ws_user_stream import OrderTradeEvent
 from scalper_hft.strategies.base import Strategy
@@ -148,6 +155,8 @@ class PairsEngine:
         self.max_losing_months = settings.max_losing_months
         self.daily_loss_limit = settings.daily_loss_limit
         self.weekly_loss_limit = settings.weekly_loss_limit
+        self.max_leverage = settings.max_leverage
+        self.dd_breaker = DrawdownBreaker(max_dd_pct=settings.max_drawdown_pct, high_water=account.equity)
         self.cooldown_losses = settings.cooldown_losses
         self.max_consecutive_losses = settings.max_consecutive_losses
         self.cooldown_hours = settings.cooldown_hours
@@ -199,6 +208,8 @@ class PairsEngine:
         self._month_start_eq = equity
 
     def _can_open(self, ts: pd.Timestamp | None = None) -> tuple[bool, str]:
+        if self.dd_breaker.triggered:
+            return False, "DD-breaker (peak-to-trough)"
         if self.portfolio_block_entries:
             return False, "портфельний ліміт збитків"
         if self.control_block_entries:
@@ -436,6 +447,12 @@ class PairsEngine:
             size_pct *= max(0.0, min(size_mult, 1.0))
             if size_pct <= 0:
                 return "blocked:корельований ноціонал"
+            # Жорсткий ліміт плеча: сумарний ноціонал (існуючі позиції за
+            # entry_price як проксі марки + нова пара) ≤ equity × max_leverage.
+            cur_notional = sum(p.size * p.entry_price for p in self.account.positions.values())
+            add_notional = 2.0 * size_pct * equity
+            if not leverage_ok(cur_notional, add_notional, equity, self.max_leverage):
+                return "blocked:leverage cap"
         if want == 0:
             pos1 = self.account.positions.get(self._k(self.leg1))
             pos2 = self.account.positions.get(self._k(self.leg2))
@@ -551,7 +568,17 @@ class PairsEngine:
             self.is_journal.apply_next_bar_markout(self.leg1, mid1)
             self.is_journal.apply_next_bar_markout(self.leg2, mid2)
         parts.append(self._resolve_pending(ts, high1, low1, high2, low2))
-        if self.pending is None:
+        # Peak-to-trough DD breaker: halt + АВТО-flatten відкритих ніг
+        # (daily/weekly ліміти лише блокують входи; DD-breaker ще й закриває).
+        if self.dd_breaker.check(self.account.equity_at(marks)):
+            if self.pending is not None:
+                self.cancel_pending(reason="dd_breaker")
+                parts.append("dd_breaker:cancel_pending")
+            elif self.have != 0:
+                parts.append("dd_breaker:flatten " + self._quote(ts, 0, close1, close2))
+            else:
+                parts.append("dd_breaker:halt")
+        elif self.pending is None:
             # Дробовий сигнал (regime_scale): напрямок = sign, butціонал ∝ |signal|.
             # Для цілих {-1,0,1} size_mult=1.0 — без зміни поведінки.
             sig_f = float(signal)

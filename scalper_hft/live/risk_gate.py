@@ -71,6 +71,47 @@ def decide_entry(
     return EntryDecision("allow", 1.0, "ok", cooldown)
 
 
+@dataclass(slots=True)
+class DrawdownBreaker:
+    """Peak-to-trough circuit breaker (Narang: drawdown control).
+
+    На відміну від daily/weekly лімітів (якір = старт дня/тижня), тут якір —
+    ІСТОРИЧНИЙ ПІК equity: просідання від піку > max_dd_pct → halt + flatten.
+    Спрацьовування липке (triggered) до явного reset() — не "відлікується"
+    відскоком equity.
+    """
+
+    max_dd_pct: float
+    high_water: float = 0.0
+    triggered: bool = False
+
+    def check(self, equity: float) -> bool:
+        """Оновити пік і повернути True, якщо breaker спрацьований."""
+        if self.triggered:
+            return True
+        self.high_water = max(self.high_water, float(equity))
+        if self.high_water > 0 and equity <= self.high_water * (1.0 - self.max_dd_pct):
+            self.triggered = True
+        return self.triggered
+
+    def reset(self, equity: float) -> None:
+        """Ручне зняття halt (оператор): новий якір = поточний equity."""
+        self.triggered = False
+        self.high_water = float(equity)
+
+
+def leverage_ok(
+    current_notional: float,
+    add_notional: float,
+    equity: float,
+    max_leverage: float,
+) -> bool:
+    """Чи проходить сумарний ноціонал ліміт плеча: (cur + add) ≤ equity × max_leverage."""
+    if equity <= 0 or max_leverage <= 0:
+        return False
+    return (float(current_notional) + float(add_notional)) <= equity * max_leverage
+
+
 def pair_legs(pid: str) -> frozenset[str]:
     clean_pid = pid.rsplit(":", 1)[0] if ":" in pid else pid
     return frozenset(part for part in clean_pid.split("/") if part)

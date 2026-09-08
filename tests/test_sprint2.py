@@ -238,6 +238,14 @@ class TestCostModelSprint2:
         )
         assert scaled > base
 
+    def test_roundtrip_aliases(self):
+        from scalper_hft.backtest.execution import CostModel
+
+        c = CostModel(maker_fee=0.0002, taker_fee=0.0005, slippage_frac=0.0002)
+        assert c.taker_roundtrip_cost() == c.round_trip_taker()
+        assert c.maker_roundtrip_cost() == c.round_trip_maker()
+
+
     def test_estimate_impact_k(self):
         from scalper_hft.backtest.execution import estimate_impact_k_from_bars
 

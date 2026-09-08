@@ -132,8 +132,18 @@ class LiveTrader:
             interval=self.interval,
             maker_fill_wait_bars=int(getattr(self.settings, "maker_fill_wait_bars", 1)),
         )
-        # Ідемпотентність submit: намір → coid, що пережив таймаут (retry з тим самим id)
-        self._intent_coids: dict[str, str] = {}
+        # Ідемпотентність submit: намір → coid, що пережив таймаут (retry з тим
+        # самим id). Персистентно (IntentStore, JSON) — переживає і рестарт
+        # процесу, інакше retry після краху розмістив би дубль ордера.
+        from scalper_hft.live.intent_store import IntentStore
+
+        self._intent_store = IntentStore()
+        # Персистентний намір→coid (IntentStore, JSON): retry з тим самим id
+        # переживає і таймаут, і рестарт процесу (інакше — дубль ордера).
+        from scalper_hft.live.intent_store import IntentStore
+
+        self._intent_store = IntentStore()
+        self._intent_coids: dict[str, str] = {}  # гарячий кеш; істина — store  # гарячий кеш; джерело істини — store
         self._last_market_fill_price: float | None = None
         # M4: live-базис equity з біржі (замість фіктивного депозиту)
         self._live_equity_seeded = False
@@ -502,7 +512,7 @@ class LiveTrader:
         # замість розміщення дубля. Персистентність між рестартами процесу
         # забезпечує reconcile з біржею (KillSwitch при розбіжності).
         intent = f"{self.symbol}:{side}:{kind}:{int(reduce_only)}"
-        coid = self._intent_coids.get(intent) or next_client_order_id("sh")
+        coid = self._intent_coids.get(intent) or self._intent_store.get(intent) or next_client_order_id("sh")
         try:
             if self.settings.maker_execution:
                 resp = self.client.create_order(
@@ -516,6 +526,7 @@ class LiveTrader:
                     client_order_id=coid,
                 )
                 self._intent_coids.pop(intent, None)
+                self._intent_store.pop(intent)
                 oid = str((resp or {}).get("id") or coid)
                 self._pending.register(
                     coid,
@@ -535,6 +546,7 @@ class LiveTrader:
                 return True, "pending"
             resp = self.client.create_order(self.symbol, "market", side, size, params=params, client_order_id=coid)
             self._intent_coids.pop(intent, None)
+            self._intent_store.pop(intent)
             fill_px = float((resp or {}).get("average") or (resp or {}).get("price") or price)
             self._last_market_fill_price = fill_px
             return True, "filled"
@@ -553,6 +565,7 @@ class LiveTrader:
                 if status is not None:
                     return True, status
             self._intent_coids[intent] = coid  # наступний retry — з тим самим id
+            self._intent_store.put(intent, coid)  # переживає рестарт процесу
             logger.error(
                 "Ордер відхилено (стан рахунку не змінено): %s %s %s reduce_only=%s err=%s",
                 side,
@@ -609,9 +622,11 @@ class LiveTrader:
                 ),
             )
             self._intent_coids.pop(intent, None)
+            self._intent_store.pop(intent)
             logger.warning("Відновлено існуючий ордер %s замість дубля (id=%s)", coid, oid)
             return "pending"
         self._intent_coids.pop(intent, None)
+        self._intent_store.pop(intent)
         logger.warning("Дубль %s не серед відкритих (заповнений/скасований) — звірка підхопить", coid)
         return None
 
