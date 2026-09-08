@@ -418,7 +418,7 @@ paper без PASS.
 - [x] H6: `paper-audit` показує IS vs CostModel; fees у loop не пливуть
 - [x] H7: третя stale-спроба → `failed`
 - [x] H8: REGISTRY ⊂ STRATEGY_BOOK
-- [ ] `uv run pytest tests/ -q` зелений після кожної кодової фази
+- [x] `uv run pytest tests/ -q` зелений після кожної кодової фази
 - [x] Немає `DRY_RUN=false` у юнітах; немає live CLI
 - [x] Kalman/chase не ввімкнені в `deploy/scalper-paper-pairs.service`
 
