@@ -167,13 +167,27 @@ class TestMLStrategy:
         assert signals.abs().max() <= 1.0 + 1e-9
 
     def test_signals_not_all_zero(self):
-        """Стратегія має генерувати хоч якісь сигнали на достатньому датасеті."""
+        """Legacy-режим (без мета-фільтра) має генерувати хоч якісь сигнали
+        на достатньому датасеті."""
         from scalper_hft.strategies import get_strategy
 
         df = _make_df(800)
-        strat = get_strategy("ml_strategy", train_bars=50, test_bars=20, holding_bars=8)
+        strat = get_strategy(
+            "ml_strategy", train_bars=50, test_bars=20, holding_bars=8, meta_filter=False, prob_size=False
+        )
         signals = strat.generate_signals(df)
         assert (signals != 0).sum() > 0, "Всі сигнали нульові"
+
+    def test_meta_filter_conservative_on_noise(self):
+        """Мета-лейблінг (default) на чистому шумі відмовляється торгувати:
+        p_meta < 0.5 → size 0 — це фічa (не торгуємо без edge), не баг."""
+        from scalper_hft.strategies import get_strategy
+
+        df = _make_df(800)  # випадковий блукання без edge
+        strat = get_strategy("ml_strategy", train_bars=50, test_bars=20, holding_bars=8)
+        signals = strat.generate_signals(df)
+        assert len(signals) == len(df)
+        assert signals.abs().max() <= 1.0 + 1e-9
 
     def test_oos_signals_only_after_train(self):
         """Сигнали мають з'являтися лише після train-вікна (без lookahead на train-барах)."""

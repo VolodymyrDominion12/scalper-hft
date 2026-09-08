@@ -19,9 +19,6 @@ from scalper_hft.data.exchange_registry import ExchangeRegistry
 
 logger = logging.getLogger(__name__)
 
-# Обмеження ваги Binance: 2400 запитів/хв, не дратуємо — спимо між батчами
-_RATE_LIMIT_SLEEP = 0.12
-
 
 class ExchangeClient:
     """Тонка обгортка над ccxt для підтримуваних бірж."""
@@ -135,7 +132,9 @@ class ExchangeClient:
         """Історія ставок фандінгу."""
         return self.exchange.fetch_funding_rate_history(symbol, since=since_ms, limit=limit)
 
-    def fetch_open_interest_history(self, symbol: str, timeframe: str, since_ms: int, limit: int = 500) -> list[dict[str, Any]]:
+    def fetch_open_interest_history(
+        self, symbol: str, timeframe: str, since_ms: int, limit: int = 500
+    ) -> list[dict[str, Any]]:
         """Історія Open Interest (ccxt)."""
         return self.exchange.fetch_open_interest_history(symbol, timeframe, since=since_ms, limit=limit)
 

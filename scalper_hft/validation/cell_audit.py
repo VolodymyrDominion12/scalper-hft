@@ -277,8 +277,10 @@ def audit_cell(
     вердикту комірки, напр. CLI `overfit`).
     strategy_params: параметри конструктора стратегії (напр. use_kalman).
     """
-    from scalper_hft.backtest.engine import run_backtest
     from scalper_hft.backtest.execution import CostModel
+
+    # Роутер: market_maker аудитується подієвим рушієм, не zero-signal вектором
+    from scalper_hft.backtest.router import run_strategy_backtest
     from scalper_hft.config import get_settings
     from scalper_hft.data.access import ensure_klines
     from scalper_hft.data.downloader import download_agg_trades, download_funding
@@ -354,7 +356,7 @@ def audit_cell(
             except Exception as exc:  # noqa: BLE001
                 sens_error = str(exc)[:120]
 
-        res_full = run_backtest(
+        res_full = run_strategy_backtest(
             df,
             strategy,
             cost=cost,

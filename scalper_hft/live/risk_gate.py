@@ -56,6 +56,7 @@ def decide_entry(
     # Макроекономічний фільтр (блокує нові позиції)
     if calendar_df is not None and not calendar_df.empty:
         from scalper_hft.data.economic_calendar import is_news_time
+
         if is_news_time(now, calendar_df, window_before_mins=news_window_mins, window_after_mins=news_window_mins):
             return EntryDecision("reject", 0.0, "high_impact_news", cooldown)
 

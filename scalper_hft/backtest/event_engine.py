@@ -50,6 +50,21 @@ class EventBacktestResult:
         return self.metrics.summary()
 
 
+def _bvc_vpin(df: pd.DataFrame, window: int = 50) -> pd.Series:
+    """VPIN-проксі з барів (Bulk Volume Classification, AFML Ch.19).
+
+    Без тікового потоку: signed volume бару ≈ volume × (2·pos − 1), де
+    pos = (close − low) / (high − low) — позиція close в діапазоні бару.
+    VPIN = |Σ signed| / Σ volume за ковзне вікно. Каузально (лише бари ≤ t).
+    """
+    rng = (df["high"] - df["low"]).replace(0, np.nan)
+    pos = ((df["close"] - df["low"]) / rng).clip(0.0, 1.0).fillna(0.5)
+    signed = df["volume"] * (2.0 * pos - 1.0)
+    num = signed.rolling(window, min_periods=max(5, window // 5)).sum().abs()
+    den = df["volume"].rolling(window, min_periods=max(5, window // 5)).sum()
+    return (num / den.replace(0, np.nan)).fillna(0.5)
+
+
 def run_event_backtest(
     df: pd.DataFrame,
     strategy: Strategy,
@@ -67,6 +82,11 @@ def run_event_backtest(
     spread_frac: РЕАЛЬНИЙ відносний спред (ask−bid)/mid. За замовчуванням
         0.0002 (2 bps — типово для BTCUSDT перп). НЕ використовувати
         діапазон бару як проксі спреду — це завищує прибуток.
+
+    Якщо стратегія реалізує `compute_quotes` (PassiveMarketMaker), котирування
+    рахуються через неї: Avellaneda–Stoikov reservation price (інвентарний
+    skew) + VPIN-щит (BVC-проксі з барів), на барі i використовуються лише
+    дані бару i−1 (без lookahead). Інакше — статичний mid ± half-spread.
     """
     cost = cost or CostModel()
     close = df["close"]
@@ -77,9 +97,15 @@ def run_event_backtest(
     if not np.isfinite(avg_spread_frac) or avg_spread_frac <= 0:
         avg_spread_frac = 0.0002
 
-    half = close * avg_spread_frac * spread_offset_mult / 2.0
-    bid_q = close - half
-    ask_q = close + half
+    use_strategy_quotes = hasattr(strategy, "compute_quotes")
+    if use_strategy_quotes:
+        # барова волатильність (частка ціни) та VPIN-проксі — каузально
+        vol_series = close.pct_change().rolling(20, min_periods=10).std().bfill().fillna(0.0)
+        vpin_series = _bvc_vpin(df) if bool(strategy.get("use_vpin_shield", False)) else None
+    else:
+        half = close * avg_spread_frac * spread_offset_mult / 2.0
+        bid_q = close - half
+        ask_q = close + half
 
     # Одиниці: inventory у "філл-одиницях"; ноціонал однієї одиниці фіксований
     notional_per_unit = quote_size_pct * initial_capital
@@ -112,7 +138,20 @@ def run_event_backtest(
 
     for i in range(1, len(df)):
         ts = df.index[i]
-        prev_bid, prev_ask = bid_q.iloc[i - 1], ask_q.iloc[i - 1]
+        if use_strategy_quotes:
+            # Котирування через стратегію (A–S reservation price + щити),
+            # лише з даних бару i−1; base_spread — half-spread калібрований.
+            prev_bid, prev_ask, active = strategy.compute_quotes(
+                float(close.iloc[i - 1]),
+                inventory,
+                float(vol_series.iloc[i - 1]),
+                vpin=float(vpin_series.iloc[i - 1]) if vpin_series is not None else None,
+                base_spread=avg_spread_frac / 2.0,
+            )
+            if not active:
+                prev_bid, prev_ask = 0.0, float("inf")
+        else:
+            prev_bid, prev_ask = bid_q.iloc[i - 1], ask_q.iloc[i - 1]
 
         fills: list[float] = []
         # наш bid заповнений: бар торкнувся/перетнув наш bid. Філ — РІВНО за наш

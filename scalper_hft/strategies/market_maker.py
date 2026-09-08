@@ -123,7 +123,7 @@ class PassiveMarketMaker(Strategy):
         # Захист від токсичного потоку (VPIN circuit breaker)
         if use_vpin and vpin is not None and vpin > vpin_thresh:
             return 0.0, float("inf"), False
-            
+
         # Захист від каскаду ліквідацій (зупиняємо маркетмейкінг на сильних рухах)
         if use_liq and liquidation_cascade > liq_thresh:
             return 0.0, float("inf"), False

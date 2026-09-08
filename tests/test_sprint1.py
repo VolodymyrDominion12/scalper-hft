@@ -130,12 +130,20 @@ class TestWalkForwardProbabilities:
         assert p_meta.std() > 1e-3, "p_meta дегенеративний (~0.5 всюди) — мета нічого не вчить"
 
     def test_confidence_filter_works(self):
-        """Без мета: з confidence_thr сигнали лишаються {-1, 0, +1}, але фільтр не падає."""
+        """Без мета і без sizing: з confidence_thr сигнали лишаються {-1, 0, +1}."""
         pytest.importorskip("lightgbm")
         from scalper_hft.strategies import get_strategy
 
         df = _make_df(800)
-        strat = get_strategy("ml_strategy", train_bars=150, test_bars=60, holding_bars=8, confidence_thr=0.55)
+        strat = get_strategy(
+            "ml_strategy",
+            train_bars=150,
+            test_bars=60,
+            holding_bars=8,
+            confidence_thr=0.55,
+            prob_size=False,
+            meta_filter=False,
+        )
         signals = strat.generate_signals(df)
         assert set(signals.unique()).issubset({-1.0, 0.0, 1.0})
 

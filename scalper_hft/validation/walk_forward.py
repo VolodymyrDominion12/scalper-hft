@@ -18,8 +18,11 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
-from scalper_hft.backtest.engine import run_backtest
 from scalper_hft.backtest.execution import CostModel
+
+# Роутер (а не run_backtest напряму): market_maker має аудитуватися на
+# подієвому рушії, інакше WF оцінює його як нуль-сигнальний векторний прогін.
+from scalper_hft.backtest.router import run_strategy_backtest
 from scalper_hft.strategies.base import Strategy
 
 if TYPE_CHECKING:
@@ -128,26 +131,26 @@ def run_walk_forward(
         funding_tr = _slice_by_time(funding, tr.index[0], tr.index[-1]) if funding is not None else None
         funding_te = _slice_by_time(funding, te.index[0], te.index[-1]) if funding is not None else None
 
-        res_is = run_backtest(
+        res_is = run_strategy_backtest(
             tr,
             strategy,
-            initial_capital,
-            cost,
-            position_pct,
-            trades_tr,
-            funding_tr,
+            initial_capital=initial_capital,
+            cost=cost,
+            position_pct=position_pct,
+            trades=trades_tr,
+            funding=funding_tr,
             is_maker=is_maker,
             overlay=overlay,
             interval=interval,
         )
-        res_oos = run_backtest(
+        res_oos = run_strategy_backtest(
             te,
             strategy,
-            initial_capital,
-            cost,
-            position_pct,
-            trades_te,
-            funding_te,
+            initial_capital=initial_capital,
+            cost=cost,
+            position_pct=position_pct,
+            trades=trades_te,
+            funding=funding_te,
             is_maker=is_maker,
             overlay=overlay,
             interval=interval,

@@ -966,6 +966,7 @@ def download_liquidations(
     days: int,
 ) -> pd.DataFrame:
     from datetime import date, timedelta
+
     from scalper_hft.data.binance_vision import download_liquidations_vision
 
     start = date.today() - timedelta(days=days)

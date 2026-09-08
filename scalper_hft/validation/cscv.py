@@ -66,7 +66,8 @@ def variant_returns(
 ) -> np.ndarray:
     """Матриця прибутковостей (n_variants × n_bars) для випадкових комбінацій
     параметрів з param_space стратегії (для CSCV/PBO)."""
-    from scalper_hft.backtest.engine import run_backtest
+    # Роутер: market_maker оцінюється подієвим рушієм, не zero-signal вектором
+    from scalper_hft.backtest.router import run_strategy_backtest
 
     rng = np.random.default_rng(seed)
     space = strategy.param_space
@@ -82,7 +83,7 @@ def variant_returns(
             else:
                 params[pname] = float(rng.uniform(lo, hi))
         try:
-            res = run_backtest(
+            res = run_strategy_backtest(
                 df,
                 type(strategy)(**params),
                 cost=cost,

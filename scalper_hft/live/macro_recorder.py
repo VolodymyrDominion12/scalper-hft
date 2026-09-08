@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from scalper_hft.live.ws_urls import force_order_url
 from scalper_hft.data.client import ExchangeClient
+from scalper_hft.live.ws_urls import force_order_url
 
 logger = logging.getLogger(__name__)
 
@@ -73,12 +73,12 @@ async def _record_liquidations(symbol: str, out_path: Path, duration_sec: int, f
                         except websockets.ConnectionClosed:
                             logger.warning("Стрім ліквідацій закрито — перепідключення")
                             break
-                        
+
                         data = json.loads(msg)
                         o_data = data.get("o", {})
                         if not o_data:
                             continue
-                            
+
                         # E - event time
                         try:
                             ts = pd.Timestamp(int(data.get("E", 0)), unit="ms", tz="UTC").tz_localize(None)
@@ -120,7 +120,7 @@ async def _record_open_interest(symbol: str, out_path: Path, duration_sec: int, 
     rows: list[dict] = []
     written = 0
     start = time.monotonic()
-    
+
     logger.info("Початок запису OI для %s (інтервал %d сек)", symbol, interval_sec)
 
     try:
@@ -131,21 +131,23 @@ async def _record_open_interest(symbol: str, out_path: Path, duration_sec: int, 
                 ts = pd.Timestamp.now(tz="UTC").tz_localize(None)
                 if oi_data.get("timestamp"):
                     ts = pd.Timestamp(oi_data["timestamp"], unit="ms", tz="UTC").tz_localize(None)
-                
-                rows.append({
-                    "ts": ts,
-                    "open_interest": float(oi_data.get("openInterest", 0)),
-                })
-                
+
+                rows.append(
+                    {
+                        "ts": ts,
+                        "open_interest": float(oi_data.get("openInterest", 0)),
+                    }
+                )
+
                 if len(rows) >= 5:  # flush every ~50 sec
                     _flush(rows, out_path)
                     written += len(rows)
                     rows = []
                     logger.info("OI %s: %d записів", symbol, written)
-                    
+
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Помилка отримання OI: %s", exc)
-                
+
             await asyncio.sleep(interval_sec)
     finally:
         if rows:
@@ -157,10 +159,10 @@ async def _record_open_interest(symbol: str, out_path: Path, duration_sec: int, 
 async def _run_all(symbol: str, data_dir: Path, duration_sec: int) -> None:
     liq_path = data_dir / f"{symbol}_liquidations.parquet"
     oi_path = data_dir / f"{symbol}_oi.parquet"
-    
+
     await asyncio.gather(
         _record_liquidations(symbol, liq_path, duration_sec),
-        _record_open_interest(symbol, oi_path, duration_sec, interval_sec=10)
+        _record_open_interest(symbol, oi_path, duration_sec, interval_sec=10),
     )
 
 

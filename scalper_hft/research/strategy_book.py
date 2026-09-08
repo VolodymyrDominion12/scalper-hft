@@ -77,8 +77,7 @@ STRATEGY_BOOK: tuple[StrategyRecord, ...] = (
     StrategyRecord(
         "supertrend",
         "rejected",
-        "1d: OOS +0.50 на 3y, але −0.15 на 5y (2021–26) — edge період-специфічний; "
-        "1h/4h — від'ємні після комісій",
+        "1d: OOS +0.50 на 3y, але −0.15 на 5y (2021–26) — edge період-специфічний; 1h/4h — від'ємні після комісій",
         "трендовий sleeve",
     ),
     StrategyRecord(

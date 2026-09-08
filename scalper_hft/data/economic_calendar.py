@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import logging
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
-import requests
+from datetime import datetime
+
 import pandas as pd
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -49,18 +50,18 @@ def fetch_economic_calendar(url: str = DEFAULT_CALENDAR_URL) -> pd.DataFrame:
         date_str = date_el.text.strip() if date_el is not None and date_el.text else ""
         time_str = time_el.text.strip() if time_el is not None and time_el.text else ""
         impact = impact_el.text.strip() if impact_el is not None and impact_el.text else ""
-        
+
         forecast = forecast_el.text.strip() if forecast_el is not None and forecast_el.text else ""
         previous = previous_el.text.strip() if previous_el is not None and previous_el.text else ""
 
         if not date_str or not time_str:
             continue
-            
+
         # Формат часу зазвичай: 10:00am, 2:30pm або All Day
         if time_str.lower() == "all day" or time_str.lower() == "tentative":
             # Не беремо події без точного часу для HFT
             continue
-            
+
         # Дата у форматі: 09-08-2026
         try:
             dt_str = f"{date_str} {time_str}"
@@ -71,14 +72,9 @@ def fetch_economic_calendar(url: str = DEFAULT_CALENDAR_URL) -> pd.DataFrame:
         except Exception:
             continue
 
-        events.append({
-            "ts": dt,
-            "title": title,
-            "country": country,
-            "impact": impact,
-            "forecast": forecast,
-            "previous": previous
-        })
+        events.append(
+            {"ts": dt, "title": title, "country": country, "impact": impact, "forecast": forecast, "previous": previous}
+        )
 
     if not events:
         return pd.DataFrame()
@@ -95,10 +91,10 @@ def is_news_time(
     impact_level: str = "High",
     window_before_mins: int = 15,
     window_after_mins: int = 15,
-    countries: list[str] | None = None
+    countries: list[str] | None = None,
 ) -> bool:
     """Перевіряє, чи поточний час підпадає під вікно виходу новин.
-    
+
     current_time: час у UTC (наївний)
     """
     if calendar_df.empty:

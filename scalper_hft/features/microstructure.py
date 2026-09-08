@@ -249,7 +249,7 @@ def liquidation_cascade(liquidations: pd.DataFrame, window: str = "15min") -> pd
     """Сума об'ємів ліквідацій за часове вікно (cascade indicator)."""
     if liquidations is None or liquidations.empty or "qty" not in liquidations.columns:
         return pd.Series(dtype=float)
-    
+
     # Використовуємо rolling(window) на time-based index
     return liquidations["qty"].rolling(window).sum()
 
@@ -262,8 +262,8 @@ def oi_delta(oi_df: pd.DataFrame, window_bars: int = 5) -> pd.Series:
 
 
 def add_microstructure_features(
-    df: pd.DataFrame, 
-    trades: pd.DataFrame, 
+    df: pd.DataFrame,
+    trades: pd.DataFrame,
     resample: str = "1min",
     liquidations: pd.DataFrame | None = None,
     oi_df: pd.DataFrame | None = None,
@@ -271,7 +271,7 @@ def add_microstructure_features(
     """Приєднати мікроструктурні фічі до свічкового DataFrame (ffill, без lookahead).
 
     Додає: vpin (на 1/10 середнього об'єму бару), kyle_t (t-value λ на барах),
-    roll_spread, amihud, parkinson_vol, signed_flow_ac, 
+    roll_spread, amihud, parkinson_vol, signed_flow_ac,
     liquidation_15m (якщо є), oi_delta_5 (якщо є).
     """
     out = df.copy()
@@ -297,7 +297,7 @@ def add_microstructure_features(
         liq_15m = liquidation_cascade(liquidations, window="15min")
         # reindex на close.index закриття свічок
         out["liquidation_15m"] = liq_15m.reindex(out.index, method="ffill").fillna(0.0)
-        
+
     if oi_df is not None and not oi_df.empty:
         # Ресемплінг OI на індекс свічок (якщо вони відрізняються)
         # зазвичай OI 5m, ми його заповнюємо вперед
