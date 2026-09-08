@@ -90,10 +90,9 @@ class TestEngineDDBreaker:
 class TestEngineLeverageCap:
     def test_blocks_entry_over_leverage(self) -> None:
         eng = _engine()
-        eng.max_leverage = 1.0  # жорсткий кап
-        eng.size_pct = 0.9  # нова пара = 2×0.9×equity ноціоналу > equity
-        ok, reason = eng._can_open(pd.Timestamp("2025-01-01"))
-        assert ok  # _can_open плече не чекає — перевірка у _quote
+        # після corr-капа size_pct стане ≤ 0.40 → нова пара = 2×0.40×equity;
+        # кап плеча 0.5 → 0.8×equity ноціоналу не проходить
+        eng.max_leverage = 0.5
         action = eng._quote(pd.Timestamp("2025-01-01"), want=1, p1=100.0, p2=50.0)
         assert "leverage cap" in action
 

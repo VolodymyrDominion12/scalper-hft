@@ -15,6 +15,25 @@ security = HTTPBearer()
 
 ALGORITHM = "HS256"
 
+# Ефемерний ключ для localhost-dev, коли API_SECRET_KEY не заданий: випадковий
+# per-process (secrets), НЕ захардкоджений у репозиторії. Токени інвалідуються
+# при рестарті API — прийнятно для dev; для будь-якого non-localhost бінду
+# порожній ключ усе одно відхиляється require_safe_api_bind.
+_EPHEMERAL_KEY: str | None = None
+
+
+def _jwt_key(settings: Any) -> str:
+    """Ефективний JWT-ключ: з settings або ефемерний випадковий (dev)."""
+    global _EPHEMERAL_KEY
+    key = (settings.api_secret_key or "").strip()
+    if key:
+        return key
+    if _EPHEMERAL_KEY is None:
+        import secrets
+
+        _EPHEMERAL_KEY = secrets.token_hex(32)
+    return _EPHEMERAL_KEY
+
 
 def create_access_token(data: dict[str, Any], expires_delta_hours: int = 24) -> str:
     """Створює JWT токен для API."""
@@ -22,7 +41,7 @@ def create_access_token(data: dict[str, Any], expires_delta_hours: int = 24) -> 
     to_encode = data.copy()
     expire = time.time() + (expires_delta_hours * 3600)
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, settings.api_secret_key, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, _jwt_key(settings), algorithm=ALGORITHM)
     return encoded_jwt
 
 
@@ -31,7 +50,7 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Security(security))
     settings = get_settings()
     token = credentials.credentials
     try:
-        payload = jwt.decode(token, settings.api_secret_key, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, _jwt_key(settings), algorithms=[ALGORITHM])
         return payload
     except jwt.ExpiredSignatureError:
         raise HTTPException(

@@ -245,7 +245,6 @@ class TestCostModelSprint2:
         assert c.taker_roundtrip_cost() == c.round_trip_taker()
         assert c.maker_roundtrip_cost() == c.round_trip_maker()
 
-
     def test_estimate_impact_k(self):
         from scalper_hft.backtest.execution import estimate_impact_k_from_bars
 

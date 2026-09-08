@@ -138,6 +138,9 @@ def test_paper_store_log_position_alignment() -> None:
 
 
 def test_jwt_secret_key_length() -> None:
-    """Перевірка, що api_secret_key має довжину >= 32 байти (RFC 7518 HS256)."""
+    """Жодного захардкодженого JWT-секрета: дефолт порожній; якщо ключ заданий
+    у .env — має бути ≥32 байти (RFC 7518 HS256). Ефемерний dev-ключ для
+    localhost генерується в api/auth.py (_jwt_key)."""
     settings = get_settings()
-    assert len(settings.api_secret_key.encode("utf-8")) >= 32
+    key = settings.api_secret_key.encode("utf-8")
+    assert len(key) == 0 or len(key) >= 32
