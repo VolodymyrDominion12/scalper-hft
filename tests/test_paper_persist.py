@@ -126,7 +126,9 @@ def test_pause_skips_fetch(tmp_path: Path, monkeypatch) -> None:
         raise AssertionError("fetch не має викликатись під pause")
 
     monkeypatch.setattr("scalper_hft.live.pairs_runner._fetch_ohlcv", boom)
-    runner = PairsPaperRunner("AAA", "BBB", store=PaperStore(tmp_path / "p.sqlite"), control_path=ctrl)
+    runner = PairsPaperRunner(
+        "AAA", "BBB", store=PaperStore(tmp_path / "p.sqlite"), control_path=ctrl, require_audit=False
+    )
     assert runner.step() == "hold:paused"
 
 
@@ -140,14 +142,14 @@ def test_runner_restore_skips_same_bar(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("scalper_hft.live.pairs_runner._fetch_ohlcv", fake_fetch)
     db = tmp_path / "p.sqlite"
     now = df1.index[-1] + pd.Timedelta(minutes=5)
-    r1 = PairsPaperRunner("AAA", "BBB", store=PaperStore(db), control_path=tmp_path / "c.json")
+    r1 = PairsPaperRunner("AAA", "BBB", store=PaperStore(db), control_path=tmp_path / "c.json", require_audit=False)
     action = r1.step(now=now)
     assert "hold:same_bar" not in action
     cash = r1.account.cash
     last = r1._last_ts
     r1.store.close()
 
-    r2 = PairsPaperRunner("AAA", "BBB", store=PaperStore(db), control_path=tmp_path / "c.json")
+    r2 = PairsPaperRunner("AAA", "BBB", store=PaperStore(db), control_path=tmp_path / "c.json", require_audit=False)
     assert r2._last_ts == last
     assert r2.account.cash == cash
     assert r2.step(now=now) == "hold:same_bar"
@@ -196,3 +198,67 @@ def test_paper_loop_daemon_stops(tmp_path: Path) -> None:
     )
     assert res.actions == ["quoted want=1"]
     assert len(res.equity) == 1
+
+
+def test_paper_loop_halt_on_killswitch(tmp_path: Path) -> None:
+    from scalper_hft.live.control import load_control
+    from scalper_hft.live.reconcile import KillSwitch
+
+    acc = PaperAccount(10_000.0)
+    ctrl = tmp_path / "control.json"
+    calls = {"n": 0}
+
+    def step() -> str:
+        calls["n"] += 1
+        raise KillSwitch("unwind AAA")
+
+    res = _paper_loop(
+        step,
+        None,
+        "1h",
+        acc,
+        "AAA/BBB",
+        lambda: 0,
+        lambda: 0,
+        daemon=False,
+        iterations=5,
+        sleep_sec=0,
+        install_signals=False,
+        control_path=ctrl,
+    )
+    assert len(res.actions) == 1
+    assert res.actions[0].startswith("killed:")
+    assert calls["n"] == 1
+    st = load_control(ctrl)
+    assert st.pause and st.flatten
+
+
+def test_paper_loop_generic_exception_continues(tmp_path: Path) -> None:
+    acc = PaperAccount(10_000.0)
+    calls = {"n": 0}
+
+    def step() -> str:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("boom")
+        return "quoted want=1"
+
+    res = _paper_loop(
+        step,
+        None,
+        "1h",
+        acc,
+        "AAA/BBB",
+        lambda: 0,
+        lambda: 0,
+        daemon=False,
+        iterations=2,
+        sleep_sec=0,
+        install_signals=False,
+        control_path=tmp_path / "c.json",
+    )
+    assert res.actions[0].startswith("error:boom")
+    assert res.actions[1] == "quoted want=1"
+    assert not (tmp_path / "c.json").exists() or not json.loads((tmp_path / "c.json").read_text(encoding="utf-8")).get(
+        "pause"
+    )

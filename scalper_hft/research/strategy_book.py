@@ -37,8 +37,8 @@ STRATEGY_BOOK: tuple[StrategyRecord, ...] = (
     StrategyRecord(
         "pairs_arb",
         "validated",
-        "LINK/BTC 3y +55% (PF 1.95; z2/lb120: +86%, WF pos 71%)",
-        "1h, maker, z=2.0 / lb=120–240",
+        "LINK/BTC 1h maker, regime_scale=0.25: 3y ~+51% (iter6), WF pos ~61–65%; live-конфіг лише ця комірка",
+        "1h, maker, z=2.0 / lb=120, VALIDATED_PAIRS",
         pair="LINKUSDT/BTCUSDT",
     ),
     StrategyRecord(
@@ -85,6 +85,24 @@ STRATEGY_BOOK: tuple[StrategyRecord, ...] = (
         "research",
         "не б'є кращий сингл на 1h (iter1–3); корисний як regime-шар експозиції",
         "мета-модель, 1h+",
+    ),
+    StrategyRecord(
+        "cross_momentum",
+        "research",
+        "TSMOM / крос-секційний ранг; немає PASS у STATUS",
+        "1h+",
+    ),
+    StrategyRecord(
+        "stoch_rsi",
+        "research",
+        "iter3 4h OOS −0.24; spec candidate, не paper-gate",
+        "ported",
+    ),
+    StrategyRecord(
+        "smc_fvg",
+        "research",
+        "iter3 4h OOS −0.39; spec: edge not proven",
+        "ported SMC/FVG",
     ),
     StrategyRecord(
         "mean_reversion",

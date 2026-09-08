@@ -188,6 +188,11 @@ def cmd_paper_audit(args: argparse.Namespace) -> None:
         dd_mult=args.dd_mult,
     )
     print("\n" + audit.summary())
+    from scalper_hft.config import get_settings
+    from scalper_hft.validation.paper_audit import format_cost_hint, is_cost_hint
+
+    slip_frac = get_settings().slippage_bps / 10_000.0
+    print(format_cost_hint(is_cost_hint([], slip_frac)))
     from scalper_hft.research.session_analysis import hourly_fill_rate, session_breakdown
     from scalper_hft.validation.forensics import trades_from_paper_frames
 

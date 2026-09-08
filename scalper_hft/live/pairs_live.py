@@ -26,6 +26,7 @@ import pandas as pd
 
 from scalper_hft.live.account import PaperAccount
 from scalper_hft.live.fills import FillDecision, resolve_legging
+from scalper_hft.live.intent_store import IntentStore
 from scalper_hft.live.orders import next_client_order_id
 from scalper_hft.live.pairs_engine import PairsEngine, PendingOrder
 from scalper_hft.live.reconcile import KillSwitch, parse_exchange_positions, reconcile_positions
@@ -74,6 +75,7 @@ class PairsLiveAdapter(PairsEngine):
         legging_mode: str = "chase",
         max_drift_bps: float = 10.0,
         coint_kill: bool = True,
+        intent_store: IntentStore | None = None,
     ) -> None:
         super().__init__(
             leg1,
@@ -94,6 +96,7 @@ class PairsLiveAdapter(PairsEngine):
         # реальні ордери ніг (coid -> LiveLegOrder), паралельно до self.pending (paper)
         self._live_pending: tuple[LiveLegOrder, LiveLegOrder] | None = None
         self._reconciled = False
+        self._intent_store = intent_store
 
     # ── Reconcile / гідратація на старті ──────────────────────────────────────
 
@@ -131,10 +134,12 @@ class PairsLiveAdapter(PairsEngine):
     def _hydrate_from_exchange(self, ex_pos: dict[str, Any]) -> None:
         """Гідратація локального PaperAccount з біржі (старт після рестарту)."""
         ts = pd.Timestamp.now(tz="UTC").tz_localize(None)
+        prices: dict[str, float] = {}
+        for sym in ex_pos:
+            prices[sym] = self._fetch_last_price(sym)
         for sym, ex in ex_pos.items():
             key = self._k(sym)
-            price = self._fetch_last_price(sym)
-            self.account.open_position(key, ex.side, ex.size, price, ts, is_maker=True)
+            self.account.open_position(key, ex.side, ex.size, prices[sym], ts, is_maker=True)
         # have = +1 якщо leg1 short / leg2 long (want=+1 → short leg1 / long leg2)
         leg1_pos = self.account.positions.get(self._k(self.leg1))
         if leg1_pos is None:
@@ -146,15 +151,21 @@ class PairsLiveAdapter(PairsEngine):
         logger.info("%s гідратовано з біржі: have=%d, позицій=%d", self.pid, self.have, len(self.account.positions))
 
     def _fetch_last_price(self, symbol: str) -> float:
-        """Остання ціна символу для mark-ціни при гідратації."""
+        """Остання ціна символу для mark-ціни при гідратації. Немає ціни → KillSwitch."""
         try:
-            if hasattr(self.client, "fetch_klines"):
-                batch = self.client.fetch_klines(symbol, "1m", since_ms=0, limit=1)
-                if batch:
-                    return float(batch[-1][4])  # close
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("fetch_last_price %s: %s", symbol, exc)
-        return 1.0
+            if not hasattr(self.client, "fetch_klines"):
+                raise KillSwitch(f"{self.pid}: немає mark-ціни {symbol} (клієнт без fetch_klines)")
+            batch = self.client.fetch_klines(symbol, "1m", since_ms=0, limit=1)
+        except KillSwitch:
+            raise
+        except Exception as exc:
+            raise KillSwitch(f"{self.pid}: немає mark-ціни {symbol} ({exc})") from exc
+        if not batch:
+            raise KillSwitch(f"{self.pid}: немає mark-ціни {symbol} (порожня відповідь)")
+        close = float(batch[-1][4])
+        if close <= 0.0 or close != close:
+            raise KillSwitch(f"{self.pid}: немає mark-ціни {symbol} (close={close})")
+        return close
 
     # ── Розміщення ордерів (перевизначення _quote) ────────────────────────────
 
@@ -192,9 +203,31 @@ class PairsLiveAdapter(PairsEngine):
             return None
         return lo1, lo2
 
+    def _intent_key(self, kind: str, symbol: str, side: str, placed_ts: pd.Timestamp) -> str:
+        """Стабільний ключ наміру між retry одного бара."""
+        ts_iso = placed_ts.isoformat() if hasattr(placed_ts, "isoformat") else str(placed_ts)
+        return f"{self.pid}:{kind}:{symbol}:{side}:{ts_iso}"
+
+    def _coid_for(self, kind: str, symbol: str, side: str, placed_ts: pd.Timestamp, prefix: str) -> str:
+        """Той самий clientOrderId на retry наміру; новий UUID лише вперше."""
+        if self._intent_store is None:
+            return next_client_order_id(prefix)
+        key = self._intent_key(kind, symbol, side, placed_ts)
+        existing = self._intent_store.get(key)
+        if existing:
+            return existing
+        coid = next_client_order_id(prefix)
+        self._intent_store.put(key, coid)
+        return coid
+
+    def _forget_intent(self, kind: str, symbol: str, side: str, placed_ts: pd.Timestamp) -> None:
+        if self._intent_store is None:
+            return
+        self._intent_store.pop(self._intent_key(kind, symbol, side, placed_ts))
+
     def _place_one_leg(self, o: PendingOrder) -> LiveLegOrder | None:
         """Розмістити одну ногу; None при помилці (НЕ букуємо фейковий oid)."""
-        coid = next_client_order_id("shp")
+        coid = self._coid_for("entry", o.symbol, o.side, o.placed_ts, "shp")
         try:
             resp = self.client.create_order(
                 o.symbol,
@@ -359,6 +392,10 @@ class PairsLiveAdapter(PairsEngine):
         o2 = PendingOrder(lo2.symbol, self._k(lo2.symbol), lo2.side, lo2.pos_side, lo2.size, px2, lo2.reduce_only, ts)
         self.pending = (o1, o2)
         self._apply_fills(ts, o1, o2, px1, px2, maker1=m1, maker2=m2)
+        self._forget_intent("entry", lo1.symbol, lo1.side, lo1.placed_ts)
+        self._forget_intent("entry", lo2.symbol, lo2.side, lo2.placed_ts)
+        self._forget_intent("chase", lo1.symbol, lo1.side, lo1.placed_ts)
+        self._forget_intent("chase", lo2.symbol, lo2.side, lo2.placed_ts)
 
     def _chase_leg_taker(self, lo: LiveLegOrder, mid: float) -> tuple[bool, float]:
         """Реальний taker-chase ноги: IOC limit з ціновим захистом.
@@ -381,7 +418,7 @@ class PairsLiveAdapter(PairsEngine):
                 lo.size,
                 price=cap_price,
                 params=params,
-                client_order_id=next_client_order_id("shc"),
+                client_order_id=self._coid_for("chase", lo.symbol, lo.side, lo.placed_ts, "shc"),
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("%s chase %s помилка ордера: %s", self.pid, lo.symbol, exc)
@@ -409,7 +446,7 @@ class PairsLiveAdapter(PairsEngine):
                 close_side,
                 lo.size,
                 params={"reduceOnly": True},
-                client_order_id=next_client_order_id("shu"),
+                client_order_id=self._coid_for("unwind", lo.symbol, close_side, lo.placed_ts, "shu"),
             )
             fill_px = float((resp or {}).get("average") or 0.0) or price
         except Exception as exc:  # noqa: BLE001

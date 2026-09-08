@@ -2,12 +2,7 @@
 
 ## ✅ Зроблено (ітерації 7–11 та Спринти 1–5)
 - [x] **Статистичний арбітраж пар**: `pairs_arb` (z-score log-ratio), рушій `backtest/pairs.py` (2 перп-ноги, funding обох ніг, 2-leg maker комісії), портфель пар `pairs_portfolio.py` з Equal Risk Contribution (ERC) алокацією.
-- [x] **Валідований універсум пар**:
-  - XRP/BTC 1h (+15.9%/рік, 80% WF OOS вікон);
-  - LINK/BTC 1h (+12.9%/рік, 80% WF OOS вікон);
-  - LINK/ETH 1h (+14.9%/рік, 80% WF OOS вікон);
-  - BTC/ETH 1h (+8.3%/рік, 60% WF OOS вікон);
-  - Портфель 3 пар: +12.5%/рік при maxDD −3.6%.
+- [x] **Валідований універсум пар** (актуально: лише LINK/BTC у `VALIDATED_PAIRS`; Aug-30 цифри застарілі — див. [STRATEGY_STATUS.md](STRATEGY_STATUS.md)):
 - [x] **Дані та кешування**:
   - `data.binance.vision` dumps інтеграція для історичних aggTrades та klines;
   - Семплінг специфічних барів: tick bars, volume bars, dollar bars, imbalance bars (`data/bars.py`);
@@ -46,7 +41,8 @@
 
 ## ⏳ Відкриті задачі (актуальний backlog)
 
-Детальний план з файлами, тестами і порядком PR: [CHANGE_PLAN.md](CHANGE_PLAN.md).
+Поточний цикл коду (H1–H8): [CHANGE_PLAN_HEALTH.md](CHANGE_PLAN_HEALTH.md).
+Архів A–E: [CHANGE_PLAN.md](CHANGE_PLAN.md). VPS: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
 
 ### 1. Paper-валідація та моніторинг (Phase 1 Gate)
 - [ ] Безперервний моніторинг paper pairs портфеля (`results/paper_pairs.sqlite`) протягом **≥8 тижнів** без розходження з бектестом.

@@ -1,10 +1,14 @@
 """Hard-гейт overfitting-аудиту для paper/live (overfitting-audit skill).
 
-PASS-вердикт `audit_cell` більше не advisory: перед стартом торгівлі раннер
-перевіряє, що комірка (стратегія × символ × ТФ) має СВІЖИЙ записаний PASS
-у `results/audit_verdicts.jsonl`. Fail-closed: немає вердикта, FAIL або
-протухлий вердикт → старт заборонено (live) / гучне попередження (paper,
-якщо REQUIRE_AUDIT_PASS=false).
+Два пороги (не змішувати):
+  - Directional (`cell_audit`): avg OOS Sharpe > 0.3, DSR, smoothness, PBO.
+  - Pairs (`pairs_arb` 1h maker): комірка `LEG1/LEG2` у verdict_store;
+    метрики — частка WF-вікон > 0, PBO, n_trades (див. pairs_gate.py).
+    SRh ≈ 0.006 НЕ порівнюється з OOS_SHARPE_MIN.
+
+PASS-вердикт більше не advisory: перед стартом `paper-run-pairs` / live
+раннер перевіряє свіжий PASS для пари. Fail-closed: немає вердикта, FAIL
+або протухлий → старт заборонено.
 """
 
 from __future__ import annotations
@@ -12,7 +16,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from scalper_hft.validation.verdict_store import latest_verdict
+from scalper_hft.validation.verdict_store import latest_pair_verdict, latest_verdict, pair_cell
 
 DEFAULT_MAX_AGE_DAYS = 30
 
@@ -26,16 +30,41 @@ def audit_gate_check(
     path: Path | None = None,
     now: datetime | None = None,
 ) -> tuple[bool, str]:
-    """Перевірка гейту для однієї комірки. Повертає (ok, повідомлення)."""
+    """Перевірка гейту для однієї directional-комірки. Повертає (ok, повідомлення)."""
     v = latest_verdict(strategy, symbol, interval, path=path)
+    return _verdict_ok(v, f"{strategy} {symbol} {interval}", max_age_days=max_age_days, now=now)
+
+
+def audit_gate_check_pair(
+    strategy: str,
+    leg1: str,
+    leg2: str,
+    interval: str,
+    *,
+    max_age_days: int = DEFAULT_MAX_AGE_DAYS,
+    path: Path | None = None,
+    now: datetime | None = None,
+) -> tuple[bool, str]:
+    """Перевірка гейту для пари (не двох ніг окремо)."""
+    cell = pair_cell(leg1, leg2)
+    v = latest_pair_verdict(strategy, cell, interval, path=path)
+    return _verdict_ok(v, f"{strategy} {cell} {interval}", max_age_days=max_age_days, now=now)
+
+
+def _verdict_ok(
+    v: dict | None,
+    label: str,
+    *,
+    max_age_days: int,
+    now: datetime | None,
+) -> tuple[bool, str]:
     if v is None:
         return False, (
-            f"немає записаного аудиту для {strategy} {symbol} {interval} — "
-            "запустіть `uv run python -m scalper_hft.cli overfit` спочатку"
+            f"немає записаного аудиту для {label} — запустіть `uv run python -m scalper_hft.cli overfit` спочатку"
         )
-    label = str(v.get("label") or "")
-    if label != "PASS":
-        return False, f"вердикт {label}: {v.get('reasons') or '—'}"
+    status = str(v.get("label") or "")
+    if status != "PASS":
+        return False, f"вердикт {status}: {v.get('reasons') or '—'}"
     try:
         ts = datetime.fromisoformat(str(v["ts"]))
     except (KeyError, ValueError):
@@ -56,8 +85,7 @@ def require_audit_pass(
     max_age_days: int = DEFAULT_MAX_AGE_DAYS,
     path: Path | None = None,
 ) -> None:
-    """Fail-closed перевірка для live: raise RuntimeError, якщо хоч одна
-    комірка (стратегія × символ) не має свіжого PASS."""
+    """Fail-closed для directional live: raise, якщо хоч один символ без PASS."""
     failures: list[str] = []
     for symbol in symbols:
         ok, msg = audit_gate_check(strategy, symbol, interval, max_age_days=max_age_days, path=path)
@@ -65,3 +93,18 @@ def require_audit_pass(
             failures.append(f"{symbol}: {msg}")
     if failures:
         raise RuntimeError("Overfitting-гейт FAIL (live заборонено до PASS):\n  " + "\n  ".join(failures))
+
+
+def require_pair_audit_pass(
+    strategy: str,
+    leg1: str,
+    leg2: str,
+    interval: str,
+    *,
+    max_age_days: int = DEFAULT_MAX_AGE_DAYS,
+    path: Path | None = None,
+) -> None:
+    """Fail-closed для pairs paper/live: комірка пари, не дві ноги окремо."""
+    ok, msg = audit_gate_check_pair(strategy, leg1, leg2, interval, max_age_days=max_age_days, path=path)
+    if not ok:
+        raise RuntimeError(f"Overfitting-гейт пари FAIL ({leg1}/{leg2}): {msg}")

@@ -25,6 +25,7 @@ from scalper_hft.data.client import ExchangeClient
 from scalper_hft.live.account import PaperAccount
 from scalper_hft.live.bar_clock import daemon_sleep_sec
 from scalper_hft.live.control import DEFAULT_CONTROL_PATH, ControlState, load_control, save_control
+from scalper_hft.live.intent_store import IntentStore
 from scalper_hft.live.pairs_engine import (
     PairsEngine,
     PairsPaperResult,
@@ -35,7 +36,7 @@ from scalper_hft.live.pairs_engine import (
     pair_size_pct,
     pos_key,
 )
-from scalper_hft.live.reconcile import reconcile_exchange_state
+from scalper_hft.live.reconcile import KillSwitch, reconcile_exchange_state
 from scalper_hft.live.store import PaperStore
 from scalper_hft.live.sync_engine import SyncEngine
 from scalper_hft.live.trader import closed_klines
@@ -236,6 +237,7 @@ def _paper_loop(
     stop: threading.Event | None = None,
     install_signals: bool = True,
     on_stop: Callable[[], Any] | None = None,
+    control_path: Path | str | None = None,
 ) -> PairsPaperResult:
     halt = stop or threading.Event()
     if daemon and install_signals:
@@ -249,12 +251,19 @@ def _paper_loop(
                 break
             try:
                 action = step()
+            except KillSwitch as exc:
+                logger.critical("KillSwitch у кроці %d: %s — pause+flatten, зупиняю цикл", i, exc)
+                save_control(pause=True, flatten=True, path=control_path)
+                action = f"killed:{exc}"
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Крок %d: %s", i, exc)
                 action = f"error:{exc}"
             actions.append(action)
             pts.append((pd.Timestamp.now(tz="UTC").tz_convert(None), account.equity))
             i += 1
+            if action.startswith("killed:"):
+                halt.set()
+                break
             if daemon:
                 if halt.wait(timeout=daemon_sleep_sec(interval, action)):
                     break
@@ -321,6 +330,8 @@ class PairsPaperRunner:
         client: object | None = None,
         restore: bool = True,
         control_path: Path | str | None = None,
+        require_audit: bool = True,
+        audit_path: Path | None = None,
     ) -> None:
         settings = get_settings()
         if not settings.dry_run:
@@ -334,30 +345,19 @@ class PairsPaperRunner:
         self.leg2 = leg2
         self.interval = interval or "1h"
         self.strategy = strategy or PairsArb()
-        # Overfitting-гейт (paper): за REQUIRE_AUDIT_PASS=true — fail-closed,
-        # інакше гучне попередження, що комірка торгується без свіжого PASS.
-        from scalper_hft.live.audit_gate import audit_gate_check, require_audit_pass
+        # Paper pairs: завжди fail-closed на комірку пари (не двох ніг).
+        # Юніт-тести передають require_audit=False.
+        if require_audit:
+            from scalper_hft.live.audit_gate import require_pair_audit_pass
 
-        if settings.require_audit_pass:
-            require_audit_pass(
+            require_pair_audit_pass(
                 self.strategy.name,
-                [self.leg1, self.leg2],
+                self.leg1,
+                self.leg2,
                 self.interval,
                 max_age_days=settings.audit_max_age_days,
+                path=audit_path,
             )
-        else:
-            for _sym in (self.leg1, self.leg2):
-                _ok, _msg = audit_gate_check(
-                    self.strategy.name, _sym, self.interval, max_age_days=settings.audit_max_age_days
-                )
-                if not _ok:
-                    logger.warning(
-                        "overfitting-гейт: %s %s %s — %s (paper без REQUIRE_AUDIT_PASS)",
-                        self.strategy.name,
-                        _sym,
-                        self.interval,
-                        _msg,
-                    )
         self.store = store
         self.client = client  # лише для звірки у paper (no-op); live заборонено вище
         self.control_path = Path(control_path) if control_path is not None else DEFAULT_CONTROL_PATH
@@ -484,6 +484,7 @@ class PairsPaperRunner:
             stop=stop,
             install_signals=install_signals,
             on_stop=_on_stop,
+            control_path=self.control_path,
         )
 
 
@@ -504,6 +505,8 @@ class PairsPortfolioRunner:
         client: object | None = None,
         restore: bool = True,
         control_path: Path | str | None = None,
+        require_audit: bool = True,
+        audit_path: Path | None = None,
     ) -> None:
         settings = get_settings()
         if not settings.dry_run:
@@ -549,6 +552,8 @@ class PairsPortfolioRunner:
                     client=self.client,
                     restore=False,
                     control_path=self.control_path,
+                    require_audit=require_audit,
+                    audit_path=audit_path,
                 )
             )
         self.daily_loss_limit = settings.daily_loss_limit
@@ -677,6 +682,7 @@ class PairsPortfolioRunner:
             stop=stop,
             install_signals=install_signals,
             on_stop=_on_stop,
+            control_path=self.control_path,
         )
 
 
@@ -704,6 +710,8 @@ class PairsLiveRunner(PairsPaperRunner):
         client: object | None = None,
         restore: bool = True,
         control_path: Path | str | None = None,
+        require_audit: bool = True,
+        audit_path: Path | None = None,
     ) -> None:
         from scalper_hft.config import require_live_credentials
         from scalper_hft.live.pairs_live import PairsLiveAdapter
@@ -723,16 +731,17 @@ class PairsLiveRunner(PairsPaperRunner):
         self.client = client  # обов'язковий для live
         if self.client is None:
             raise RuntimeError("PairsLiveRunner потребує ExchangeClient (client)")
-        # Live — fail-closed hard-гейт: без свіжого PASS overfitting-аудиту
-        # по обох ногах старт заборонено (overfitting-audit skill).
-        from scalper_hft.live.audit_gate import require_audit_pass
+        if require_audit:
+            from scalper_hft.live.audit_gate import require_pair_audit_pass
 
-        require_audit_pass(
-            self.strategy.name,
-            [self.leg1, self.leg2],
-            self.interval,
-            max_age_days=settings.audit_max_age_days,
-        )
+            require_pair_audit_pass(
+                self.strategy.name,
+                self.leg1,
+                self.leg2,
+                self.interval,
+                max_age_days=settings.audit_max_age_days,
+                path=audit_path,
+            )
         self.control_path = Path(control_path) if control_path is not None else DEFAULT_CONTROL_PATH
         payload: dict[str, Any] | None = None
         if restore and store is not None and account is None:
@@ -752,6 +761,7 @@ class PairsLiveRunner(PairsPaperRunner):
             n_pairs=n_pairs,
             is_maker=True,
             legging_mode="chase",
+            intent_store=IntentStore(),
         )
         self.sync_engine = _make_sync_engine(
             store,
@@ -781,8 +791,6 @@ class PairsLiveRunner(PairsPaperRunner):
             return "hold:paused"
         # live: reconcile з біржею (drift → KillSwitch) замість paper no-op.
         # Fail-closed: KillSwitch → control plane pause+flatten, без краху циклу.
-        from scalper_hft.live.reconcile import KillSwitch
-
         try:
             self.engine.reconcile_runtime()
         except KillSwitch as exc:
@@ -802,16 +810,21 @@ class PairsLiveRunner(PairsPaperRunner):
         sig_df = pd.DataFrame({"leg1": common["l1_close"], "leg2": common["l2_close"]}, index=common.index)
         signal = 0.0 if ctrl.flatten else float(self.strategy.generate_signals(sig_df).iloc[-1])
         row = common.iloc[-1]
-        action = self.engine.on_bar(
-            ts,
-            float(row["l1_high"]),
-            float(row["l1_low"]),
-            float(row["l1_close"]),
-            float(row["l2_high"]),
-            float(row["l2_low"]),
-            float(row["l2_close"]),
-            signal,
-        )
+        try:
+            action = self.engine.on_bar(
+                ts,
+                float(row["l1_high"]),
+                float(row["l1_low"]),
+                float(row["l1_close"]),
+                float(row["l2_high"]),
+                float(row["l2_low"]),
+                float(row["l2_close"]),
+                signal,
+            )
+        except KillSwitch as exc:
+            logger.critical("KillSwitch у live on_bar: %s — pause+flatten", exc)
+            save_control(pause=True, flatten=True, path=self.control_path)
+            return f"killed:{exc}"
         self._last_ts = ts
         logger.info("%s %s | equity=%.2f", self.engine.pid, action, self.account.equity)
         if persist:
@@ -851,4 +864,5 @@ class PairsLiveRunner(PairsPaperRunner):
             stop=stop,
             install_signals=install_signals,
             on_stop=_on_stop,
+            control_path=self.control_path,
         )

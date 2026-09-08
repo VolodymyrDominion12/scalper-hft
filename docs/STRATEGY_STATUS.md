@@ -109,6 +109,11 @@ regime_scale_factor=0.25` впроваджено у `VALIDATED_PAIRS`.
 
 ## Правила розгортання кандидата (pairs_arb)
 
+**Гейт пари** (не directional Sharpe 0.3): комірка `LEG1/LEG2` у
+`results/audit_verdicts.jsonl`. `paper-run-pairs` не стартує без свіжого PASS.
+Пороги pairs: WF pos ≥ 0.55, PBO < 0.5, n_trades ≥ 20 (`validation/pairs_gate.py`).
+Не плутати з `cell_audit.OOS_SHARPE_MIN = 0.3` для односимвольних стратегій.
+
 1. **Paper-режим** з maker post-only (`DRY_RUN=true`).
 2. **Моніторинг місячної концентрації**: стоп на пару після 2 місяців поспіль збитку.
 3. **Щотижневий аудит**: переоцінка walk-forward на свіжих даних.

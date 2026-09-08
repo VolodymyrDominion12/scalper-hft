@@ -6,10 +6,11 @@
 
 ## Чесний вердикт
 
-Проєкт — зріла **квант-платформа** (Alpha → Risk → T-Cost → Portfolio → Execution, бектест, walk-forward, DSR, CSCV, ML meta-labeling, стрес-тести, MCP) з валідованим кандидатом: **портфель пар (pairs_arb на 1h, maker)**.
+Проєкт — зріла **квант-платформа** (Alpha → Risk → T-Cost → Portfolio → Execution, бектест, walk-forward, DSR, CSCV, ML meta-labeling, стрес-тести, MCP) з валідованим кандидатом: **pairs_arb LINK/BTC 1h maker** (`VALIDATED_PAIRS`).
 Це **не** субмілісекундний тіковий HFT-скальпер. Taker-скальпінг на 1m відхилено через fee-drag;
 funding/basis сплять у низькому режимі 2025–26. Phase 0 закрито повністю.
-Усі ключові інженерні блоки Phase 2 та Phase 3 (reconciliation в торговому циклі, hedge-ratio OLS/Johansen, coint-scan, triple-barrier ML, ERC, micro-price) **імплементовані**; exit ladders і risk budget — модулі з тестами, ще не в live-циклі. Юніт-тести: `uv run pytest tests/ -q` (23 файли).
+Поточний цикл коду: [CHANGE_PLAN_HEALTH.md](CHANGE_PLAN_HEALTH.md).
+Юніт-тести: `uv run pytest tests/ -q`.
 
 **Головне правило розгортання:** жоден live з реальними коштами, доки paper pairs не пройде **≥8 тижнів безперервного моніторингу** без розходження з бектестом.
 

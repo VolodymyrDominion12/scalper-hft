@@ -265,11 +265,11 @@ uv run pytest tests/ -q   # ~930 passed, 8 skipped (Postgres без TEST_POSTGRE
 | funding_carry (збір фандінгу) | BTC −0.10%, ETH −0.05%, SOL −0.54% | ⚠ відхилено (OOS −0.35, DSR=0) |
 | funding_arb (delta-neutral) | −0.4…−2.2% (maker/taker) | ⚠ відхилено (тертя > фандінг за поточних ставок) |
 | basis_reversion (1m) | овертрейдинг, −31…−85% | ⚠ відхилено (fee-drag) |
-| **pairs_arb (XRP/BTC, LINK/BTC, BTC/ETH)** | **+8.3…+15.9%/рік**, maxDD −3.6…−6.5% | ✅ **валідовані кандидати** (деталі: docs/pairs_audit.md) |
+| **pairs_arb (LINK/BTC 1h maker)** | див. [STRATEGY_STATUS.md](docs/STRATEGY_STATUS.md) | ✅ єдина комірка в `VALIDATED_PAIRS` |
 | market_maker (спрощена модель) | adverse selection > спред | ⚠ потребує L2-даних |
 | ob_imbalance (depth-weighted) | даних замало | ⏳ накопичення іде (systemd-сервіс активний) |
 
-**Чесний висновок**: жодна 1m-скальпінг стратегія не пройшла аудит через комісійне тертя. Єдиний валідований напрямок — **портфель 1h пар з maker-виконанням (post-only)**.
+**Чесний висновок**: жодна 1m-скальпінг стратегія не пройшла аудит через комісійне тертя. Єдиний валідований напрямок — **pairs_arb 1h maker (LINK/BTC)**. Це mid-freq arb, не субмілісекундний HFT.
 Наступні кроки: безперервний paper-прогін (≥8 тижнів), накопичення стакана для OB, моніторинг фандінг-режиму.
 
 ## Roadmap (цикл інвестігейт → реалізація → тест → аудит → покращення)

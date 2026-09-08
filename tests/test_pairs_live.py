@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -70,7 +71,14 @@ class MockExchangeClient:
         )
         self.orders[oid] = o
         self.created_calls.append(
-            {"symbol": symbol, "type": order_type, "side": side, "post_only": post_only, "reduce_only": reduce_only}
+            {
+                "symbol": symbol,
+                "type": order_type,
+                "side": side,
+                "post_only": post_only,
+                "reduce_only": reduce_only,
+                "client_order_id": client_order_id,
+            }
         )
         # taker (chase IOC / unwind market) — миттєвий філ за ціною кепа/ринку
         if not post_only and self.auto_fill_taker:
@@ -395,7 +403,7 @@ def test_pairs_live_runner_requires_live_credentials(monkeypatch) -> None:
         ),
     )
     with pytest.raises(RuntimeError, match="BINANCE_API_KEY"):
-        PairsLiveRunner("AAA", "BBB", client=MockExchangeClient(), restore=False)
+        PairsLiveRunner("AAA", "BBB", client=MockExchangeClient(), restore=False, require_audit=False)
 
 
 def test_pairs_live_runner_rejects_dry_run(monkeypatch) -> None:
@@ -412,7 +420,7 @@ def test_pairs_live_runner_rejects_dry_run(monkeypatch) -> None:
         ),
     )
     with pytest.raises(RuntimeError, match="DRY_RUN=true заборонено"):
-        PairsLiveRunner("AAA", "BBB", client=MockExchangeClient(), restore=False)
+        PairsLiveRunner("AAA", "BBB", client=MockExchangeClient(), restore=False, require_audit=False)
 
 
 def test_pairs_live_runner_requires_client(monkeypatch) -> None:
@@ -429,4 +437,84 @@ def test_pairs_live_runner_requires_client(monkeypatch) -> None:
         ),
     )
     with pytest.raises(RuntimeError, match="ExchangeClient"):
-        PairsLiveRunner("AAA", "BBB", client=None, restore=False)
+        PairsLiveRunner("AAA", "BBB", client=None, restore=False, require_audit=False)
+
+
+def test_hydrate_missing_price_is_killswitch() -> None:
+    client = MockExchangeClient()
+    client.klines = {"AAA": [], "BBB": []}
+    client.positions = [
+        {"symbol": "AAA", "side": "short", "contracts": 10.0},
+        {"symbol": "BBB", "side": "long", "contracts": 20.0},
+    ]
+    adapter = _make_adapter(client)
+    with pytest.raises(KillSwitch, match="немає mark-ціни"):
+        adapter.start_live()
+    assert adapter.account.positions == {}
+
+
+def test_place_leg_retry_reuses_coid(tmp_path: Path) -> None:
+    from scalper_hft.live.intent_store import IntentStore
+
+    client = MockExchangeClient()
+    adapter = _make_adapter(client)
+    adapter._intent_store = IntentStore(tmp_path / "intent.json")
+    ts = pd.Timestamp("2025-01-01")
+    adapter._quote(ts, want=1, p1=100.0, p2=50.0)
+    assert adapter.pending is not None
+    first = adapter._live_pending[0].client_order_id
+    again = adapter._place_one_leg(adapter.pending[0])
+    assert again is not None
+    assert again.client_order_id == first
+    aaa = [c["client_order_id"] for c in client.created_calls if c["symbol"] == "AAA"]
+    assert len(aaa) == 2 and aaa[0] == aaa[1]
+
+
+def test_new_bar_gets_new_coid(tmp_path: Path) -> None:
+    from scalper_hft.live.intent_store import IntentStore
+
+    client = MockExchangeClient()
+    adapter = _make_adapter(client)
+    adapter._intent_store = IntentStore(tmp_path / "intent.json")
+    adapter._quote(pd.Timestamp("2025-01-01"), want=1, p1=100.0, p2=50.0)
+    coid0 = adapter._live_pending[0].client_order_id
+    adapter.cancel_pending()
+    adapter._quote(pd.Timestamp("2025-01-01 01:00"), want=1, p1=100.0, p2=50.0)
+    coid1 = adapter._live_pending[0].client_order_id
+    assert coid0 != coid1
+
+
+def test_live_step_on_bar_kill_pauses_control(tmp_path: Path, monkeypatch) -> None:
+    from scalper_hft.config import Settings
+    from scalper_hft.live.control import load_control
+    from scalper_hft.live.pairs_runner import PairsLiveRunner
+
+    monkeypatch.setattr(
+        "scalper_hft.live.pairs_runner.get_settings",
+        lambda: Settings(binance_api_key="k", binance_api_secret="s", dry_run=False),
+    )
+    idx = pd.date_range("2025-01-01", periods=80, freq="1h")
+    df = pd.DataFrame(
+        {"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0, "volume": 1.0},
+        index=idx,
+    )
+
+    def fake_fetch(symbol: str, interval: str, limit: int = 800) -> pd.DataFrame:
+        return df.copy()
+
+    monkeypatch.setattr("scalper_hft.live.pairs_runner._fetch_ohlcv", fake_fetch)
+    ctrl = tmp_path / "control.json"
+    client = MockExchangeClient()
+    runner = PairsLiveRunner("AAA", "BBB", client=client, restore=False, control_path=ctrl, require_audit=False)
+    runner.engine._reconciled = True
+    monkeypatch.setattr(runner.engine, "reconcile_runtime", lambda: None)
+
+    def boom(*_a, **_k):
+        raise KillSwitch("unwind AAA")
+
+    monkeypatch.setattr(runner.engine, "on_bar", boom)
+    now = idx[-1] + pd.Timedelta(minutes=5)
+    action = runner.step(now=now)
+    assert action.startswith("killed:")
+    st = load_control(ctrl)
+    assert st.pause and st.flatten

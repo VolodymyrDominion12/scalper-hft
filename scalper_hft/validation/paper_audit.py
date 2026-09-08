@@ -134,6 +134,46 @@ def audit_paper_vs_backtest(
     )
 
 
+def is_cost_hint(
+    records: list[object],
+    current_slippage_frac: float,
+    *,
+    warn_bps: float = 1.0,
+    fallback: float = 0.0002,
+) -> dict[str, float | bool]:
+    """Порівняти CostModel slippage з медіаною IS. Не змінює комісії в loop.
+
+    warn=True якщо |maker IS − current| або |chase IS − current| > warn_bps.
+    """
+    from scalper_hft.backtest.execution import calibrate_from_is
+
+    maker = calibrate_from_is(records, kind="maker", fallback=fallback)
+    chase = calibrate_from_is(records, kind="chase", fallback=fallback)
+    current = float(current_slippage_frac)
+    maker_bps = maker * 10_000.0
+    chase_bps = chase * 10_000.0
+    current_bps = current * 10_000.0
+    delta = max(abs(maker_bps - current_bps), abs(chase_bps - current_bps))
+    return {
+        "maker_slippage_frac": maker,
+        "chase_slippage_frac": chase,
+        "current_slippage_frac": current,
+        "maker_bps": maker_bps,
+        "chase_bps": chase_bps,
+        "current_bps": current_bps,
+        "warn": delta > warn_bps,
+    }
+
+
+def format_cost_hint(hint: dict[str, float | bool]) -> str:
+    """Один рядок для paper-audit CLI."""
+    flag = "warn" if hint["warn"] else "ok"
+    return (
+        f"IS vs CostModel: maker={hint['maker_bps']:.2f} bps chase={hint['chase_bps']:.2f} bps "
+        f"current={hint['current_bps']:.2f} bps [{flag}]"
+    )
+
+
 def audit_paper_store(
     store: PaperStore,
     *,

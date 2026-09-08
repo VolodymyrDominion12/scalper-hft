@@ -9,8 +9,13 @@ import numpy as np
 import pandas as pd
 import pytest
 from scalper_hft.data.storage import save_klines
-from scalper_hft.live.audit_gate import audit_gate_check, require_audit_pass
-from scalper_hft.validation.verdict_store import latest_verdict, record_verdict
+from scalper_hft.live.audit_gate import (
+    audit_gate_check,
+    audit_gate_check_pair,
+    require_audit_pass,
+    require_pair_audit_pass,
+)
+from scalper_hft.validation.verdict_store import latest_verdict, record_pair_verdict, record_verdict
 
 
 @pytest.fixture()
@@ -75,6 +80,35 @@ class TestAuditGate:
             require_audit_pass("pairs_arb", ["BTCUSDT", "ETHUSDT"], "1h", path=verdicts_path)
         _pass(verdicts_path, symbol="ETHUSDT")
         require_audit_pass("pairs_arb", ["BTCUSDT", "ETHUSDT"], "1h", path=verdicts_path)
+
+
+class TestPairAuditGate:
+    def test_pair_pass_without_leg_symbols(self, verdicts_path: Path) -> None:
+        record_pair_verdict("pairs_arb", "LINKUSDT", "BTCUSDT", "1h", "PASS", path=verdicts_path)
+        ok, _ = audit_gate_check_pair("pairs_arb", "LINKUSDT", "BTCUSDT", "1h", path=verdicts_path)
+        assert ok
+        ok_leg, _ = audit_gate_check("pairs_arb", "BTCUSDT", "1h", path=verdicts_path)
+        assert not ok_leg
+        require_pair_audit_pass("pairs_arb", "LINKUSDT", "BTCUSDT", "1h", path=verdicts_path)
+
+    def test_missing_pair_verdict_blocks_paper(self, verdicts_path: Path) -> None:
+        from scalper_hft.live.pairs_runner import PairsPaperRunner
+
+        with pytest.raises(RuntimeError, match="гейт пари"):
+            PairsPaperRunner("AAA", "BBB", require_audit=True, audit_path=verdicts_path)
+
+    def test_stale_pair_pass_blocks(self, verdicts_path: Path) -> None:
+        record_pair_verdict(
+            "pairs_arb",
+            "LINKUSDT",
+            "BTCUSDT",
+            "1h",
+            "PASS",
+            path=verdicts_path,
+            now=datetime.now(UTC) - timedelta(days=60),
+        )
+        with pytest.raises(RuntimeError, match="протух"):
+            require_pair_audit_pass("pairs_arb", "LINKUSDT", "BTCUSDT", "1h", path=verdicts_path)
 
 
 def _good_bars(n: int = 10) -> pd.DataFrame:

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_JOBS_PATH = Path("results") / "jobs.sqlite"
+MAX_ATTEMPTS = 3
 STALE_AFTER_SEC = 30.0
 WORKER_ALIVE_SEC = 15.0
 _SORT_LIST_KEYS = frozenset({"strategies", "symbols", "intervals"})
@@ -403,19 +404,30 @@ class JobStore:
                 raise
 
     def reap_stale(self, *, max_age_sec: float = STALE_AFTER_SEC) -> int:
-        """running без heartbeat → queued (воркер помер)."""
+        """running без heartbeat → queued; після MAX_ATTEMPTS → failed."""
         cutoff = datetime.now(UTC) - timedelta(seconds=max_age_sec)
-        rows = self._conn.execute("SELECT id, heartbeat_at FROM jobs WHERE status='running'").fetchall()
+        rows = self._conn.execute("SELECT id, heartbeat_at, attempt FROM jobs WHERE status='running'").fetchall()
         n = 0
         for row in rows:
             hb = parse_iso(str(row["heartbeat_at"] or ""))
             if hb is None or hb < cutoff:
-                self._conn.execute(
-                    """UPDATE jobs SET status='queued', pid=NULL, error='stale heartbeat',
-                       cancel_requested=0, force_requeue=0, attempt=attempt+1
-                       WHERE id=? AND status='running'""",
-                    (int(row["id"]),),
-                )
+                job_id = int(row["id"])
+                attempt = int(row["attempt"] or 0)
+                if attempt >= MAX_ATTEMPTS:
+                    self._conn.execute(
+                        """UPDATE jobs SET status='failed', pid=NULL,
+                           error='stale heartbeat (max attempts)',
+                           finished_at=?, cancel_requested=0, force_requeue=0
+                           WHERE id=? AND status='running'""",
+                        (_now(), job_id),
+                    )
+                else:
+                    self._conn.execute(
+                        """UPDATE jobs SET status='queued', pid=NULL, error='stale heartbeat',
+                           cancel_requested=0, force_requeue=0, attempt=attempt+1
+                           WHERE id=? AND status='running'""",
+                        (job_id,),
+                    )
                 n += 1
         return n
 

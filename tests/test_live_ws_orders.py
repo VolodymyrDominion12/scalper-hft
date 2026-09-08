@@ -450,7 +450,7 @@ def test_pairs_engine_ws_fill_strict_both() -> None:
 
 def test_pairs_portfolio_ws_dispatch() -> None:
     configs = [{"leg1": "XRPUSDT", "leg2": "BTCUSDT", "entry_z": 2.0, "exit_z": 0.3, "lookback": 480}]
-    portfolio = PairsPortfolioRunner(configs=configs)
+    portfolio = PairsPortfolioRunner(configs=configs, require_audit=False)
     runner = portfolio.runners[0]
     engine = runner.engine
 

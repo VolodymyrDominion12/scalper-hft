@@ -85,8 +85,10 @@ Paper/testnet за замовчуванням (`DRY_RUN=true`).
 ### Реалізовано:
 1. ✅ Повна інфраструктура збору та кешування даних (Parquet, Postgres, Binance Vision, tick/dollar bars).
 2. ✅ Рекордер bookTicker/depth5 на systemd user-юніті.
-3. ✅ Валідований універсум пар (XRP/BTC, LINK/BTC, LINK/ETH, BTC/ETH) та мульти-парний портфель з ERC-алокацією.
-4. ✅ Повний ML-пайплайн (мета-лейблінг, bet sizing, MDI/MDA/SFI/CFI, LOB моделі).
+3. ✅ Валідований кандидат у live-конфігу: **pairs_arb LINK/BTC 1h maker**
+   (`regime_scale=0.25`). Інші пари — моніторинг, не VALIDATED_PAIRS.
+4. ✅ ML-пайплайн (мета-лейблінг, bet sizing, MDI/MDA/SFI/CFI). LOB-моделі —
+   заглушка (`prepare_lob_tensors = pass`) до архіву L2 / Tardis.
 5. ✅ Розширені валідаційні тести (stress, capacity, survival, lift, cohort, quintiles, time-decay).
 6. ✅ MCP-сервер для трейдінгу та Streamlit дашборд.
 

@@ -112,6 +112,32 @@ def test_reap_stale_running_becomes_queued(tmp_path: Path) -> None:
     store.close()
 
 
+def test_reap_stale_max_attempts_fails(tmp_path: Path) -> None:
+    from scalper_hft.research.jobs import MAX_ATTEMPTS
+
+    store = _store(tmp_path)
+    job = store.submit("k", {"n": 1})
+    store.claim()
+    store._conn.execute(
+        "UPDATE jobs SET heartbeat_at=?, attempt=? WHERE id=?",
+        ("2000-01-01T00:00:00+00:00", 2, job.id),
+    )
+    store.reap_stale(max_age_sec=1)
+    mid = store.get(job.id)
+    assert mid is not None and mid.status == "queued" and mid.attempt == 3
+
+    store.claim()
+    store._conn.execute(
+        "UPDATE jobs SET heartbeat_at=?, attempt=? WHERE id=?",
+        ("2000-01-01T00:00:00+00:00", MAX_ATTEMPTS, job.id),
+    )
+    store.reap_stale(max_age_sec=1)
+    dead = store.get(job.id)
+    assert dead is not None and dead.status == "failed"
+    assert "max attempts" in dead.error
+    store.close()
+
+
 def test_cancel_stops_child(tmp_path: Path) -> None:
     store = _store(tmp_path)
     job = store.submit("_test_sleep", {"seconds": 60})
