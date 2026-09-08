@@ -135,6 +135,10 @@ class ExchangeClient:
         """Історія ставок фандінгу."""
         return self.exchange.fetch_funding_rate_history(symbol, since=since_ms, limit=limit)
 
+    def fetch_open_interest_history(self, symbol: str, timeframe: str, since_ms: int, limit: int = 500) -> list[dict[str, Any]]:
+        """Історія Open Interest (ccxt)."""
+        return self.exchange.fetch_open_interest_history(symbol, timeframe, since=since_ms, limit=limit)
+
     # ── торгівля (використовується live-модулем) ─────────────────────────────
     def create_order(
         self,

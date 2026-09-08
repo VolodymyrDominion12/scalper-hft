@@ -171,6 +171,29 @@ def cmd_record_bookticker(args: argparse.Namespace) -> None:
             print(f"{sym}: записано {n} bookTicker снапшотів")
 
 
+def cmd_macro_recorder(args: argparse.Namespace) -> None:
+    """Запис ліквідацій та OI у реальному часі."""
+    from scalper_hft.live.macro_recorder import record_macro
+
+    for sym in (args.symbol or "BTCUSDT").split(","):
+        record_macro(sym, minutes=args.minutes)
+        print(f"{sym}: запущено macro_recorder на {args.minutes} хвилин")
+
+
+def cmd_download_liquidations(args: argparse.Namespace) -> None:
+    from scalper_hft.data.downloader import download_liquidations
+
+    for sym in (args.symbol or "BTCUSDT").split(","):
+        download_liquidations(sym, args.days)
+
+
+def cmd_download_oi(args: argparse.Namespace) -> None:
+    from scalper_hft.data.downloader import download_oi
+
+    for sym in (args.symbol or "BTCUSDT").split(","):
+        download_oi(sym, args.days)
+
+
 def cmd_migrate_to_parquet(args: argparse.Namespace) -> None:
     """Міграція всіх даних з PostgreSQL у Parquet-файли (data/).
 

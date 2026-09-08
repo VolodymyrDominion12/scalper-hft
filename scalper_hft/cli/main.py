@@ -165,6 +165,20 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--depth", action="store_true", help="Записувати depth5 (5 рівнів стакана) замість bookTicker")
     p.set_defaults(func=_cli_pkg.cmd_record_bookticker)
 
+    p = sub.add_parser("macro-recorder", help="Запис ліквідацій (forceOrder WS) та OI у parquet")
+    p.add_argument("--symbol", default="BTCUSDT", help="Символ(и) через кому")
+    p.add_argument("--minutes", type=int, default=60, help="Тривалість запису, хв")
+    p.set_defaults(func=_cli_pkg.cmd_macro_recorder)
+
+    p = sub.add_parser("download-liquidations", help="Завантажити історичні ліквідації з Binance Vision")
+    p.add_argument("--symbol", default="BTCUSDT", help="Символ(и) через кому")
+    p.add_argument("--days", type=int, default=30, help="Глибина історії, днів")
+    p.set_defaults(func=_cli_pkg.cmd_download_liquidations)
+
+    p = sub.add_parser("download-oi", help="Завантажити історичний Open Interest (REST API)")
+    p.add_argument("--symbol", default="BTCUSDT", help="Символ(и) через кому")
+    p.add_argument("--days", type=int, default=30, help="Глибина історії, днів")
+    p.set_defaults(func=_cli_pkg.cmd_download_oi)
     p = sub.add_parser("arb", help="Delta-neutral funding arb (перп+спот)")
     add_common(p)
     p.add_argument("--position-pct", type=float, default=None, help="Ноціонал кожної ноги (за замовч. 0.1)")

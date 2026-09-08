@@ -35,6 +35,11 @@ def depth5_url(symbol: str, *, testnet: bool = False) -> str:
     return public_stream_url(f"{symbol.lower()}@depth5@100ms", testnet=testnet)
 
 
+def force_order_url(symbol: str, *, testnet: bool = False) -> str:
+    """Binance liquidation stream (forceOrder)."""
+    return public_stream_url(f"{symbol.lower()}@forceOrder", testnet=testnet)
+
+
 def private_user_stream_url(
     listen_key: str,
     *,
