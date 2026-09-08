@@ -779,8 +779,16 @@ class PairsLiveRunner(PairsPaperRunner):
         ctrl = control if control is not None else load_control(self.control_path)
         if ctrl.pause:
             return "hold:paused"
-        # live: reconcile з біржею (drift → KillSwitch) замість paper no-op
-        self.engine.reconcile_runtime()
+        # live: reconcile з біржею (drift → KillSwitch) замість paper no-op.
+        # Fail-closed: KillSwitch → control plane pause+flatten, без краху циклу.
+        from scalper_hft.live.reconcile import KillSwitch
+
+        try:
+            self.engine.reconcile_runtime()
+        except KillSwitch as exc:
+            logger.critical("KillSwitch у live-step: %s — pause+flatten", exc)
+            save_control(pause=True, flatten=True, path=self.control_path)
+            return "killed:killswitch"
         self.engine.control_block_entries = ctrl.no_new_entries
         df1 = closed_klines(_fetch_ohlcv(self.leg1, self.interval), self.interval, now=now)
         df2 = closed_klines(_fetch_ohlcv(self.leg2, self.interval), self.interval, now=now)

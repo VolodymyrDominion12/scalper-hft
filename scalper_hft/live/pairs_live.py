@@ -156,22 +156,40 @@ class PairsLiveAdapter(PairsEngine):
 
     def _quote(self, ts: pd.Timestamp, want: int, p1: float, p2: float, size_mult: float = 1.0) -> str:
         """Базовий _quote формує paper PendingOrder; адаптер ДОВІДНО розміщує
-        реальні post_only ліміти обох ніг на біржі."""
+        реальні post_only ліміти обох ніг на біржі. Fail-closed: якщо хоч одна
+        нога не розмістилась — друга скасовується, входу немає."""
         action = super()._quote(ts, want, p1, p2, size_mult=size_mult)
         if not action.startswith("quoted") or self.pending is None:
             return action
         o1, o2 = self.pending
-        lo1, lo2 = self._place_legs(o1, o2)
-        self._live_pending = (lo1, lo2)
+        legs = self._place_legs(o1, o2)
+        if legs is None:
+            # не вдалося розмістити обидві ноги — не лишаємо ані paper-pending,
+            # ані сирітського ордера на біржі (rollback)
+            self.pending = None
+            self._live_pending = None
+            self.n_unfilled += 1
+            return "quote_failed:place_error"
+        self._live_pending = legs
         return f"quoted want={want}"
 
-    def _place_legs(self, o1: PendingOrder, o2: PendingOrder) -> tuple[LiveLegOrder, LiveLegOrder]:
-        """Розмістити обидві ноги post_only limit на біржі (ідемпотентні coid)."""
+    def _place_legs(self, o1: PendingOrder, o2: PendingOrder) -> tuple[LiveLegOrder, LiveLegOrder] | None:
+        """Розмістити обидві ноги post_only limit на біржі (ідемпотентні coid).
+
+        Якщо перша нога розміщена, а друга впала — першу скасовуємо (rollback),
+        щоб не лишити сирітський ордер. None = вхід скасовано."""
         lo1 = self._place_one_leg(o1)
+        if lo1 is None:
+            return None
         lo2 = self._place_one_leg(o2)
+        if lo2 is None:
+            logger.error("%s rollback: нога %s не розмістилась — скасовую %s", self.pid, o2.symbol, o1.symbol)
+            self._cancel_live_leg(lo1)
+            return None
         return lo1, lo2
 
-    def _place_one_leg(self, o: PendingOrder) -> LiveLegOrder:
+    def _place_one_leg(self, o: PendingOrder) -> LiveLegOrder | None:
+        """Розмістити одну ногу; None при помилці (НЕ букуємо фейковий oid)."""
         coid = next_client_order_id("shp")
         try:
             resp = self.client.create_order(
@@ -184,20 +202,23 @@ class PairsLiveAdapter(PairsEngine):
                 post_only=True,
                 client_order_id=coid,
             )
-            oid = str((resp or {}).get("id") or coid)
-            logger.info(
-                "%s розміщено %s %s %s @ %s coid=%s oid=%s",
-                self.pid,
-                o.side,
-                o.size,
-                o.symbol,
-                o.limit_price,
-                coid,
-                oid,
-            )
         except Exception as exc:  # noqa: BLE001
             logger.error("%s помилка розміщення %s %s: %s", self.pid, o.side, o.symbol, exc)
-            oid = coid  # позначимо; reconcile зловить розбіжність
+            return None
+        oid = str((resp or {}).get("id") or "")
+        if not oid:
+            logger.error("%s біржа не повернула order id для %s — відхиляю", self.pid, o.symbol)
+            return None
+        logger.info(
+            "%s розміщено %s %s %s @ %s coid=%s oid=%s",
+            self.pid,
+            o.side,
+            o.size,
+            o.symbol,
+            o.limit_price,
+            coid,
+            oid,
+        )
         return LiveLegOrder(
             client_order_id=coid,
             exchange_order_id=oid,
@@ -243,7 +264,7 @@ class PairsLiveAdapter(PairsEngine):
                 max_drift_bps=self.max_drift_bps,
                 mode=self.legging_mode,
             )
-            if res.action in ("both_filled", "chase_leg1", "chase_leg2"):
+            if res.action == "both_filled":
                 self._apply_live_fills(
                     ts, lo1, lo2, res.d1.fill_price, res.d2.fill_price, res.leg1_maker, res.leg2_maker
                 )
@@ -251,6 +272,33 @@ class PairsLiveAdapter(PairsEngine):
                 self.pending = None
                 self.n_filled += 1
                 return f"filled:{res.action}"
+            if res.action in ("chase_leg1", "chase_leg2"):
+                # Chase = РЕАЛЬНИЙ taker IOC на незаповнену ногу. Букування —
+                # лише після підтвердженого філа біржі; невдача → реальний
+                # unwind заповненої ноги (ніколи не "paper-на-live").
+                chase_lo, maker_lo = (lo1, lo2) if res.action == "chase_leg1" else (lo2, lo1)
+                chase_mid = mid1 if res.action == "chase_leg1" else mid2
+                ok, chase_px = self._chase_leg_taker(chase_lo, chase_mid)
+                if ok:
+                    px1 = chase_px if res.action == "chase_leg1" else res.d1.fill_price
+                    px2 = chase_px if res.action == "chase_leg2" else res.d2.fill_price
+                    self._apply_live_fills(ts, lo1, lo2, px1, px2, res.leg1_maker, res.leg2_maker)
+                    self._live_pending = None
+                    self.pending = None
+                    self.n_filled += 1
+                    return f"filled:{res.action}"
+                logger.error(
+                    "%s chase %s не виконано біржею — unwind заповненої ноги %s",
+                    self.pid,
+                    chase_lo.symbol,
+                    maker_lo.symbol,
+                )
+                maker_mid = mid1 if maker_lo is lo1 else mid2
+                self._unwind_live_leg(ts, maker_lo, maker_mid)
+                self._live_pending = None
+                self.pending = None
+                self.n_unfilled += 1
+                return f"unfilled:chase_failed_{chase_lo.symbol}"
             if res.action in ("unwind_leg1", "unwind_leg2"):
                 filled = lo1 if res.action == "unwind_leg1" else lo2
                 px = mid1 if res.action == "unwind_leg1" else mid2
@@ -308,10 +356,65 @@ class PairsLiveAdapter(PairsEngine):
         self.pending = (o1, o2)
         self._apply_fills(ts, o1, o2, px1, px2, maker1=m1, maker2=m2)
 
+    def _chase_leg_taker(self, lo: LiveLegOrder, mid: float) -> tuple[bool, float]:
+        """Реальний taker-chase ноги: IOC limit з ціновим захистом.
+
+        Ціна-кеп = mid ± max_drift_bps (захист від просковзування; drift уже
+        перевірений resolve_legging). Повертає (ok, fill_price): ok=True лише
+        при ПІДТВЕРДЖЕНОМУ повному філі біржі. Частковий/нульовий IOC —
+        невдача (залишок IOC скасовується біржею сам).
+        """
+        drift_cap = self.max_drift_bps / 10_000.0
+        cap_price = mid * (1.0 + drift_cap) if lo.side == "buy" else mid * (1.0 - drift_cap)
+        params: dict[str, Any] = {"timeInForce": "IOC"}
+        if lo.reduce_only:
+            params["reduceOnly"] = True
+        try:
+            resp = self.client.create_order(
+                lo.symbol,
+                "limit",
+                lo.side,
+                lo.size,
+                price=cap_price,
+                params=params,
+                client_order_id=next_client_order_id("shc"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("%s chase %s помилка ордера: %s", self.pid, lo.symbol, exc)
+            return False, 0.0
+        status = str((resp or {}).get("status") or "").lower()
+        filled_qty = float((resp or {}).get("filled") or 0.0)
+        if status in ("filled", "closed") or (0 < lo.size * 0.999 <= filled_qty):
+            px = float((resp or {}).get("average") or cap_price)
+            logger.info("%s chase %s виконано @ %s", self.pid, lo.symbol, px)
+            return True, px
+        logger.warning("%s chase %s не заповнений (status=%s filled=%s)", self.pid, lo.symbol, status, filled_qty)
+        return False, 0.0
+
     def _unwind_live_leg(self, ts: pd.Timestamp, lo: LiveLegOrder, price: float) -> None:
-        """Закрити вже заповнену ногу taker-ом (flatten)."""
-        o = PendingOrder(lo.symbol, self._k(lo.symbol), lo.side, lo.pos_side, lo.size, price, True, ts)
-        self._unwind_filled_leg(ts, o, price)
+        """Закрити вже заповнену ногу РЕАЛЬНИМ reduce-only market ордером.
+
+        Fail-closed: якщо біржа не підтвердила flatten — KillSwitch (на біржі
+        лишилась однонога позиція, торгувати далі небезпечно).
+        """
+        close_side = "sell" if lo.side == "buy" else "buy"
+        try:
+            resp = self.client.create_order(
+                lo.symbol,
+                "market",
+                close_side,
+                lo.size,
+                params={"reduceOnly": True},
+                client_order_id=next_client_order_id("shu"),
+            )
+            fill_px = float((resp or {}).get("average") or 0.0) or price
+        except Exception as exc:  # noqa: BLE001
+            raise KillSwitch(
+                f"{self.pid}: unwind {lo.symbol} НЕ підтверджений біржею ({exc}) — однонога позиція!"
+            ) from exc
+        logger.warning("%s unwind %s %s @ %s (reduce-only)", self.pid, close_side, lo.symbol, fill_px)
+        o = PendingOrder(lo.symbol, self._k(lo.symbol), lo.side, lo.pos_side, lo.size, fill_px, True, ts)
+        self._unwind_filled_leg(ts, o, fill_px)
 
     def _cancel_live_leg(self, lo: LiveLegOrder) -> None:
         """Скасувати незаповнений реальний ордер ноги на біржі."""
@@ -323,14 +426,16 @@ class PairsLiveAdapter(PairsEngine):
     # ── Reconcile під час роботи (drift → KillSwitch) ─────────────────────────
 
     def reconcile_runtime(self) -> None:
-        """Періодична звірка позицій з біржею; drift → KillSwitch."""
+        """Періодична звірка позицій з біржею; drift → KillSwitch.
+
+        Fail-closed: помилка fetch_positions — це теж KillSwitch (не знаємо
+        стан біржі → торгувати небезпечно), а не log-and-continue."""
         if not self._reconciled:
             return
         try:
             raw = self.client.fetch_positions()
         except Exception as exc:  # noqa: BLE001
-            logger.warning("%s reconcile_runtime fetch_positions: %s", self.pid, exc)
-            return
+            raise KillSwitch(f"{self.pid}: reconcile_runtime fetch_positions впав: {exc}") from exc
         ok, reason = reconcile_positions(self.account, parse_exchange_positions(raw), scope={self.leg1, self.leg2})
         if not ok:
             raise KillSwitch(f"drift під час роботи: {reason}")

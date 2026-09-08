@@ -331,12 +331,57 @@ async def close_position(
     return {"status": "ok", "message": f"Позицію {req.symbol} закрито"}
 
 
+def _flatten_exchange_positions() -> tuple[list[str], list[str]]:
+    """Реальний flatten на біржі у live-режимі (DRY_RUN=false).
+
+    Скасовує ВСІ робочі ордери та закриває кожну відкриту позицію
+    reduce-only market ордером. Повертає (дії, помилки). У paper-режимі —
+    no-op (порожні списки): біржі немає, flatten лише локальний.
+    """
+    from scalper_hft.config import require_live_credentials
+    from scalper_hft.data.client import ExchangeClient
+    from scalper_hft.live.reconcile import parse_exchange_positions
+
+    settings = get_settings()
+    if settings.dry_run:
+        return [], []
+    require_live_credentials(settings)  # fail-closed: без ключів — RuntimeError
+    client = ExchangeClient(
+        settings.binance_api_key,
+        settings.binance_api_secret,
+        settings.exchange,
+        auth=True,
+    )
+    actions: list[str] = []
+    errors: list[str] = []
+    try:
+        client.cancel_all_orders(None)
+        actions.append("cancel_all_orders")
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"cancel_all_orders: {exc}")
+    try:
+        positions = parse_exchange_positions(client.fetch_positions())
+    except Exception as exc:  # noqa: BLE001
+        return actions, [*errors, f"fetch_positions: {exc}"]
+    for sym, pos in positions.items():
+        close_side = "sell" if pos.side == "long" else "buy"
+        try:
+            client.create_order(sym, "market", close_side, pos.size, params={"reduceOnly": True})
+            actions.append(f"flatten {sym} {close_side} {pos.size}")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"flatten {sym}: {exc}")
+    return actions, errors
+
+
 @app.post("/api/v1/emergency/flatten")
 async def emergency_flatten(
     token_payload: dict[str, Any] = Depends(require_api_capability(destructive=True)),
 ) -> dict[str, Any]:
-    """Аварійний Kill-Switch: встановлює flatten=True в control.json та закриває всі відкриті позиції в сховищі."""
+    """Аварійний Kill-Switch: flatten=True в control.json, закриття позицій
+    у сховищі ТА, у live-режимі, реальний flatten на біржі (cancel-all +
+    reduce-only market close)."""
     ctrl = save_control(pause=True, flatten=True)
+    exchange_actions, exchange_errors = _flatten_exchange_positions()
     store = PaperStore()
     pos_list = store.open_positions()
     closed = 0
@@ -374,10 +419,16 @@ async def emergency_flatten(
             "ts": datetime.datetime.now(datetime.UTC).isoformat(),
         }
     )
+    status = "error" if exchange_errors else "ok"
     return {
-        "status": "ok",
-        "message": f"Аварійний Kill-Switch активовано: закрито {closed} позицій, торгівлю призупинено.",
+        "status": status,
+        "message": (
+            f"Аварійний Kill-Switch активовано: закрито {closed} позицій локально, "
+            f"біржа: {len(exchange_actions)} дій, {len(exchange_errors)} помилок."
+        ),
         "control": {"pause": ctrl.pause, "flatten": ctrl.flatten},
+        "exchange_actions": exchange_actions,
+        "exchange_errors": exchange_errors,
     }
 
 
