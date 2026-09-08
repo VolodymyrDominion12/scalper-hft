@@ -32,8 +32,8 @@ jobs:
         continue-on-error: true
         run: uv run mypy scalper_hft
 
-      - name: Mypy core money/account (blocking)
-        run: uv run mypy scalper_hft/live/money.py scalper_hft/live/account.py
+      - name: Mypy core live (blocking)
+        run: uv run mypy scalper_hft/live/money.py scalper_hft/live/account.py scalper_hft/live/pending_orders.py scalper_hft/live/sync_engine.py scalper_hft/live/pairs_engine.py
 
       - name: Pytest
         run: uv run pytest tests/ -q

@@ -81,7 +81,13 @@ files = ["scalper_hft"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["scalper_hft.live.money", "scalper_hft.live.account"]
+module = [
+    "scalper_hft.live.money",
+    "scalper_hft.live.account",
+    "scalper_hft.live.pending_orders",
+    "scalper_hft.live.sync_engine",
+    "scalper_hft.live.pairs_engine",
+]
 strict = true
 
 [tool.uv]

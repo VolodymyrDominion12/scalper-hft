@@ -363,7 +363,7 @@ class SyncEngine:
         if self._exchange is not None:
             return self._exchange
 
-        import ccxt  # type: ignore[import]
+        import ccxt
 
         from scalper_hft.config import get_settings
 
