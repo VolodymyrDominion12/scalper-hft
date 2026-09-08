@@ -18,8 +18,9 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
-from scalper_hft.backtest.execution import CostModel, apply_breakeven_gate
+from scalper_hft.backtest.execution import CostModel, _atr_from_ohlc, apply_breakeven_gate
 from scalper_hft.backtest.metrics import BacktestMetrics, compute_metrics
+from scalper_hft.backtest.micro_price import QueuePositionModel
 from scalper_hft.research.filter_trace import FilterTrace
 from scalper_hft.strategies.base import Strategy
 
