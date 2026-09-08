@@ -10,7 +10,11 @@
 #
 # Запуск (з каталогу репо на цільовій машині; потрібен sudo):
 #   sudo bash scripts/deploy_record.sh BTCUSDT LINKUSDT XRPUSDT ETHUSDT
-# Без аргументів — дефолтний набір.
+# Без аргументів — ВЕСЬ універсум проєкту (CANONICAL_SYMBOLS, scalper_hft/symbols.py).
+#
+# ⚠ ДИСК: ~50–200 МБ/день НА СИМВОЛ (BTCUSDT на тесті ≈ 8–9 снапшотів/с).
+#   15 символів ≈ 0.75–3 ГБ/день (~5–20 ГБ/тиждень). Якщо потрібні лише
+#   ноги пар — передайте підмножину: BTCUSDT ETHUSDT XRPUSDT LINKUSDT SOLUSDT.
 #
 # ПЕРЕДУМОВИ на цільовій машині:
 #   - репо оновлене (git pull), у каталозі репо;
@@ -37,7 +41,10 @@ fi
 
 SYMBOLS=("$@")
 if [ "${#SYMBOLS[@]}" -eq 0 ]; then
-  SYMBOLS=(BTCUSDT LINKUSDT XRPUSDT ETHUSDT)
+  # Весь універсум проєкту: scalper_hft/symbols.py CANONICAL_SYMBOLS
+  # (15 ліквідних USDT-M перпів; INVUSDT/TESTUSDT — тестові, не включаємо).
+  SYMBOLS=(BTCUSDT ETHUSDT SOLUSDT BNBUSDT XRPUSDT LINKUSDT ADAUSDT DOGEUSDT \
+           AVAXUSDT NEARUSDT DOTUSDT ATOMUSDT UNIUSDT LTCUSDT AAVEUSDT)
 fi
 
 echo "==> Користувач: $USER_NAME | Каталог репо: $REPO"
