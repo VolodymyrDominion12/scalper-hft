@@ -50,6 +50,7 @@ class PairsArb(Strategy):
         kalman_q: float = 1e-5,
         kalman_r: float = 1e-3,
         dynamic_half_life: bool = False,
+        regime_scale: bool = False,
     ) -> None:
         super().__init__(
             entry_z=entry_z,
@@ -61,6 +62,7 @@ class PairsArb(Strategy):
             kalman_q=float(kalman_q),
             kalman_r=float(kalman_r),
             dynamic_half_life=bool(dynamic_half_life),
+            regime_scale=bool(regime_scale),
         )
         self.betas: pd.Series | None = None
 
@@ -128,6 +130,10 @@ class PairsArb(Strategy):
         if use_hmm_vol_gate:
             sig = self._apply_hmm_vol_gate(sig, df)
 
+        # ── Regime-scale: масштабуємо силу сигналу за режимом leg2 ──
+        if bool(self.get("regime_scale", False)):
+            sig = self._apply_regime_scale(sig, df)
+
         return sig
 
     # ── Private helpers ───────────────────────────────────────────────────────
@@ -178,3 +184,39 @@ class PairsArb(Strategy):
             return sig.where(~block | holding, other=0)
         except Exception:  # noqa: BLE001
             return sig
+
+    @staticmethod
+    def _apply_regime_scale(sig: pd.Series, df: pd.DataFrame) -> pd.Series:
+        """Масштабувати силу сигналу за режимом leg2 (ринковий годинник).
+
+        leg2 — зазвичай BTC (валюта котирування пари). У спокійному range/normal
+        mean-reversion спреду працює краще; у high-vol або тренді BTC відносна
+        сила може трендити (break co-integration) → зменшуємо експозицію вдвічі.
+
+        Каузально: regime обчислюється на close ≤ t (named_market_state —
+        EMA/vol-percentile без lookahead). Розмір фіксується на моменті входу
+        (ffill entry-scale під час угоди) — без resize-churn між барами.
+        Виходи (sig==0) та утримання напрямку зберігають повний розмір, як і
+        інші гейти (hmm_vol_gate/breakeven_gate): лише нові входи масштабуються.
+        """
+        from scalper_hft.features.regimes import named_market_state
+
+        leg2 = df.get("leg2")
+        if leg2 is None or len(leg2) < 100:
+            return sig.astype(float)
+        state = named_market_state(leg2)
+        vol = state["vol"].reindex(sig.index, method="ffill").fillna("normal")
+        structure = state["structure"].reindex(sig.index, method="ffill").fillna("range")
+        # scale: 1.0 у сприятливому (range/normal/low), 0.5 у несприятливому
+        scale = pd.Series(1.0, index=sig.index)
+        scale = scale.where(~(vol == "high"), 0.5)
+        scale = scale.where(~structure.isin(["trend_up", "trend_down"]), 0.5)
+
+        sig_f = sig.astype(float)
+        # новий вхід: sig != 0 після sig == 0
+        new_entry = (sig_f != 0.0) & (sig_f.shift(1).fillna(0.0) == 0.0)
+        entry_scale = pd.Series(np.nan, index=sig.index, dtype=float)
+        entry_scale.loc[new_entry.values] = scale.loc[new_entry.values].values
+        # lock entry-time scale на час угоди (ffill); поза позицією — байдуже (sig==0)
+        entry_scale = entry_scale.ffill().fillna(1.0)
+        return (sig_f * entry_scale).clip(-1.0, 1.0)

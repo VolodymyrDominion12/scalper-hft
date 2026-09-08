@@ -1,5 +1,5 @@
 name: pairs_arb
-version: "1.0"
+version: "1.1"
 status: validated
 family: relative_value
 
@@ -32,6 +32,12 @@ edge_conditions:
   - name: max_drawdown_cap
     description: >
       Максимальна просадка OOS <= 15%. Стратегія зупиняється при перевищенні.
+  - name: regime_scale_robust
+    description: >
+      При regime_scale=true: WF OOS Sharpe та PF не гірші за baseline
+      (regime_scale=false) на 3y, а maxDD — не більший. Додатковий параметр
+      має покращувати risk-adjusted return у несприятливих режимах, не
+      зменшуючи загальний edge. Перевіряється CSCV PBO < 0.5.
 
 params:
   entry_z:
@@ -64,10 +70,21 @@ params:
   dynamic_half_life:
     default: false
     description: Автоматично підбирати lookback за ADF-оцінкою half-life.
+  regime_scale:
+    default: false
+    description: >
+      Масштабувати силу сигналу за режимом leg2 (ринковий годинник).
+      У high-vol або тренді leg2 (зазвичай BTC) відносна сила пари може
+      трендити (break co-integration) → експозиція зменшується до 0.5.
+      У range/normal/low — повний розмір (1.0). Розмір фіксується на
+      моменті входу і не змінюється під час угоди (без resize-churn).
+      Каузально: regime обчислюється на close ≤ t. Пере використовує
+      існуючі пороги features/regimes.py (0 нових числових параметрів).
 
 invariants:
   no_lookahead: true
   signal_values: [-1, 0, 1]
+  continuous_output_possible: true  # regime_scale=True → float у [-1,1]
   no_nan_output: true
   maker_only: true
   requires_pair_columns: true  # df повинен мати leg1 та leg2
