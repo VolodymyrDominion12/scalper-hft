@@ -15,6 +15,15 @@ LEG2          ?= BTCUSDT
 MINUTES       ?= 60
 JOBS          ?= 1
 
+# VPS налаштування для синхронізації даних
+VPS_USER      ?= tradebot
+VPS_HOST      ?= 46.36.216.98
+VPS_DIR       ?= /home/tradebot/scalper-hft/data
+VPS_PORT      ?= 22
+SSH_KEY       ?=
+FILE          ?=
+DRY           ?= 0
+
 # ==============================================================================
 # Допомога
 # ==============================================================================
@@ -106,12 +115,33 @@ check: lint typecheck test spec-check ## Повна перевірка: lint + t
 # ==============================================================================
 # Ринкові дані
 # ==============================================================================
-.PHONY: download record-bookticker
+.PHONY: download record-bookticker sync-data sync-vps sync-depth5 ls-vps-data pull-data
 download: ## Завантажити історичні klines (SYMBOL=BTCUSDT INTERVAL=1h DAYS=90)
 	$(PYTHON) -m scalper_hft.cli download --symbol $(SYMBOL) --interval $(INTERVAL) --days $(DAYS)
 
 record-bookticker: ## Записати WS bookTicker у Parquet (SYMBOL=BTCUSDT MINUTES=60)
 	$(PYTHON) -m scalper_hft.cli record-bookticker --symbol $(SYMBOL) --minutes $(MINUTES)
+
+sync-data: ## Підтягнути ринкові дані з VPS у локальну папку data/ (rsync)
+	@mkdir -p data
+	@if [ -n "$(FILE)" ]; then \
+		echo "==> Синхронізація $(FILE) з $(VPS_USER)@$(VPS_HOST):$(VPS_DIR)/..."; \
+		rsync -avzP $(if $(filter 1 true,$(DRY)),--dry-run,) -e "ssh -p $(VPS_PORT)$(if $(SSH_KEY), -i $(SSH_KEY),)" $(VPS_USER)@$(VPS_HOST):$(VPS_DIR)/$(FILE) data/; \
+	else \
+		echo "==> Синхронізація всіх даних з $(VPS_USER)@$(VPS_HOST):$(VPS_DIR)/..."; \
+		rsync -avzP $(if $(filter 1 true,$(DRY)),--dry-run,) -e "ssh -p $(VPS_PORT)$(if $(SSH_KEY), -i $(SSH_KEY),)" $(VPS_USER)@$(VPS_HOST):$(VPS_DIR)/ data/; \
+	fi
+
+sync-depth5: ## Підтягнути лише depth5 Parquet файли з VPS у data/
+	@mkdir -p data
+	@echo "==> Синхронізація *_depth5.parquet з $(VPS_USER)@$(VPS_HOST):$(VPS_DIR)/..."; \
+	rsync -avzP $(if $(filter 1 true,$(DRY)),--dry-run,) -e "ssh -p $(VPS_PORT)$(if $(SSH_KEY), -i $(SSH_KEY),)" '$(VPS_USER)@$(VPS_HOST):$(VPS_DIR)/*depth5.parquet' data/
+
+ls-vps-data: ## Показати список файлів даних на VPS
+	ssh -p $(VPS_PORT)$(if $(SSH_KEY), -i $(SSH_KEY),) $(VPS_USER)@$(VPS_HOST) "ls -lh $(VPS_DIR)/"
+
+sync-vps: sync-data ## Аліас для sync-data
+pull-data: sync-data ## Аліас для sync-data
 
 # ==============================================================================
 # Бектести та дослідження
