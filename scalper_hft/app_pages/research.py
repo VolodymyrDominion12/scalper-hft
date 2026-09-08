@@ -127,17 +127,31 @@ if section == "Sweep matrix":
         sel_mode = st.segmented_control("Режим", ["backtest", "walkforward"], key="sw_mode")
         if sel_mode is None:
             sel_mode = "backtest"
+        sel_train: int | None = None
+        sel_test: int | None = None
         if sel_mode == "walkforward":
-            _iv0 = sel_ivs[0] if sel_ivs else "1h"
-            _dt, _dte = default_train_test(_iv0)
-            if "sw_train" not in st.session_state:
-                st.session_state["sw_train"] = int(_dt)
-            if "sw_test" not in st.session_state:
-                st.session_state["sw_test"] = int(_dte)
-            sel_train = st.number_input("Train барів", 50, 20_000, key="sw_train")
-            sel_test = st.number_input("Test барів (OOS)", 20, 10_000, key="sw_test")
+            st.caption(
+                "Train/Test — сирі бари **зовнішнього** WF (однакові для всіх ТФ). "
+                "Це не labeled-зразки ML. `ml_strategy` навчається на всій історії комірки; "
+                "Test=500 окремо було б замало."
+            )
+            use_per_tf = st.toggle("Авто-вікна по ТФ", value=True, key="sw_per_tf")
+            if use_per_tf:
+                st.caption("1m=4000/2000 · 15m=1000/500 · 1h=500/200 · 4h=200/100")
+            else:
+                _iv0 = sel_ivs[0] if sel_ivs else "1h"
+                _dt, _dte = default_train_test(_iv0)
+                if "sw_train" not in st.session_state:
+                    st.session_state["sw_train"] = int(_dt)
+                if "sw_test" not in st.session_state:
+                    st.session_state["sw_test"] = int(_dte)
+                sel_train = int(st.number_input("Train барів", 50, 20_000, key="sw_train"))
+                sel_test = int(st.number_input("Test барів (OOS)", 20, 10_000, key="sw_test"))
         else:
-            sel_train, sel_test = 2000, 500
+            st.caption(
+                "Backtest: Train/Test не застосовуються. ML сам ставить вікна по таймфрейму "
+                "(1h≈350/120 labeled). Потрібна повна глибина «Днів даних», не 500 барів."
+            )
         sel_workers = st.slider("Потоки", 1, 8, 2, key="sw_workers")
         sel_trace = st.toggle("Filter tracing (повільніше)", value=False, key="sw_trace")
         sel_resume = st.toggle("Resume (не повторювати виконані)", value=True, key="sw_resume")
@@ -176,9 +190,10 @@ if section == "Sweep matrix":
                 "enable_trace": bool(sel_trace),
                 "include_slow": bool(sel_slow),
                 "base_interval": "1m",
-                "train_bars": int(sel_train),
-                "test_bars": int(sel_test),
             }
+            if sel_train is not None and sel_test is not None:
+                payload["train_bars"] = int(sel_train)
+                payload["test_bars"] = int(sel_test)
             job, alive = submit_research_job("sweep", payload)
             st.success(f"Sweep у черзі як задача #{job.id} ({job.status})")
             if not alive:

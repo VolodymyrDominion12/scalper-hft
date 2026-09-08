@@ -32,6 +32,7 @@ from scalper_hft.features.regimes import trend_strength, volatility_regime
 from scalper_hft.ml.bet_sizing import discretize, meta_size, prob_to_size
 from scalper_hft.ml.features import build_labeled_dataset
 from scalper_hft.ml.trainer import MlResult, train_walk_forward, train_walk_forward_meta
+from scalper_hft.ml.windows import default_ml_train_test, infer_bar_interval, resolve_ml_windows
 from scalper_hft.strategies.base import Strategy
 
 logger = logging.getLogger(__name__)
@@ -49,8 +50,10 @@ class MLStrategy(Strategy):
     """LightGBM alpha-модель з Triple-Barrier labeling та AFML sample weights.
 
     Параметри (передаються через **params):
-        train_bars      : кількість барів у rolling train-вікні (default 2000)
-        test_bars       : кількість барів на OOS крок (default 500)
+        train_bars      : labeled-зразків у rolling train-вікні
+                          (default залежить від ТФ: 1m=2000, 1h=350, 4h=100)
+        test_bars       : labeled-зразків на OOS крок (1m=500, 1h=120, 4h=40)
+        interval        : таймфрейм для дефолтних вікон; інакше з індексу df
         pt              : profit-take множник × ATR (default 1.0)
         sl              : stop-loss множник × ATR (default 1.0)
         holding_bars    : вертикальний бар'єр (default 10)
@@ -107,8 +110,6 @@ class MLStrategy(Strategy):
         if not _HAS_LGBM:
             raise ImportError("Встановіть lightgbm: uv add --optional ml lightgbm scikit-learn")
 
-        train_bars = int(self.get("train_bars", 2000))
-        test_bars = int(self.get("test_bars", 500))
         pt = float(self.get("pt", 1.0))
         sl = float(self.get("sl", 1.0))
         holding_bars = int(self.get("holding_bars", 10))
@@ -152,13 +153,37 @@ class MLStrategy(Strategy):
             logger.warning("MLStrategy: %s — повертаю нульові сигнали", e)
             return pd.Series(0, index=df.index)
 
-        if len(X) < train_bars + test_bars:
+        interval = infer_bar_interval(df, str(self.get("interval", "") or "") or None)
+        raw_train = self.params.get("train_bars")
+        raw_test = self.params.get("test_bars")
+        windows = resolve_ml_windows(
+            n_samples=len(X),
+            n_bars=len(df),
+            interval=interval,
+            train_bars=int(raw_train) if raw_train is not None else None,
+            test_bars=int(raw_test) if raw_test is not None else None,
+        )
+        if windows is None:
             logger.warning(
-                "MLStrategy: замало зразків (%d < %d). Збільшіть датасет.",
+                "MLStrategy: замало зразків (%d labeled, %s, %d барів). "
+                "Збільшіть датасет або задайте -p train_bars= -p test_bars=.",
                 len(X),
-                train_bars + test_bars,
+                interval,
+                len(df),
             )
             return pd.Series(0, index=df.index)
+        train_bars, test_bars = windows
+        expected = default_ml_train_test(interval)
+        if raw_train is None and raw_test is None and (train_bars, test_bars) != expected:
+            logger.warning(
+                "MLStrategy: %s labeled=%d < default %d+%d — стиснуто до train=%d test=%d",
+                interval,
+                len(X),
+                expected[0],
+                expected[1],
+                train_bars,
+                test_bars,
+            )
 
         if meta_filter:
             # ── Повний мета-лейблінг: primary → сторона, мета → розмір ──

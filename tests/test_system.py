@@ -170,6 +170,47 @@ def test_walk_forward_runs():
     assert res.avg_oos_sharpe != float("nan")
 
 
+def test_walk_forward_ml_uses_full_history_once():
+    """ml_strategy не повинна бачити лише Test=500; сигнали з повної історії."""
+    from scalper_hft.validation.walk_forward import run_walk_forward
+
+    class FakeML:
+        name = "ml_strategy"
+        family = "ml"
+        needs_trades = False
+        param_space: dict = {}
+
+        def __init__(self) -> None:
+            self.calls: list[int] = []
+
+        def generate_signals(self, df, trades=None, funding=None):  # noqa: ARG002
+            self.calls.append(len(df))
+            return pd.Series(1, index=df.index)
+
+    df = make_klines(1000)
+    strat = FakeML()
+    res = run_walk_forward(df, strat, train_bars=300, test_bars=100)
+    assert strat.calls == [len(df)]
+    assert len(res.windows) >= 4
+    assert all(w.n_trades > 0 for w in res.windows)
+
+
+def test_backtest_accepts_precomputed_signals():
+    from scalper_hft.backtest.engine import run_backtest
+
+    class Boom:
+        name = "boom"
+        needs_trades = False
+
+        def generate_signals(self, df, trades=None, funding=None):  # noqa: ARG002
+            raise AssertionError("generate_signals не має викликатись")
+
+    df = make_klines(80)
+    pinned = pd.Series(1, index=df.index)
+    res = run_backtest(df, Boom(), signals=pinned, position_pct=1.0)
+    assert res.metrics.n_trades >= 1
+
+
 def test_cscv_pbo_math():
     """CSCV: зі штучними даними, де edge є — PBO має бути низьким;
     де edge немає (шум) — PBO високий."""

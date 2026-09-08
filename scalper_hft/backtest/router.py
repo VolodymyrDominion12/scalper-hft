@@ -47,6 +47,7 @@ def run_strategy_backtest(
     queue_model: QueuePositionModel | None = None,
     spread_bps: float = 2.0,
     intrabar_exits: bool = False,
+    signals=None,
 ) -> BacktestResult | EventBacktestResult:
     name = getattr(strategy, "name", "")
     if name in EVENT_STRATEGIES:
@@ -65,6 +66,7 @@ def run_strategy_backtest(
                 trace=trace,
                 overlay=overlay,
                 interval=interval,
+                signals=signals,
             )
         # Параметри стратегії → параметри рушія (раніше лишались дефолти,
         # тож sweep/Optuna по market_maker повертали константу).
@@ -93,4 +95,5 @@ def run_strategy_backtest(
         queue_model=queue_model,
         spread_bps=spread_bps,
         intrabar_exits=intrabar_exits,
+        signals=signals,
     )

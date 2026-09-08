@@ -227,6 +227,21 @@ class TestMLStrategy:
         signals = strat.generate_signals(df)
         assert (signals == 0).all()
 
+    def test_default_windows_follow_bar_interval(self):
+        """Без явних train/test 1h не вимагає 2500 labeled-зразків."""
+        from scalper_hft.ml.windows import default_ml_train_test, infer_bar_interval
+        from scalper_hft.strategies import get_strategy
+
+        idx = pd.date_range("2024-01-01", periods=400, freq="1h")
+        df = _make_df(400)
+        df.index = idx
+        strat = get_strategy("ml_strategy")
+        assert infer_bar_interval(df) == "1h"
+        assert default_ml_train_test("1h") == (350, 120)
+        signals = strat.generate_signals(df)
+        assert len(signals) == len(df)
+        assert (signals == 0).all()  # 400 1h барів < 350+120 labeled
+
     def test_param_space_defined(self):
         from scalper_hft.strategies.ml_strategy import MLStrategy
 

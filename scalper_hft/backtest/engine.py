@@ -415,11 +415,14 @@ def run_backtest(
     queue_model: QueuePositionModel | None = None,
     spread_bps: float = 2.0,
     intrabar_exits: bool = False,
+    signals: pd.Series | None = None,
 ) -> BacktestResult:
     """Запуск бектесту стратегії на свічкових даних.
 
     df: DataFrame з колонками open/high/low/close/volume.
     strategy: екземпляр Strategy (generate_signals(df, trades, funding)).
+    signals: готові сигнали (індекс = df.index); якщо задано — generate_signals
+        не викликається (walk-forward для ML: модель бачить повну історію).
     trades: aggTrades DataFrame для стратегій, що потребують потоку заявок.
     funding: DataFrame з 'fundingRate' (індекс — час ставки). Додає funding
         грошовий потік: лонг платить позитивний фандінг, шорт отримує.
@@ -440,17 +443,20 @@ def run_backtest(
         raise ValueError("Замало даних для бектесту")
     cost = cost or CostModel()
     filter_trace = None
-    if trace:
-        signals, filter_trace = strategy.generate_signals_traced(df, trades=trades, funding=funding)
+    if signals is None:
+        if trace:
+            signals, filter_trace = strategy.generate_signals_traced(df, trades=trades, funding=funding)
+        else:
+            # Передаємо ОБИДВА потоки, якщо стратегія їх потребує (ensemble/
+            # supervisor з mixed-дітьми): раніше needs_trades блокував funding.
+            kwargs: dict = {}
+            if getattr(strategy, "needs_trades", False):
+                kwargs["trades"] = trades
+            if getattr(strategy, "needs_funding", False):
+                kwargs["funding"] = funding
+            signals = strategy.generate_signals(df, **kwargs)
     else:
-        # Передаємо ОБИДВА потоки, якщо стратегія їх потребує (ensemble/
-        # supervisor з mixed-дітьми): раніше needs_trades блокував funding.
-        kwargs: dict = {}
-        if getattr(strategy, "needs_trades", False):
-            kwargs["trades"] = trades
-        if getattr(strategy, "needs_funding", False):
-            kwargs["funding"] = funding
-        signals = strategy.generate_signals(df, **kwargs)
+        signals = signals.reindex(df.index).fillna(0.0)
     if len(signals) != len(df):
         raise ValueError("Довжина сигналів не збігається з даними")
 

@@ -202,6 +202,8 @@ def _build_cell_runner(
                     error="overlay: enabled=false",
                 )
             strat_kwargs = bind_strategy_kwargs(REGISTRY[name], policy.strategy_kwargs())
+        if name in {"ml_strategy", "ensemble"}:
+            strat_kwargs.setdefault("interval", interval)
         strategy = get_strategy(name, **strat_kwargs)
         if data_provider is not None:
             klines, trades, funding = data_provider(symbol, interval, days)

@@ -28,6 +28,10 @@ from scalper_hft.strategies.base import Strategy
 if TYPE_CHECKING:
     from scalper_hft.overlay.policy import CellPolicy
 
+# Стратегії з внутрішнім walk-forward / довгим warmup: generate_signals
+# на зрізі Test=500 барів дає нулі. Рахуємо сигнали один раз на повній історії.
+_FULL_HISTORY_STRATEGIES = frozenset({"ml_strategy", "ensemble"})
+
 
 @dataclass
 class WalkForwardWindow:
@@ -119,6 +123,16 @@ def run_walk_forward(
     oos_ret_parts: list[pd.Series] = []
     idx = 0
     start = 0
+
+    precomputed: pd.Series | None = None
+    if getattr(strategy, "name", "") in _FULL_HISTORY_STRATEGIES:
+        sig_kwargs: dict = {}
+        if getattr(strategy, "needs_trades", False) and trades is not None:
+            sig_kwargs["trades"] = trades
+        if getattr(strategy, "needs_funding", False) and funding is not None:
+            sig_kwargs["funding"] = funding
+        precomputed = strategy.generate_signals(df, **sig_kwargs)
+
     while start + train_bars + test_bars <= len(df):
         tr = df.iloc[start : start + train_bars]
         te = df.iloc[start + train_bars : start + train_bars + test_bars]
@@ -142,6 +156,7 @@ def run_walk_forward(
             is_maker=is_maker,
             overlay=overlay,
             interval=interval,
+            signals=None if precomputed is None else precomputed.reindex(tr.index),
         )
         res_oos = run_strategy_backtest(
             te,
@@ -154,6 +169,7 @@ def run_walk_forward(
             is_maker=is_maker,
             overlay=overlay,
             interval=interval,
+            signals=None if precomputed is None else precomputed.reindex(te.index),
         )
 
         windows.append(
