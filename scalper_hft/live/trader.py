@@ -34,6 +34,7 @@ from scalper_hft.data.client import ExchangeClient
 from scalper_hft.live.account import PaperAccount
 from scalper_hft.live.control import ControlState, load_control
 from scalper_hft.live.exit_ladders import OneWayTradingLadder
+from scalper_hft.live.pending_orders import PendingOrder, PendingOrderManager
 from scalper_hft.live.risk_gate import CooldownState, decide_entry
 from scalper_hft.live.ws_user_stream import BinanceUserDataStream, OrderTradeEvent
 from scalper_hft.strategies.base import Strategy
@@ -99,33 +100,6 @@ class TradeDecision:
     symbol: str = ""
     size: float = 0.0
     reason: str = ""
-
-
-@dataclass
-class PendingOrder:
-    """Live maker-ордер, що ще не заповнився (resting на біржі).
-
-    Локальна позиція брониться ЛИШЕ після підтвердженого філа (fetch_order):
-    раніше позиція бронилась одразу після submit → phantom-позиції при
-    unfilled/часткових філах (див. C2 у code review).
-    """
-
-    client_order_id: str
-    order_id: str  # exchange order id (fallback = client id)
-    symbol: str
-    side: str  # buy | sell (біржовий бік)
-    size: float  # ОРИГІНАЛЬНИЙ розмір ордера (не мутує при часткових філах)
-    price: float
-    reduce_only: bool
-    kind: str  # "open" | "close"
-    pos_side: str = ""  # long | short (для kind="open")
-    placed_ts: pd.Timestamp | None = None
-    booked_qty: float = 0.0  # скільки вже зараховано у локальний рахунок (WS/REST дельта-облік)
-
-    @property
-    def remaining_qty(self) -> float:
-        """Ще не зарахована частина ордера."""
-        return max(0.0, self.size - self.booked_qty)
 
 
 class SilentAttritionKillSwitch:
@@ -230,10 +204,14 @@ class LiveTrader:
         self.control_path = control_path
         self.cooldown = CooldownState()
         self._entry_size_mult = 1.0
-        # C2: live maker-ордери, що ще не заповнились (clientOrderId → PendingOrder)
-        self.pending_orders: dict[str, PendingOrder] = {}
-        # B3: WS (async) і poll_pending_orders (sync) — спільний журнал під RLock
-        self._pending_lock = threading.RLock()
+        self._pending = PendingOrderManager(
+            self.symbol,
+            self.account,
+            self.client,
+            dry_run=self.settings.dry_run,
+            interval=self.interval,
+            maker_fill_wait_bars=int(getattr(self.settings, "maker_fill_wait_bars", 1)),
+        )
         # Ідемпотентність submit: намір → coid, що пережив таймаут (retry з тим самим id)
         self._intent_coids: dict[str, str] = {}
         self._last_market_fill_price: float | None = None
@@ -249,6 +227,20 @@ class LiveTrader:
         self._aux_data_cache: dict[str, tuple[float, pd.DataFrame | None]] = {}
         # HMM: (n_bars_fitted, model) — refit не частіше ніж раз на 250 барів
         self._hmm_fit_state: tuple[int, object] | None = None
+
+    @property
+    def pending_orders(self) -> dict[str, PendingOrder]:
+        return self._pending.pending_orders
+
+    @property
+    def _pending_lock(self) -> threading.RLock:
+        return self._pending.lock
+
+    def _sync_pending_state(self) -> None:
+        self._pending.client = self.client
+        self._pending.dry_run = bool(self.settings.dry_run)
+        self._pending.interval = self.interval
+        self._pending.maker_fill_wait_bars = int(getattr(self.settings, "maker_fill_wait_bars", 1))
 
     _AUX_DATA_TTL_SEC = 300.0
     _HMM_REFIT_BARS = 250
@@ -485,7 +477,7 @@ class LiveTrader:
 
     def _execute_live_maker(self, decision: TradeDecision, price: float, ts: pd.Timestamp) -> str:
         """Live maker-шлях execute під ``_pending_lock`` (без повторного захоплення)."""
-        pend = next((po for po in self.pending_orders.values() if po.symbol == self.symbol), None)
+        pend = self._pending.find_for_symbol()
 
         if decision.action == "hold":
             # want == have. Якщо лишився resting-ордер, що суперечить утриманню —
@@ -493,16 +485,16 @@ class LiveTrader:
             # рішенні зберегти позицію.
             if pend is not None:
                 if pend.kind == "open":
-                    self._cancel_pending(pend, reason="hold_flat")
+                    self._pending.cancel(pend, reason="hold_flat")
                 elif self.symbol in self.account.positions:
-                    self._cancel_pending(pend, reason="hold_keep_position")
+                    self._pending.cancel(pend, reason="hold_keep_position")
             return "hold"
 
         if decision.action == "close":
             if pend is not None:
                 if pend.kind == "open":
                     # закриваємо НАМІР (відміна resting open-ордера) — позиції ще немає
-                    self._cancel_pending(pend, reason="close_before_open")
+                    self._pending.cancel(pend, reason="close_before_open")
                     return "canceled_pending_open"
                 return "hold:closing_pending"  # close вже в роботі — чекаємо філа
             if self.symbol not in self.account.positions:
@@ -530,7 +522,7 @@ class LiveTrader:
                 return "hold:closing_pending"  # не відкриваємо, поки close не заповнився
             if pend.pos_side == side:
                 return "hold:open_pending"  # той самий напрямок вже в роботі
-            self._cancel_pending(pend, reason="flip_pending_open")  # протилежний — скасовуємо
+            self._pending.cancel(pend, reason="flip_pending_open")  # протилежний — скасовуємо
         ok, status = self._submit_order(
             "buy" if side == "long" else "sell", size, price, reduce_only=False, kind="open", pos_side=side
         )
@@ -605,8 +597,9 @@ class LiveTrader:
                 )
                 self._intent_coids.pop(intent, None)
                 oid = str((resp or {}).get("id") or coid)
-                with self._pending_lock:
-                    self.pending_orders[coid] = PendingOrder(
+                self._pending.register(
+                    coid,
+                    PendingOrder(
                         client_order_id=coid,
                         order_id=oid,
                         symbol=self.symbol,
@@ -617,7 +610,8 @@ class LiveTrader:
                         kind=kind,
                         pos_side=pos_side,
                         placed_ts=pd.Timestamp.now(tz="UTC").tz_localize(None),
-                    )
+                    ),
+                )
                 return True, "pending"
             resp = self.client.create_order(self.symbol, "market", side, size, params=params, client_order_id=coid)
             self._intent_coids.pop(intent, None)
@@ -679,8 +673,9 @@ class LiveTrader:
             if str((o or {}).get("clientOrderId") or "") != coid:
                 continue
             oid = str(o.get("id") or coid)
-            with self._pending_lock:
-                self.pending_orders[coid] = PendingOrder(
+            self._pending.register(
+                coid,
+                PendingOrder(
                     client_order_id=coid,
                     order_id=oid,
                     symbol=self.symbol,
@@ -691,7 +686,8 @@ class LiveTrader:
                     kind=kind,
                     pos_side=pos_side,
                     placed_ts=pd.Timestamp.now(tz="UTC").tz_localize(None),
-                )
+                ),
+            )
             self._intent_coids.pop(intent, None)
             logger.warning("Відновлено існуючий ордер %s замість дубля (id=%s)", coid, oid)
             return "pending"
@@ -701,25 +697,13 @@ class LiveTrader:
 
     def _cancel_pending(self, po: PendingOrder, reason: str = "") -> None:
         """Скасувати resting-ордер на біржі та прибрати з журналу (best effort)."""
-        cancel = getattr(self.client, "cancel_order", None)
-        if cancel is not None:
-            try:
-                cancel(po.order_id, po.symbol)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("cancel %s: %s", po.order_id, exc)
-        with self._pending_lock:
-            self.pending_orders.pop(po.client_order_id, None)
-        logger.info("Скасовано pending %s (%s)", po.client_order_id, reason or "n/a")
+        self._sync_pending_state()
+        self._pending.cancel(po, reason=reason)
 
     def cancel_all_pending(self, reason: str = "shutdown") -> int:
         """Скасувати всі робочі resting-ордери (при shutdown або аварії)."""
-        with self._pending_lock:
-            pending = list(self.pending_orders.values())
-        count = 0
-        for po in pending:
-            self._cancel_pending(po, reason=reason)
-            count += 1
-        return count
+        self._sync_pending_state()
+        return self._pending.cancel_all(reason=reason)
 
     def shutdown(self, reason: str = "shutdown") -> None:
         """Безпечне завершення роботи трейдера: скасування всіх pending-ордерів
@@ -737,148 +721,15 @@ class LiveTrader:
         logger.info("Shutdown завершено: скасовано %d локальних pending-ордерів", canceled)
 
     def poll_pending_orders(self, now: pd.Timestamp | None = None) -> list[str]:
-        """Live maker: опитати resting-ордери → забронити філи, скасувати таймаути.
-
-        Викликається на початку кожного кроку циклу (run_trader_once), ДО звірки:
-        заповнені ордери одразу відображаються в локальному рахунку.
-        """
-        with self._pending_lock:
-            if self.settings.dry_run or not self.pending_orders:
-                return []
-            pending_snapshot = list(self.pending_orders.items())
-        fetch = getattr(self.client, "fetch_order", None)
-        if fetch is None:
-            return ["no_fetch_support"]  # тестовий/мінімальний клієнт
-        cancel = getattr(self.client, "cancel_order", None)
-        # Вік ордера рахуємо за СТІНОЧНИМ часом (placed_ts = реальний час),
-        # а не за бар-міткою now (у тестах/реплеї вони можуть розходитись).
-        ts = _as_naive_utc(pd.Timestamp.now(tz="UTC"))
-        wait_bars = int(getattr(self.settings, "maker_fill_wait_bars", 1))
-        timeout_s = max(_interval_seconds(self.interval), 1.0) * max(wait_bars, 1)
-        events: list[str] = []
-        for coid, po in pending_snapshot:
-            try:
-                info = fetch(po.order_id, po.symbol)
-            except Exception as exc:  # noqa: BLE001
-                logger.error("fetch_order %s: %s", po.order_id, exc)
-                continue
-            status = str((info or {}).get("status") or "").lower()
-            filled = float((info or {}).get("filled") or 0.0)
-            avg = float((info or {}).get("average") or (info or {}).get("price") or po.price)
-            with self._pending_lock:
-                live_po = self.pending_orders.get(coid)
-                if live_po is None:
-                    continue
-                if status in ("closed", "filled") or filled >= live_po.size - 1e-9:
-                    self._book_fill_delta(live_po, live_po.size, avg, ts)
-                    self.pending_orders.pop(coid, None)
-                    events.append(f"filled:{coid}")
-                    continue
-                if filled > 1e-9:
-                    self._book_fill_delta(live_po, filled, avg, ts)
-                    if cancel is not None:
-                        try:
-                            cancel(live_po.order_id, live_po.symbol)
-                        except Exception as exc:  # noqa: BLE001
-                            logger.warning("cancel partial %s: %s", live_po.order_id, exc)
-                    self.pending_orders.pop(coid, None)
-                    events.append(f"partial:{coid}")
-                    continue
-                if status in ("canceled", "cancelled", "expired", "rejected"):
-                    self.pending_orders.pop(coid, None)
-                    events.append(f"dead:{status}:{coid}")
-                    continue
-                age_s = 0.0
-                if live_po.placed_ts is not None:
-                    age_s = (ts - _as_naive_utc(live_po.placed_ts)).total_seconds()
-                if age_s > timeout_s:
-                    if cancel is not None:
-                        try:
-                            cancel(live_po.order_id, live_po.symbol)
-                        except Exception as exc:  # noqa: BLE001
-                            logger.warning("cancel timeout %s: %s", live_po.order_id, exc)
-                    self.pending_orders.pop(coid, None)
-                    events.append(f"timeout_cancel:{coid}")
-        return events
-
-    def _book_pending_fill(self, po: PendingOrder, size: float, price: float, ts: pd.Timestamp) -> None:
-        """Забронити підтверджений філ у локальному рахунку (maker-комісії).
-
-        Open при вже відкритій позиції — доливка з середньозваженою ціною
-        (часткові філи одного ордера), а не тихий пропуск.
-        """
-        if po.kind == "open":
-            existing = self.account.positions.get(self.symbol)
-            if existing is None:
-                self.account.open_position(self.symbol, po.pos_side, size, price, ts, is_maker=True)
-            elif existing.side == po.pos_side:
-                self.account.add_to_position(self.symbol, size, price, ts, is_maker=True)
-            else:
-                # протилежна сторона — не бронюємо; розбіжність зловить reconcile
-                logger.error(
-                    "Філ %s (%s) при відкритій протилежній позиції %s — пропущено, звірка обов'язкова",
-                    po.client_order_id,
-                    po.pos_side,
-                    existing.side,
-                )
-        else:
-            if self.symbol in self.account.positions:
-                self.account.close_position(self.symbol, price, ts, is_maker=True, size=size)
-
-    def _book_fill_delta(self, po: PendingOrder, cumulative_filled: float, price: float, ts: pd.Timestamp) -> float:
-        """Забронювати лише ДЕЛЬТУ від авторитетного cumulative (WS або REST).
-
-        Ідемпотентно: дубльовані WS-події або REST-полл після WS-філа не
-        подвоюють позицію. Повертає фактично зараховану кількість.
-        """
-        delta = min(cumulative_filled, po.size) - po.booked_qty
-        if delta <= 1e-9:
-            return 0.0
-        self._book_pending_fill(po, delta, price, ts)
-        po.booked_qty += delta
-        return delta
+        """Live maker: опитати resting-ордери → забронити філи, скасувати таймаути."""
+        self._sync_pending_state()
+        return self._pending.poll(now=now)
 
     # ── WebSocket User Data Stream ───────────────────────────────────────────
 
     def on_ws_order_trade(self, event: OrderTradeEvent) -> None:
-        """Обробка події ORDER_TRADE_UPDATE з WebSocket User Data Stream.
-
-        Миттєво бронює філи для pending-ордерів без очікування наступного
-        REST-поллінгу або закриття бару, мінімізуючи lag виконання.
-        """
-        coid = event.client_order_id
-        if not coid:
-            return
-        with self._pending_lock:
-            if coid not in self.pending_orders:
-                return
-            po = self.pending_orders[coid]
-            ts = _as_naive_utc(pd.Timestamp.now(tz="UTC"))
-            status = event.status.upper()
-            if status in ("FILLED", "CLOSED"):
-                fill_px = event.last_filled_price if event.last_filled_price > 0 else po.price
-                cumulative = event.cumulative_filled_qty if event.cumulative_filled_qty > 0 else po.size
-                booked = self._book_fill_delta(po, max(cumulative, po.size), fill_px, ts)
-                self.pending_orders.pop(coid, None)
-                logger.info("WS fill booked: %s (delta=%.4f, px=%.4f)", coid, booked, fill_px)
-            elif status == "PARTIALLY_FILLED":
-                cumulative = event.cumulative_filled_qty
-                if cumulative <= 1e-9:
-                    cumulative = po.booked_qty + event.last_filled_qty
-                if cumulative > po.booked_qty + 1e-9:
-                    fill_px = event.last_filled_price if event.last_filled_price > 0 else po.price
-                    booked = self._book_fill_delta(po, cumulative, fill_px, ts)
-                    if po.remaining_qty <= 1e-9:
-                        self.pending_orders.pop(coid, None)
-                    logger.info(
-                        "WS partial fill booked: %s (delta=%.4f, remaining=%.4f)",
-                        coid,
-                        booked,
-                        po.remaining_qty,
-                    )
-            elif status in ("CANCELED", "CANCELLED", "EXPIRED", "REJECTED"):
-                self.pending_orders.pop(coid, None)
-                logger.info("WS order dead: %s (%s)", coid, status)
+        """Обробка події ORDER_TRADE_UPDATE з WebSocket User Data Stream."""
+        self._pending.on_ws_order_trade(event)
 
     def start_user_stream(self) -> BinanceUserDataStream | None:
         """Ініціалізувати та повернути клієнт WebSocket User Data Stream."""

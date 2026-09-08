@@ -72,7 +72,81 @@ def _maker_pair_positions(
     position_pct: float,
     rng: np.random.Generator | None = None,
 ) -> pd.Series:
-    """Та сама модель філу, що й paper: touch + P(fill | distance-to-mid)."""
+    """Та сама модель філу, що й paper: touch + P(fill | distance-to-mid).
+
+    Hot loop використовує попередньо обчислені numpy-масиви touch/probability
+    замість Python-викликів decide_fill на кожному барі.
+    """
+    from scalper_hft.live.fills import (
+        vector_fill_probability,
+        vector_post_only_touched,
+    )
+
+    target = (signals.astype(float).shift(1).fillna(0.0).clip(-1, 1) * position_pct).values
+    n = len(common)
+    actual = np.zeros(n)
+    curr = 0.0
+
+    c1 = common["leg1"].to_numpy(dtype=float)
+    c2 = common["leg2"].to_numpy(dtype=float)
+    h1 = common["l1_high"].to_numpy(dtype=float)
+    lo1 = common["l1_low"].to_numpy(dtype=float)
+    h2 = common["l2_high"].to_numpy(dtype=float)
+    lo2 = common["l2_low"].to_numpy(dtype=float)
+
+    lim1 = np.empty(n, dtype=float)
+    lim2 = np.empty(n, dtype=float)
+    lim1[0] = lim2[0] = np.nan
+    lim1[1:] = c1[:-1]
+    lim2[1:] = c2[:-1]
+    mid1 = 0.5 * (h1 + lo1)
+    mid2 = 0.5 * (h2 + lo2)
+
+    t1_buy = vector_post_only_touched("buy", lim1, h1, lo1)
+    t1_sell = vector_post_only_touched("sell", lim1, h1, lo1)
+    t2_buy = vector_post_only_touched("buy", lim2, h2, lo2)
+    t2_sell = vector_post_only_touched("sell", lim2, h2, lo2)
+    p1_buy = vector_fill_probability("buy", lim1, mid1)
+    p1_sell = vector_fill_probability("sell", lim1, mid1)
+    p2_buy = vector_fill_probability("buy", lim2, mid2)
+    p2_sell = vector_fill_probability("sell", lim2, mid2)
+
+    for i in range(1, n):
+        t = float(target[i])
+        if t == curr:
+            actual[i] = curr
+            continue
+        if t > 0:
+            s1, s2 = "sell", "buy"
+        elif t < 0:
+            s1, s2 = "buy", "sell"
+        else:
+            s1, s2 = ("buy", "sell") if curr > 0 else ("sell", "buy")
+        touch1 = t1_buy[i] if s1 == "buy" else t1_sell[i]
+        touch2 = t2_buy[i] if s2 == "buy" else t2_sell[i]
+        prob1 = p1_buy[i] if s1 == "buy" else p1_sell[i]
+        prob2 = p2_buy[i] if s2 == "buy" else p2_sell[i]
+        filled1 = False
+        filled2 = False
+        if touch1:
+            d1 = 1.0 if rng is None else float(rng.random())
+            filled1 = d1 <= prob1
+        if touch2:
+            d2 = 1.0 if rng is None else float(rng.random())
+            filled2 = d2 <= prob2
+        if filled1 and filled2:
+            curr = t
+        actual[i] = curr
+    return pd.Series(actual, index=common.index)
+
+
+def _maker_pair_positions_reference(
+    signals: pd.Series,
+    common: pd.DataFrame,
+    position_pct: float,
+    rng: np.random.Generator | None = None,
+) -> pd.Series:
+    """Референсна (повільна) реалізація для регресійних тестів."""
     from scalper_hft.live.fills import both_or_neither, decide_fill
 
     target = signals.astype(float).shift(1).fillna(0.0).clip(-1, 1) * position_pct

@@ -79,6 +79,59 @@ def both_or_neither(d1: FillDecision, d2: FillDecision) -> tuple[FillDecision, F
     )
 
 
+def vector_post_only_touched(side: str, limit: np.ndarray, high: np.ndarray, low: np.ndarray) -> np.ndarray:
+    """Векторизований post_only_touched для масивів OHLC."""
+    limit = np.asarray(limit, dtype=float)
+    high = np.asarray(high, dtype=float)
+    low = np.asarray(low, dtype=float)
+    if side == "buy":
+        return low <= limit
+    return high >= limit
+
+
+def vector_fill_probability(
+    side: str,
+    limit: np.ndarray,
+    mid: np.ndarray,
+    k: float = 0.08,
+) -> np.ndarray:
+    """Векторизований fill_probability (NaN → 0)."""
+    limit = np.asarray(limit, dtype=float)
+    mid = np.asarray(mid, dtype=float)
+    safe = np.where(mid > 0, mid, np.nan)
+    if side == "buy":
+        dist_bps = (mid - limit) / safe * 10_000.0
+    else:
+        dist_bps = (limit - mid) / safe * 10_000.0
+    p = np.exp(-k * np.maximum(dist_bps, 0.0))
+    return np.clip(p, 0.0, 1.0)
+
+
+def vector_both_legs_filled(
+    s1: str,
+    s2: str,
+    *,
+    t1_buy: np.ndarray,
+    t1_sell: np.ndarray,
+    t2_buy: np.ndarray,
+    t2_sell: np.ndarray,
+    p1_buy: np.ndarray,
+    p1_sell: np.ndarray,
+    p2_buy: np.ndarray,
+    p2_sell: np.ndarray,
+    draws1: np.ndarray,
+    draws2: np.ndarray,
+) -> np.ndarray:
+    """All-or-none fill mask для двох ніг (як both_or_neither + decide_fill)."""
+    touch1 = t1_buy if s1 == "buy" else t1_sell
+    touch2 = t2_buy if s2 == "buy" else t2_sell
+    prob1 = p1_buy if s1 == "buy" else p1_sell
+    prob2 = p2_buy if s2 == "buy" else p2_sell
+    f1 = touch1 & (draws1 <= prob1)
+    f2 = touch2 & (draws2 <= prob2)
+    return f1 & f2
+
+
 @dataclass(frozen=True)
 class LeggingResolution:
     """Результат аналізу розсинхронізації виконання двох ніг."""
