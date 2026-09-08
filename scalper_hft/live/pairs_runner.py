@@ -334,6 +334,30 @@ class PairsPaperRunner:
         self.leg2 = leg2
         self.interval = interval or "1h"
         self.strategy = strategy or PairsArb()
+        # Overfitting-гейт (paper): за REQUIRE_AUDIT_PASS=true — fail-closed,
+        # інакше гучне попередження, що комірка торгується без свіжого PASS.
+        from scalper_hft.live.audit_gate import audit_gate_check, require_audit_pass
+
+        if settings.require_audit_pass:
+            require_audit_pass(
+                self.strategy.name,
+                [self.leg1, self.leg2],
+                self.interval,
+                max_age_days=settings.audit_max_age_days,
+            )
+        else:
+            for _sym in (self.leg1, self.leg2):
+                _ok, _msg = audit_gate_check(
+                    self.strategy.name, _sym, self.interval, max_age_days=settings.audit_max_age_days
+                )
+                if not _ok:
+                    logger.warning(
+                        "overfitting-гейт: %s %s %s — %s (paper без REQUIRE_AUDIT_PASS)",
+                        self.strategy.name,
+                        _sym,
+                        self.interval,
+                        _msg,
+                    )
         self.store = store
         self.client = client  # лише для звірки у paper (no-op); live заборонено вище
         self.control_path = Path(control_path) if control_path is not None else DEFAULT_CONTROL_PATH
@@ -699,6 +723,16 @@ class PairsLiveRunner(PairsPaperRunner):
         self.client = client  # обов'язковий для live
         if self.client is None:
             raise RuntimeError("PairsLiveRunner потребує ExchangeClient (client)")
+        # Live — fail-closed hard-гейт: без свіжого PASS overfitting-аудиту
+        # по обох ногах старт заборонено (overfitting-audit skill).
+        from scalper_hft.live.audit_gate import require_audit_pass
+
+        require_audit_pass(
+            self.strategy.name,
+            [self.leg1, self.leg2],
+            self.interval,
+            max_age_days=settings.audit_max_age_days,
+        )
         self.control_path = Path(control_path) if control_path is not None else DEFAULT_CONTROL_PATH
         payload: dict[str, Any] | None = None
         if restore and store is not None and account is None:

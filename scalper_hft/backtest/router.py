@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 from scalper_hft.backtest.engine import BacktestResult, run_backtest
 from scalper_hft.backtest.event_engine import EventBacktestResult, run_event_backtest
 from scalper_hft.backtest.execution import CostModel
+from scalper_hft.backtest.micro_price import QueuePositionModel
 from scalper_hft.strategies.base import Strategy
 
 if TYPE_CHECKING:
@@ -43,6 +44,9 @@ def run_strategy_backtest(
     trace: bool = False,
     overlay: CellPolicy | None = None,
     interval: str = "1m",
+    queue_model: QueuePositionModel | None = None,
+    spread_bps: float = 2.0,
+    intrabar_exits: bool = False,
 ) -> BacktestResult | EventBacktestResult:
     name = getattr(strategy, "name", "")
     if name in EVENT_STRATEGIES:
@@ -86,4 +90,7 @@ def run_strategy_backtest(
         trace=trace,
         overlay=overlay,
         interval=interval,
+        queue_model=queue_model,
+        spread_bps=spread_bps,
+        intrabar_exits=intrabar_exits,
     )

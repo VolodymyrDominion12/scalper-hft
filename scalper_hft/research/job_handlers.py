@@ -236,6 +236,13 @@ def handle_overfit(payload: dict[str, Any], job_dir: Path, **_: Any) -> None:
     if audit.status != "ok":
         raise RuntimeError(audit.error or "аудит комірки не вдався")
     save_cell_audit(job_dir, audit)
+
+    # Журнал вердиктів — hard-гейт для paper/live (live/audit_gate.py)
+    from scalper_hft.validation.cell_audit import cell_verdict
+    from scalper_hft.validation.verdict_store import record_verdict
+
+    label, reasons = cell_verdict(audit)
+    record_verdict(name, symbol, interval, label, reasons)
     logger.info(
         "overfit %s %s %s: oos=%.3f dsr=%s n_trades=%s",
         name,

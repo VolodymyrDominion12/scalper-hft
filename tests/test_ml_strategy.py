@@ -145,9 +145,26 @@ class TestMLStrategy:
         from scalper_hft.strategies import get_strategy
 
         df = _make_df(800)
-        strat = get_strategy("ml_strategy", train_bars=50, test_bars=20, holding_bars=8)
+        # дискретні ±1/0 — лише у legacy-режимі (без sizing за замовчуванням)
+        strat = get_strategy(
+            "ml_strategy",
+            train_bars=50,
+            test_bars=20,
+            holding_bars=8,
+            prob_size=False,
+            meta_filter=False,
+        )
         signals = strat.generate_signals(df)
         assert set(signals.unique()).issubset({-1, 0, 1}), f"Невалідні значення: {signals.unique()}"
+
+    def test_default_sizing_bounded(self):
+        """Дефолт (prob_size/meta_filter + discretize) — розміри у [-1, 1]."""
+        from scalper_hft.strategies import get_strategy
+
+        df = _make_df(800)
+        strat = get_strategy("ml_strategy", train_bars=50, test_bars=20, holding_bars=8)
+        signals = strat.generate_signals(df)
+        assert signals.abs().max() <= 1.0 + 1e-9
 
     def test_signals_not_all_zero(self):
         """Стратегія має генерувати хоч якісь сигнали на достатньому датасеті."""

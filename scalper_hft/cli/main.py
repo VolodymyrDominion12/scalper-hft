@@ -74,6 +74,27 @@ def main(argv: list[str] | None = None) -> None:
         help="Тип барів для бектесту (time, dollar, volume). Для не-time використовується aggTrades",
     )
     p.add_argument("--bar-threshold", type=float, default=100000.0, help="Поріг для об'ємних або доларових барів")
+    p.add_argument(
+        "--intrabar",
+        action="store_true",
+        help="Внутрішньобарові SL/TP: вихід за ціною рівня на барі дотику (песимістично SL при SL+TP разом)",
+    )
+    p.add_argument(
+        "--queue-model",
+        action="store_true",
+        dest="queue_model",
+        help="Maker-філи через QueuePositionModel (черга/VPIN-проксі): touch-through не гарантує філ",
+    )
+    p.add_argument(
+        "--spread-bps", type=float, default=2.0, dest="spread_bps", help="Оцінка спреду (bps) для queue-моделі"
+    )
+    p.add_argument(
+        "--vol-ref",
+        type=float,
+        default=0.0,
+        dest="vol_ref",
+        help="Референс-волатильність для vol-aware slippage (0 = вимкнено)",
+    )
     p.add_argument("--enqueue", action="store_true", help="Поставити в чергу jobs.sqlite і вийти (не рахувати тут)")
     p.set_defaults(func=_cli_pkg.cmd_backtest)
 

@@ -86,6 +86,10 @@ class Settings:
     portfolio_notional_pct: float = field(default_factory=lambda: _env_float("PORTFOLIO_NOTIONAL_PCT", 0.60))
     max_losing_months: int = field(default_factory=lambda: _env_int("MAX_LOSING_MONTHS", 2))
     maker_fill_wait_bars: int = field(default_factory=lambda: _env_int("MAKER_FILL_WAIT_BARS", 1))
+    # Hard-гейт overfitting-аудиту: live (DRY_RUN=false) завжди вимагає свіжий
+    # PASS; для paper гейт вмикається явно (REQUIRE_AUDIT_PASS=true)
+    require_audit_pass: bool = field(default_factory=lambda: _env_bool("REQUIRE_AUDIT_PASS", False))
+    audit_max_age_days: int = field(default_factory=lambda: _env_int("AUDIT_MAX_AGE_DAYS", 30))
 
     # Дані
     data_dir: Path = field(default_factory=lambda: Path(os.getenv("DATA_DIR", "./data")))

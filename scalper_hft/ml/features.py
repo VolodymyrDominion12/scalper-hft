@@ -49,6 +49,9 @@ _FRAC_DIFF_COLS = ["fd_close", "fd_volume"]
 _MICRO_COLS = ["vpin", "kyle_t", "roll_spread", "amihud", "parkinson_vol", "corwin_schultz_spread", "signed_flow_ac"]
 _HMM_COLS = ["hmm_state", "hmm_p0", "hmm_p1", "hmm_p2", "hmm_p3", "hmm_p4"]
 _GARCH_COLS = ["garch_sigma"]
+# Глибина стакана: depth5-снапшоти (depth_*) та bookTicker-attach (book_*)
+_DEPTH_COLS = ["depth_imb", "depth_imb_l1", "depth_spread_bps"]
+_BOOK_COLS = ["book_imb", "book_imb_chg"]
 
 
 def _build_features(
@@ -60,9 +63,27 @@ def _build_features(
     add_hmm: bool = False,
     add_garch: bool = False,
     hmm_states: int = 3,
+    depth: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Будує матрицю фіч (без lookahead)."""
     f = add_standard_features(df)
+
+    # bookTicker imbalance, прикріплений до klines (load_research_data)
+    if "imbalance" in df.columns:
+        f["book_imb"] = df["imbalance"].astype(float).ffill().fillna(0.0)
+        f["book_imb_chg"] = f["book_imb"].diff().fillna(0.0)
+
+    # depth5-снапшоти стакана (VPS-рекордер) → барові фічі (ffill, без lookahead)
+    if depth is not None and not depth.empty:
+        from scalper_hft.features.depth_features import (
+            depth_imbalance,
+            depth_spread_bps,
+            top_of_book_imbalance,
+        )
+
+        f["depth_imb"] = depth_imbalance(depth).reindex(f.index, method="ffill").fillna(0.0)
+        f["depth_imb_l1"] = top_of_book_imbalance(depth).reindex(f.index, method="ffill").fillna(0.0)
+        f["depth_spread_bps"] = depth_spread_bps(depth).reindex(f.index, method="ffill").fillna(0.0)
 
     # CVD з тікових угод (якщо є)
     if trades is not None and not trades.empty:
@@ -138,6 +159,7 @@ def build_labeled_dataset(
     bar_type: str = "time",
     bar_threshold: float = 100_000.0,
     return_t1: bool = False,
+    depth: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.Series, pd.Series | None] | tuple[pd.DataFrame, pd.Series, pd.Series | None, pd.Series]:
     """Будує (X, y, sample_weights) для ML навчання.
 
@@ -158,6 +180,8 @@ def build_labeled_dataset(
         add_hmm: HMM-режими (каузальні, без lookahead).
         add_garch: GARCH σ_{t+1} (без lookahead).
         hmm_states: кількість HMM-станів (якщо add_hmm).
+        depth: depth5-снапшоти стакана (data/{SYMBOL}_depth5.parquet) —
+            барові depth_imb/depth_spread фічі (ffill, без lookahead).
 
     Returns:
         (X, y, w) або (X, y, w, t1) при return_t1=True:
@@ -188,6 +212,7 @@ def build_labeled_dataset(
         add_hmm=add_hmm,
         add_garch=add_garch,
         hmm_states=hmm_states,
+        depth=depth,
     )
 
     if mode == "triple_barrier":
@@ -293,9 +318,9 @@ def _build_horizon(
 
 
 def _get_feat_cols(f: pd.DataFrame) -> list[str]:
-    """Повертає доступні фічі з пріоритетом frac_diff/micro/HMM/GARCH."""
+    """Повертає доступні фічі з пріоритетом frac_diff/micro/HMM/GARCH/depth."""
     cols = list(_FEATURE_COLS_BASE)
-    for c in _FRAC_DIFF_COLS + _MICRO_COLS + _HMM_COLS + _GARCH_COLS:
+    for c in _FRAC_DIFF_COLS + _MICRO_COLS + _HMM_COLS + _GARCH_COLS + _DEPTH_COLS + _BOOK_COLS:
         if c in f.columns:
             cols.append(c)
     return [c for c in cols if c in f.columns]

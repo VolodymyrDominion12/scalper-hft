@@ -83,6 +83,11 @@ def cmd_overfit(args: argparse.Namespace) -> None:
     print("\n" + "═" * 60)
     print(f"ВЕРДИКТ: {label}" + (f"\n  причини: {reasons}" if reasons else ""))
 
+    # Журнал вердиктів — hard-гейт для paper/live (live/audit_gate.py)
+    from scalper_hft.validation.verdict_store import record_verdict
+
+    record_verdict(args.strategy, args.symbol, args.interval, label, reasons)
+
 
 def cmd_ml(args: argparse.Namespace) -> None:
     """Walk-forward ML: Triple-Barrier + LightGBM + AFML sample weights."""

@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 
 from scalper_hft.features.regimes import trend_strength, volatility_regime
-from scalper_hft.ml.bet_sizing import meta_size, prob_to_size
+from scalper_hft.ml.bet_sizing import discretize, meta_size, prob_to_size
 from scalper_hft.ml.features import build_labeled_dataset
 from scalper_hft.ml.trainer import MlResult, train_walk_forward, train_walk_forward_meta
 from scalper_hft.strategies.base import Strategy
@@ -59,9 +59,13 @@ class MLStrategy(Strategy):
         confidence_thr  : мін. впевненість для сигналу (default 0.50 = без фільтра)
         regime_filter   : 'none' | 'vol' | 'trend' (default 'none')
         vol_regime_ok   : 'low,normal' | 'normal' | 'high,normal' (default 'normal')
-        prob_size       : sizing ∝ впевненості primary (AFML Ch.10.3), default False
-        meta_filter     : повний мета-лейблінг + sizing (default False)
+        prob_size       : sizing ∝ впевненості primary (AFML Ch.10.3), default True
+        meta_filter     : повний мета-лейблінг + sizing (default True)
         meta_scale      : множник розміру мета-ставки (default 1.0)
+        discretize_step : крок дискретизації розміру (AFML Ch.10.5, default 0.25;
+            0 = вимкнено) — прибирає jitter-переторговку → менше turnover/комісій
+        add_depth       : depth5/bookTicker фічі стакана (default True, якщо дані є)
+        symbol          : символ для завантаження data/{symbol}_depth5.parquet
         ood_threshold   : DI veto (0 = вимкнено); >0 блокує OOD-бари
     """
 
@@ -113,13 +117,18 @@ class MLStrategy(Strategy):
         confidence_thr = float(self.get("confidence_thr", 0.5))
         regime_filter = str(self.get("regime_filter", "none"))
         vol_regime_ok = str(self.get("vol_regime_ok", "normal")).split(",")
-        prob_size = bool(self.get("prob_size", False))
-        meta_filter = bool(self.get("meta_filter", False))
+        prob_size = bool(self.get("prob_size", True))
+        meta_filter = bool(self.get("meta_filter", True))
         meta_scale = float(self.get("meta_scale", 1.0))
+        discretize_step = float(self.get("discretize_step", 0.25))
         ood_threshold = float(self.get("ood_threshold", 0.0))
         add_hmm = bool(self.get("add_hmm", False))
         add_garch = bool(self.get("add_garch", False))
         hmm_states = int(self.get("hmm_states", 3))
+        add_depth = bool(self.get("add_depth", True))
+
+        # Глибина стакана (depth5 VPS-рекордер) — опційні фічі, якщо записані
+        depth = self._load_depth() if add_depth else None
 
         # Будуємо labeled dataset (з t1 для AFML purge у walk-forward)
         try:
@@ -137,6 +146,7 @@ class MLStrategy(Strategy):
                 add_garch=add_garch,
                 hmm_states=hmm_states,
                 return_t1=True,
+                depth=depth,
             )
         except ValueError as e:
             logger.warning("MLStrategy: %s — повертаю нульові сигнали", e)
@@ -161,6 +171,8 @@ class MLStrategy(Strategy):
                 t1=t1,
             )
             size = meta_size(p_meta.values) * meta_scale
+            if discretize_step > 0:
+                size = discretize(size, step=discretize_step)
             signals = side.astype(float) * size
         else:
             # ── Primary walk-forward ──
@@ -181,6 +193,8 @@ class MLStrategy(Strategy):
 
             if prob_size and p_side is not None:
                 size = np.abs(prob_to_size(p_side.values))
+                if discretize_step > 0:
+                    size = discretize(size, step=discretize_step)
                 signals = side.astype(float) * size
             else:
                 signals = side.astype(float)
@@ -215,6 +229,24 @@ class MLStrategy(Strategy):
         return getattr(self, "_last_result", None)
 
     # ── Private ───────────────────────────────────────────────────────────────
+
+    def _load_depth(self) -> pd.DataFrame | None:
+        """Завантажити depth5-снапшоти з кешу (data/{symbol}_depth5.parquet).
+
+        Потребує параметра `symbol`; без нього або без файлу — None
+        (стратегія мовчки працює без depth-фіч).
+        """
+        symbol = str(self.get("symbol", "") or "")
+        if not symbol:
+            return None
+        try:
+            from scalper_hft.config import get_settings
+            from scalper_hft.data.research import load_depth5
+
+            return load_depth5(get_settings().data_dir_abs, symbol)
+        except Exception as exc:  # noqa: BLE001 — depth-фічі опційні
+            logger.warning("MLStrategy: не вдалося завантажити depth5 для %s: %s", symbol, exc)
+            return None
 
     @staticmethod
     def _apply_confidence_filter(side: pd.Series, p_side: pd.Series | None, threshold: float) -> pd.Series:
