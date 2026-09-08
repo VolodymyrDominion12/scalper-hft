@@ -1,9 +1,26 @@
 # План: отримання та використання даних стакана (L2 / depth5) для HFT-досліджень
 
-Дата: 2026-09-07 · Статус: ПЛАН (очікує рішень користувача + доступу до VPS)
+Дата: 2026-09-07 · Статус: **ЗАПИС ЗАПУЩЕНО (2026-09-08); Фаза 0 ✅, Фаза 1 ✅, Фаза 3 (крок 1) ✅**
 Контекст: `market_maker` та depth-weighted `ob_imbalance` — єдиний шлях до
 HFT-класу alpha, але не валідуються без історичної глибини стакана
 (див. `docs/STRATEGY_STATUS.md` — «Очікують даних/інфраструктури»).
+
+## Статус виконання (оновлено 2026-09-08)
+
+- ✅ **Фаза 0 (аудит)**: VPS `tradebot@46.36.216.98`, репо `~/scalper-hft`;
+  15 сервісів `scalper-record@*.service` active (running), шляхи юнітів правильні
+  (User=tradebot, WorkingDirectory=/home/tradebot/scalper-hft), sudo без пароля.
+- ✅ **Фаза 1 (запис)**: усі 15 канонічних символів пишуть `data/*_depth5.parquet`;
+  дублікатів ts немає; legacy `scalper-record.service` (другий писач BTCUSDT)
+  **вимкнено** (2026-09-08 06:27 UTC) — один писач на символ.
+- ✅ **Фаза 3 (крок 1, фічі)**: `scalper_hft/features/depth_features.py` —
+  `depth_imbalance` (depth-weighted OBI), `top_of_book_imbalance`,
+  `depth_spread_bps`, `snapshot_quality` + тести (`tests/test_depth_features.py`).
+  Перевірено на реальних даних (2026-09-08): LINK imb5 |imb|>0.5 у 18% часу vs
+  top-of-book 64% (depth-weighted стабільніший — підтверджує research);
+  BTC med spread ≈ 0.01 bps.
+- ⏳ **Накопичення**: ~7–9 снапшотів/с/символ → ~0.6–0.8 млн/день/символ;
+  синхронізація на research-машину — ручний `rsync` (див. OB_RECORDER_RUNBOOK Крок 4).
 
 ## Що вже є в коді (перевірено)
 
