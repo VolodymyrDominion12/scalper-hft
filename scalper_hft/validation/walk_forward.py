@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -22,15 +23,22 @@ from scalper_hft.backtest.execution import CostModel
 
 # Роутер (а не run_backtest напряму): market_maker має аудитуватися на
 # подієвому рушії, інакше WF оцінює його як нуль-сигнальний векторний прогін.
-from scalper_hft.backtest.router import run_strategy_backtest
+from scalper_hft.backtest.router import EVENT_STRATEGIES, run_strategy_backtest
 from scalper_hft.strategies.base import Strategy
 
 if TYPE_CHECKING:
     from scalper_hft.overlay.policy import CellPolicy
 
-# Стратегії з внутрішнім walk-forward / довгим warmup: generate_signals
-# на зрізі Test=500 барів дає нулі. Рахуємо сигнали один раз на повній історії.
-_FULL_HISTORY_STRATEGIES = frozenset({"ml_strategy", "ensemble"})
+
+def _generate_signals(strategy: Strategy, df: pd.DataFrame, trades, funding) -> pd.Series:
+    """Виклик generate_signals з kwargs, які стратегія реально приймає."""
+    params = inspect.signature(strategy.generate_signals).parameters
+    kwargs: dict = {}
+    if "trades" in params:
+        kwargs["trades"] = trades
+    if "funding" in params:
+        kwargs["funding"] = funding
+    return strategy.generate_signals(df, **kwargs)
 
 
 @dataclass
@@ -125,13 +133,10 @@ def run_walk_forward(
     start = 0
 
     precomputed: pd.Series | None = None
-    if getattr(strategy, "name", "") in _FULL_HISTORY_STRATEGIES:
-        sig_kwargs: dict = {}
-        if getattr(strategy, "needs_trades", False) and trades is not None:
-            sig_kwargs["trades"] = trades
-        if getattr(strategy, "needs_funding", False) and funding is not None:
-            sig_kwargs["funding"] = funding
-        precomputed = strategy.generate_signals(df, **sig_kwargs)
+    if getattr(strategy, "name", "") not in EVENT_STRATEGIES:
+        # Один виклик на повній історії: ML/ensemble не бачать Test=500,
+        # індикатори зберігають warmup з train. Causal rolling не бере майбутнє.
+        precomputed = _generate_signals(strategy, df, trades, funding)
 
     while start + train_bars + test_bars <= len(df):
         tr = df.iloc[start : start + train_bars]

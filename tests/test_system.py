@@ -170,13 +170,12 @@ def test_walk_forward_runs():
     assert res.avg_oos_sharpe != float("nan")
 
 
-def test_walk_forward_ml_uses_full_history_once():
-    """ml_strategy не повинна бачити лише Test=500; сигнали з повної історії."""
+def test_walk_forward_generate_signals_once_on_full_history():
+    """WF не ріже generate_signals на Test=500 — один виклик на всій історії."""
     from scalper_hft.validation.walk_forward import run_walk_forward
 
-    class FakeML:
-        name = "ml_strategy"
-        family = "ml"
+    class Probe:
+        name = "mean_reversion"
         needs_trades = False
         param_space: dict = {}
 
@@ -188,7 +187,7 @@ def test_walk_forward_ml_uses_full_history_once():
             return pd.Series(1, index=df.index)
 
     df = make_klines(1000)
-    strat = FakeML()
+    strat = Probe()
     res = run_walk_forward(df, strat, train_bars=300, test_bars=100)
     assert strat.calls == [len(df)]
     assert len(res.windows) >= 4

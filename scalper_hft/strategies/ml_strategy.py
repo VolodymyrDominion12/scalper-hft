@@ -175,7 +175,7 @@ class MLStrategy(Strategy):
         train_bars, test_bars = windows
         expected = default_ml_train_test(interval)
         if raw_train is None and raw_test is None and (train_bars, test_bars) != expected:
-            logger.warning(
+            logger.info(
                 "MLStrategy: %s labeled=%d < default %d+%d — стиснуто до train=%d test=%d",
                 interval,
                 len(X),
