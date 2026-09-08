@@ -1,10 +1,13 @@
 """Автентифікація для FastAPI: створення і перевірка JWT."""
 
+from __future__ import annotations
+
 import time
+from collections.abc import Callable
 from typing import Any
 
 import jwt
-from fastapi import HTTPException, Security, status
+from fastapi import Depends, HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from scalper_hft.config import get_settings
 
@@ -42,3 +45,27 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Security(security))
             detail="Could not validate credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+def require_api_capability(
+    *,
+    mock_positions: bool = False,
+    destructive: bool = False,
+) -> Callable[[dict[str, Any]], dict[str, Any]]:
+    """Fail-closed: mock/destructive API лише за явним .env."""
+
+    def _check(token_payload: dict[str, Any] = Depends(verify_token)) -> dict[str, Any]:
+        settings = get_settings()
+        if mock_positions and not settings.api_allow_mock_positions:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Mock positions disabled (set API_ALLOW_MOCK_POSITIONS=true in .env)",
+            )
+        if destructive and not settings.api_allow_destructive_ops:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Destructive API disabled (set API_ALLOW_DESTRUCTIVE_OPS=true in .env)",
+            )
+        return token_payload
+
+    return _check

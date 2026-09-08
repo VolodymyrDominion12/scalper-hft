@@ -13,7 +13,7 @@ import pandas as pd
 from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from scalper_hft.api.auth import verify_token
+from scalper_hft.api.auth import require_api_capability, verify_token
 from scalper_hft.api.broadcaster import manager
 from scalper_hft.config import get_settings
 from scalper_hft.live.control import load_control, save_control
@@ -304,7 +304,7 @@ async def get_trades(
 @app.post("/api/v1/positions/close")
 async def close_position(
     req: ClosePositionRequest,
-    token_payload: dict[str, Any] = Depends(verify_token),
+    token_payload: dict[str, Any] = Depends(require_api_capability(destructive=True)),
 ) -> dict[str, Any]:
     """Закрити відкриту позицію (встановлює size=0)."""
     store = PaperStore()
@@ -332,7 +332,9 @@ async def close_position(
 
 
 @app.post("/api/v1/emergency/flatten")
-async def emergency_flatten(token_payload: dict[str, Any] = Depends(verify_token)) -> dict[str, Any]:
+async def emergency_flatten(
+    token_payload: dict[str, Any] = Depends(require_api_capability(destructive=True)),
+) -> dict[str, Any]:
     """Аварійний Kill-Switch: встановлює flatten=True в control.json та закриває всі відкриті позиції в сховищі."""
     ctrl = save_control(pause=True, flatten=True)
     store = PaperStore()
@@ -382,7 +384,7 @@ async def emergency_flatten(token_payload: dict[str, Any] = Depends(verify_token
 @app.post("/api/v1/paper/mock_position")
 async def create_mock_position(
     req: MockPositionRequest,
-    token_payload: dict[str, Any] = Depends(verify_token),
+    token_payload: dict[str, Any] = Depends(require_api_capability(mock_positions=True)),
 ) -> dict[str, Any]:
     """Створити або оновити тестову paper-позицію для верифікації WebSocket зв'язку."""
     store = PaperStore()

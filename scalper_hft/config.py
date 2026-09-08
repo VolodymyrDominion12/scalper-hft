@@ -108,7 +108,7 @@ class Settings:
     postgres_port: int = field(default_factory=lambda: _env_int("POSTGRES_PORT", 5436))
     postgres_db: str = field(default_factory=lambda: os.getenv("POSTGRES_DB", "scalper"))
     postgres_user: str = field(default_factory=lambda: os.getenv("POSTGRES_USER", "scalper"))
-    postgres_password: str = field(default_factory=lambda: os.getenv("POSTGRES_PASSWORD", "scalper"))
+    postgres_password: str = field(default_factory=lambda: os.getenv("POSTGRES_PASSWORD", ""))
     postgres_dsn: str = field(default_factory=lambda: os.getenv("POSTGRES_DSN", ""))
 
     # Telegram (опційно; без ключів send — no-op)
@@ -130,6 +130,8 @@ class Settings:
     api_cors_origins: tuple[str, ...] = field(
         default_factory=lambda: _parse_csv_tuple(os.getenv("API_CORS_ORIGINS", ""), _default_api_cors_origins())
     )
+    api_allow_mock_positions: bool = field(default_factory=lambda: _env_bool("API_ALLOW_MOCK_POSITIONS", False))
+    api_allow_destructive_ops: bool = field(default_factory=lambda: _env_bool("API_ALLOW_DESTRUCTIVE_OPS", False))
 
     @property
     def postgres_conninfo(self) -> str:

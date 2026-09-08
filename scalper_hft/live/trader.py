@@ -22,8 +22,9 @@ from __future__ import annotations
 
 import logging
 import threading
-from dataclasses import dataclass
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -32,29 +33,20 @@ from scalper_hft.backtest.execution import CostModel
 from scalper_hft.config import get_settings, require_live_credentials
 from scalper_hft.data.client import ExchangeClient
 from scalper_hft.live.account import PaperAccount
-from scalper_hft.live.control import ControlState, load_control
 from scalper_hft.live.exit_ladders import OneWayTradingLadder
 from scalper_hft.live.pending_orders import PendingOrder, PendingOrderManager
 from scalper_hft.live.risk_gate import CooldownState, decide_entry
+from scalper_hft.live.trader_bars import as_naive_utc, closed_klines
+from scalper_hft.live.trader_loop import (
+    SilentAttritionKillSwitch,
+    TradeDecision,
+    execute_signal,
+    run_trader_once,
+)
 from scalper_hft.live.ws_user_stream import BinanceUserDataStream, OrderTradeEvent
 from scalper_hft.strategies.base import Strategy
 
 logger = logging.getLogger(__name__)
-
-
-def _as_naive_utc(ts: pd.Timestamp) -> pd.Timestamp:
-    ts = pd.Timestamp(ts)
-    if ts.tzinfo is not None:
-        return ts.tz_convert("UTC").tz_localize(None)
-    return ts
-
-
-def _interval_seconds(interval: str) -> float:
-    """Тривалість таймфрейму в секундах ('1m' → 60, '1h' → 3600)."""
-    unit = interval[-1]
-    num = int(interval[:-1])
-    per_unit = {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
-    return float(num * per_unit)
 
 
 def _is_duplicate_order_id(exc: Exception) -> bool:
@@ -68,78 +60,6 @@ def _is_duplicate_order_id(exc: Exception) -> bool:
         pass
     msg = str(exc).lower()
     return "duplicate" in msg and "order" in msg
-
-
-def closed_klines(
-    df: pd.DataFrame,
-    interval: str | None = None,
-    now: pd.Timestamp | None = None,
-) -> pd.DataFrame:
-    """Відкидає формуючий бар (останній рядок REST), щоб не було lookahead.
-
-    Binance OHLCV включає поточну незакриту свічку як iloc[-1]. Сигнал і філл
-    беруться лише з барів, чий close-час уже настав. Історичні ряди (останній
-    бар у минулому) не змінюються.
-    """
-    if df is None or df.empty:
-        return df
-    from scalper_hft.data.downloader import _interval_ms, _utc_now
-
-    interval = interval or "1m"
-    now_ts = _as_naive_utc(now if now is not None else _utc_now())
-    last = _as_naive_utc(df.index[-1])
-    bar_end = last + pd.Timedelta(milliseconds=_interval_ms(interval))
-    if now_ts < bar_end:
-        return df.iloc[:-1]
-    return df
-
-
-@dataclass
-class TradeDecision:
-    action: str  # "open_long" | "open_short" | "close" | "hold"
-    symbol: str = ""
-    size: float = 0.0
-    reason: str = ""
-
-
-class SilentAttritionKillSwitch:
-    """Детектор 'тихого згасання' альфи (Silent Attrition, PM Ch. 4, 13).
-
-    Відстежує EWMA прибутку на угоду (PnL per trade). Якщо EWMA падає нижче
-    критичного порогу z-score збитковості — ініціює безпечну зупинку нових входів.
-    """
-
-    def __init__(
-        self,
-        alpha_decay: float = 0.1,
-        min_trades: int = 5,
-        threshold_pnl: float = -0.005,  # -0.5% на угоду
-    ) -> None:
-        self.alpha_decay = alpha_decay
-        self.min_trades = min_trades
-        self.threshold_pnl = threshold_pnl
-        self.ewma_pnl: float = 0.0
-        self.trade_count: int = 0
-        self.tripped: bool = False
-
-    def record_trade(self, pnl_pct: float) -> bool:
-        """Реєструє закриту угоду. Повертає True, якщо kill-switch спрацював."""
-        self.trade_count += 1
-        if self.trade_count == 1:
-            self.ewma_pnl = pnl_pct
-        else:
-            self.ewma_pnl = (1.0 - self.alpha_decay) * self.ewma_pnl + self.alpha_decay * pnl_pct
-
-        if self.trade_count >= self.min_trades and self.ewma_pnl <= self.threshold_pnl:
-            self.tripped = True
-
-        return self.tripped
-
-    def reset(self) -> None:
-        """Скидання стану після аудиту/перезапуску."""
-        self.ewma_pnl = 0.0
-        self.trade_count = 0
-        self.tripped = False
 
 
 class LiveTrader:
@@ -245,7 +165,7 @@ class LiveTrader:
     _AUX_DATA_TTL_SEC = 300.0
     _HMM_REFIT_BARS = 250
 
-    def _cached_aux_data(self, key: str, loader) -> pd.DataFrame | None:
+    def _cached_aux_data(self, key: str, loader: Callable[[], pd.DataFrame | None]) -> pd.DataFrame | None:
         """TTL-кеш для funding/aggTrades у live-кроці."""
         import time
 
@@ -338,7 +258,7 @@ class LiveTrader:
             # барів — CPU-вартісний; filtered_proba лишається per-call (каузально).
             model = None
             if self._hmm_fit_state is not None and len(obs) - self._hmm_fit_state[0] < self._HMM_REFIT_BARS:
-                model = self._hmm_fit_state[1]
+                model = self._hmm_fit_state[1]  # type: ignore[assignment]
             if model is None:
                 model = GaussianHMM(n_states=self.hmm_states, seed=42).fit(obs.iloc[:2000].values)
                 self._hmm_fit_state = (len(obs), model)
@@ -359,7 +279,7 @@ class LiveTrader:
         """
         from scalper_hft.data.downloader import _utc_now
 
-        ts = _as_naive_utc(now if now is not None else _utc_now())
+        ts = as_naive_utc(now if now is not None else _utc_now())
         day = ts.date()
         iso = ts.isocalendar()
         week = (int(iso.year), int(iso.week))
@@ -417,7 +337,7 @@ class LiveTrader:
             self.account.mark({self.symbol: mark_price})
         from scalper_hft.data.downloader import _utc_now
 
-        ts = _as_naive_utc(now if now is not None else _utc_now())
+        ts = as_naive_utc(now if now is not None else _utc_now())
         gate = decide_entry(
             consecutive_losses=self.account.consecutive_losses,
             now=ts,
@@ -571,7 +491,7 @@ class LiveTrader:
                 logger.error("Ордер відхилено фільтрами біржі: %s %s %s → %s", side, self.symbol, size, err)
                 return False, "failed"
             size, price = qty, px if px is not None else price
-        params: dict = {}
+        params: dict[str, Any] = {}
         if reduce_only:
             params["reduceOnly"] = True
         from scalper_hft.live.orders import next_client_order_id
@@ -830,110 +750,12 @@ class LiveTrader:
         return True
 
 
-def execute_signal(
-    trader: LiveTrader,
-    signal: int,
-    df: pd.DataFrame,
-    now: pd.Timestamp | None = None,
-    block_new_entries: bool = False,
-) -> str:
-    """Рішення за сигналом на останньому закритому барі → виконання.
-
-    Реверс (long→short і навпаки): спочатку close (ніколи не блокується
-    ризиком), потім open. Інакше max_open_positions=1 блокує фліп назавжди.
-    block_new_entries (control.json no_new_entries): закриття дозволене,
-    нові входи — ні.
-    """
-    closed = closed_klines(df, trader.interval, now=now)
-    if closed is None or closed.empty:
-        return "hold:no_closed_bar"
-    trader.maybe_roll_day(now if now is not None else closed.index[-1])
-    close = float(closed["close"].iloc[-1])
-    ts = closed.index[-1]
-    trader.account.mark({trader.symbol: close})
-    pos = trader.account.positions.get(trader.symbol)
-
-    want = 1 if signal > 0 else (-1 if signal < 0 else 0)
-    have = 0
-    if pos is not None:
-        have = 1 if pos.side == "long" else -1
-
-    parts: list[str] = []
-
-    ladder_exit = 0.0
-    if have != 0 and trader.use_exit_ladders and trader.ladder is not None:
-        ladder_exit = trader.ladder.update_price(close)
-
-    if want == 0:
-        if have != 0:
-            parts.append(trader.execute(TradeDecision("close", trader.symbol, 0.0, "сигнал=0"), close, ts))
-            trader.ladder = None
-        else:
-            parts.append(trader.execute(TradeDecision("hold", trader.symbol, 0.0, ""), close, ts))
-    elif want == have:
-        if ladder_exit > 0 and pos is not None and trader.ladder is not None:
-            parts.append(
-                trader.execute(TradeDecision("close", trader.symbol, pos.size * ladder_exit, "ladder_exit"), close, ts)
-            )
-            if trader.ladder.is_fully_closed:
-                trader.ladder = None
-        else:
-            parts.append(trader.execute(TradeDecision("hold", trader.symbol, 0.0, "вже в позиції"), close, ts))
-    else:
-        # close-before-flip: закриття ніколи не блокується (зменшення ризику)
-        if have != 0:
-            parts.append(trader.execute(TradeDecision("close", trader.symbol, 0.0, "реверс"), close, ts))
-            trader.ladder = None
-        if block_new_entries:
-            parts.append("blocked:no_new_entries")
-        # HMM-режимний блок: нові входи лише у «спокійному» стані
-        elif trader.hmm_blocked(closed):
-            parts.append("blocked:hmm_regime")
-        else:
-            base_size = trader.settings.position_pct * trader.account.equity / close
-            size = trader.vol_scaled_size(base_size, closed)
-            action = "open_long" if want > 0 else "open_short"
-            parts.append(trader.execute(TradeDecision(action, trader.symbol, size, f"сигнал={signal}"), close, ts))
-            if trader.use_exit_ladders:
-                trader.ladder = OneWayTradingLadder(
-                    close, want, base_step_pct=0.002, num_levels=4, geometric_factor=1.5
-                )
-
-    trader.last_signal = signal
-    return " | ".join(parts)
-
-
-def run_trader_once(
-    trader: LiveTrader,
-    df: pd.DataFrame,
-    now: pd.Timestamp | None = None,
-    control: ControlState | None = None,
-) -> str:
-    """Один крок циклу: control plane → філи live maker-ордерів → звірка
-    (live) → сигнал на закритому барі → виконання за close.
-
-    Control plane (control.json): pause — повний стоп кроку; flatten —
-    примусовий сигнал 0 (закриття); no_new_entries — лише закриття.
-    Poll ПЕРЕД звіркою: щойно заповнені ордери одразу відображаються в
-    локальному рахунку, тож звірка з біржею не дає хибний KillSwitch.
-    Live: перед сигналом синхронізуємо РЕАЛЬНИЙ equity біржі (M4), щоб
-    sizing і денний ліміт збитків рахувались від реального балансу.
-    """
-    from scalper_hft.live.reconcile import reconcile_exchange_state
-
-    ctrl = control if control is not None else load_control(trader.control_path)
-    if ctrl.pause:
-        return "hold:paused"
-    trader.poll_pending_orders(now=now)
-    reconcile_exchange_state(
-        trader.account,
-        trader.client,
-        dry_run=trader.settings.dry_run,
-        scope={trader.symbol},
-    )
-    if not trader.settings.dry_run:
-        trader.sync_live_equity(now=now)
-    signal = trader.compute_signal(df, now=now)
-    if ctrl.flatten:
-        signal = 0
-    return execute_signal(trader, signal, df, now=now, block_new_entries=ctrl.no_new_entries)
+__all__ = [
+    "LiveTrader",
+    "PendingOrder",
+    "SilentAttritionKillSwitch",
+    "TradeDecision",
+    "closed_klines",
+    "execute_signal",
+    "run_trader_once",
+]

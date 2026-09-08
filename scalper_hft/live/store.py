@@ -188,7 +188,8 @@ class PaperStore:
 
     def _fetchone(self, sql: str, params: tuple[Any, ...] | list[Any] = ()) -> sqlite3.Row | None:
         with self._lock:
-            return self._conn.execute(sql, params).fetchone()
+            row = self._conn.execute(sql, params).fetchone()
+            return row if row is None else row
 
     def _fetchall(self, sql: str, params: tuple[Any, ...] | list[Any] = ()) -> list[sqlite3.Row]:
         with self._lock:
@@ -237,7 +238,7 @@ class PaperStore:
         self,
         ts: pd.Timestamp,
         pair: str,
-        trade: dict,
+        trade: dict[str, Any],
         exchange: str = "binance",
         mode: str = "paper",
     ) -> None:

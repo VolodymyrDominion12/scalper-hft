@@ -74,8 +74,9 @@ def compute_sparse_basket_weights(
         from scipy.linalg import eigh
 
         eigvals, eigvecs = eigh(gamma0, gamma_diff)
-        w_raw = eigvecs[:, 0]  # перший компонент з найменшим eigval
-    except Exception:
+        w_raw = eigvecs[:, 0]
+    except Exception as exc:
+        logger.warning("sparse_basket weight fallback (eigh failed): %s", exc)
         w_raw = np.ones(df.shape[1])
         w_raw[1:] = -1.0 / (df.shape[1] - 1)
 

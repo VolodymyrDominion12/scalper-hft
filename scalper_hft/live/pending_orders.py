@@ -9,23 +9,18 @@ from dataclasses import dataclass
 import pandas as pd
 
 from scalper_hft.live.account import PaperAccount
+from scalper_hft.live.trader_bars import as_naive_utc, interval_seconds
 from scalper_hft.live.ws_user_stream import OrderTradeEvent
 
 logger = logging.getLogger(__name__)
 
 
 def _as_naive_utc(ts: pd.Timestamp) -> pd.Timestamp:
-    ts = pd.Timestamp(ts)
-    if ts.tzinfo is not None:
-        return ts.tz_convert("UTC").tz_localize(None)
-    return ts
+    return as_naive_utc(ts)
 
 
 def _interval_seconds(interval: str) -> float:
-    unit = interval[-1]
-    num = int(interval[:-1])
-    per_unit = {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
-    return float(num * per_unit)
+    return interval_seconds(interval)
 
 
 @dataclass

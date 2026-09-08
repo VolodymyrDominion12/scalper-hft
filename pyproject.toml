@@ -87,6 +87,9 @@ module = [
     "scalper_hft.live.pending_orders",
     "scalper_hft.live.sync_engine",
     "scalper_hft.live.pairs_engine",
+    "scalper_hft.live.trader_bars",
+    "scalper_hft.live.trader_loop",
+    "scalper_hft.live.store",
 ]
 strict = true
 

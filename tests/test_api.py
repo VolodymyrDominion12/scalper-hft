@@ -4,9 +4,23 @@ import pytest
 from fastapi.testclient import TestClient
 from scalper_hft.api.auth import create_access_token
 from scalper_hft.api.server import app
+from scalper_hft.config import get_settings
 from scalper_hft.live.control import load_control
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def enable_api_test_capabilities(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Тести mock/destructive API потребують явного дозволу (як у prod)."""
+    import scalper_hft.config as config_mod
+
+    monkeypatch.setenv("API_ALLOW_MOCK_POSITIONS", "true")
+    monkeypatch.setenv("API_ALLOW_DESTRUCTIVE_OPS", "true")
+    config_mod._settings = None
+    s = get_settings()
+    monkeypatch.setattr(s, "api_allow_mock_positions", True)
+    monkeypatch.setattr(s, "api_allow_destructive_ops", True)
 
 
 @pytest.fixture
@@ -170,6 +184,27 @@ def test_emergency_flatten(auth_token: str):
         headers=headers,
         json={"pause": False, "no_new_entries": False, "flatten": False},
     )
+
+
+def test_mock_position_blocked_without_flag(auth_token: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    import scalper_hft.config as config_mod
+
+    monkeypatch.setattr(get_settings(), "api_allow_mock_positions", False)
+    response = client.post(
+        "/api/v1/paper/mock_position",
+        headers={"Authorization": f"Bearer {auth_token}"},
+        json={
+            "symbol": "BTCUSDT",
+            "side": "long",
+            "size": 0.1,
+            "entry_price": 50000.0,
+            "unrealized_pnl": 0.0,
+            "exchange": "binance",
+            "mode": "paper",
+        },
+    )
+    assert response.status_code == 403
+    config_mod._settings = None
 
 
 def test_websocket_unauthorized():
