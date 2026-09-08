@@ -42,7 +42,15 @@ def capacity_curve(
     k = estimate_impact_k_from_bars(df)
     sigma = float(df["close"].pct_change().rolling(288).std().median()) or 0.01
 
-    rows: dict[str, list] = {"scale": [], "total_return": [], "sharpe": [], "max_drawdown": [], "impact_bps": []}
+    rows: dict[str, list] = {
+        "scale": [],
+        "total_return": [],
+        "sharpe": [],
+        "max_drawdown": [],
+        "impact_bps": [],
+        "total_cost": [],
+        "trades": [],
+    }
     for s in scales:
         cost_s = CostModel(
             maker_fee=cost.maker_fee,
@@ -74,11 +82,15 @@ def capacity_curve(
             position_pct=position_pct * s,
             is_maker=is_maker,
         )
+        base_fee = cost_s.maker_cost_per_side() if is_maker else cost_s.taker_cost_per_side()
+        total_cost_bps = (base_fee + (impact if s > 1.0 else 0.0)) * 1e4
         rows["scale"].append(s)
         rows["total_return"].append(res.metrics.total_return)
         rows["sharpe"].append(res.metrics.sharpe)
         rows["max_drawdown"].append(res.metrics.max_drawdown)
         rows["impact_bps"].append(impact * 1e4)
+        rows["total_cost"].append(round(total_cost_bps, 2))
+        rows["trades"].append(int(res.metrics.n_trades))
     return pd.DataFrame(rows)
 
 

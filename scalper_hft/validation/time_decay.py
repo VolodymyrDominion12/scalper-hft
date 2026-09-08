@@ -12,11 +12,30 @@ from scalper_hft.backtest.execution import CostModel
 from scalper_hft.strategies.base import Strategy
 
 
+class LagMetricList(list):
+    """Список метрик за лагами, що підтримує як list-інтерфейс, так і dict (.items(), .keys(), .values())."""
+
+    def items(self) -> list[tuple[int, float]]:
+        return list(enumerate(self))
+
+    def keys(self) -> list[int]:
+        return list(range(len(self)))
+
+    def values(self) -> list[float]:
+        return list(self)
+
+
 @dataclass
 class TimeDecayResult:
     lags: list[int]
     sharpes: list[float]
     returns: list[float]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.sharpes, LagMetricList):
+            self.sharpes = LagMetricList(self.sharpes)
+        if not isinstance(self.returns, LagMetricList):
+            self.returns = LagMetricList(self.returns)
 
     def summary(self) -> str:
         rows = " | ".join(f"lag{lag} SR={s:+.3f}" for lag, s in zip(self.lags, self.sharpes))

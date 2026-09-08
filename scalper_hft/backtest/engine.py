@@ -45,6 +45,11 @@ class BacktestResult:
         return self.equity.pct_change().fillna(0.0)
 
     @property
+    def returns(self) -> pd.Series:
+        """Барні прибутковості (аліас до bar_returns)."""
+        return self.bar_returns
+
+    @property
     def sharpe(self) -> float:
         return self.metrics.sharpe
 
