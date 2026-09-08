@@ -1,23 +1,16 @@
 name: supertrend
-version: "1.0"
-status: candidate
+version: "1.1"
+status: rejected
 family: momentum
 
-hypothesis: >
-  ATR-based trailing stop (Supertrend) ідентифікує зміну тренду через перетин
-  ціни динамічного рівня підтримки/опору. Підтвердження об'ємом (volume > factor
-  × SMA20) фільтрує хибні пробої у флеті. Стратегія прибуткова у трендових
-  ринках, де величина руху після пробою > ATR × (sl + tp multipliers).
-  Портована з trade-bot-main для тестування у perp futures контексті.
-
-edge_conditions:
-  - name: trend_regime_dominance
-    description: >
-      Positive Sharpe лише у trend_up/trend_down режимах (>= 60% OOS-барів
-      класифіковані як трендові при прибутковому результаті).
-  - name: volume_confirmation_value
-    description: >
-      OOS Sharpe з volume_filter > OOS Sharpe без volume_filter (фільтр додає цінність).
+rejection_reason: >
+  Edge 1d supertrend з 3-річного вікна (+0.50) не підтвердився при розширенні
+  вибірки до 5 років (2021–2026): avg OOS Sharpe −0.151, pos frac 28% (141 угода).
+  Прибуток був сконцентрований у 2023–2026 (альт-аптренд), тоді як 2021–2023
+  (сидвей та ведмежий ринок 2022) його повністю знищують. На 1h та 4h таймфреймах
+  стратегія стабільно збиткова після комісій (4h avg OOS SR −0.55).
+  Напрямковий трендовий механізм є період-залежним і не має стабільного edge.
+  Референс: docs/reports/iter4_directional.md, docs/STRATEGY_STATUS.md.
 
 params:
   atr_period:
@@ -50,6 +43,9 @@ params:
     max: 1.6
     step: 0.1
     description: Мінімальний об'єм у % від SMA20 для підтвердження входу.
+  allow_short:
+    default: false
+    description: True — шорт-позиція на фліпі вниз; False — вихід з лонга (спотова логіка).
 
 invariants:
   no_lookahead: true
@@ -60,6 +56,5 @@ preferred_regimes: ["trend_up", "trend_down"]
 
 notes: >
   Портована з trade-bot-main (supertrend_strategy.py + Indicators.supertrend).
-  allow_short=False (дефолт) — шорт-позиція є виходом з лонга (спотова логіка);
-  allow_short=True — справжній шорт на перп.
-  Stateful реалізація (Python-цикл) через SL/TP управління.
+  Відхилена після 5-річного walk-forward аудиту (iter4), у strategy_book занесена як rejected.
+  Залишається в кодовій базі як референсна реалізація та бенчмарк трендових моделей.

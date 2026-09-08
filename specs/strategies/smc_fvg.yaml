@@ -1,5 +1,5 @@
 name: smc_fvg
-version: "1.0"
+version: "1.1"
 status: candidate
 family: flow
 
@@ -32,6 +32,12 @@ params:
     max: 6.0
     step: 0.5
     description: TP від ціни входу у множниках ATR.
+  volume_filter:
+    default: false
+    description: Входити лише при підтвердженні об'ємом (volume > SMA20).
+  allow_short:
+    default: false
+    description: True — шорт при дотику до bear-зони; False — вихід з лонга (спотова поведінка).
   max_fvg_age:
     default: 24
     min: 6

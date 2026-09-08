@@ -1,5 +1,5 @@
 name: pairs_arb
-version: "1.1"
+version: "1.2"
 status: validated
 family: relative_value
 
@@ -67,6 +67,12 @@ params:
   use_kalman:
     default: false
     description: Kalman-фільтр для динамічного hedge ratio замість фіксованого log-ratio.
+  kalman_q:
+    default: 0.00001
+    description: Дисперсія шуму процесу для Kalman hedge ratio (state noise covariance Q).
+  kalman_r:
+    default: 0.001
+    description: Дисперсія шуму вимірювання для Kalman hedge ratio (measurement noise covariance R).
   dynamic_half_life:
     default: false
     description: Автоматично підбирати lookback за ADF-оцінкою half-life.

@@ -1,5 +1,5 @@
 name: ml_strategy
-version: "1.0"
+version: "1.1"
 status: candidate
 family: ml
 
@@ -27,14 +27,14 @@ params:
   pt:
     default: 1.0
     min: 0.5
-    max: 3.0
-    step: 0.5
+    max: 2.0
+    step: 0.25
     description: Profit-take множник × ATR (triple-barrier).
   sl:
     default: 1.0
     min: 0.5
-    max: 3.0
-    step: 0.5
+    max: 2.0
+    step: 0.25
     description: Stop-loss множник × ATR (triple-barrier).
   holding_bars:
     default: 10
@@ -44,15 +44,15 @@ params:
     description: Вертикальний бар'єр (максимум барів тримання позиції).
   confidence_thr:
     default: 0.50
-    min: 0.5
-    max: 0.75
-    step: 0.05
+    min: 0.50
+    max: 0.65
+    step: 0.025
     description: Mінімальна впевненість LightGBM для видачі сигналу (0.5 = без фільтра).
   decay:
     default: 0.9
-    min: 0.5
+    min: 0.7
     max: 1.0
-    step: 0.05
+    step: 0.1
     description: Time-decay для ваг зразків (AFML Ch.4). 1.0 = без декаю.
 
 invariants:
