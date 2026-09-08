@@ -75,11 +75,21 @@ params:
     description: >
       Масштабувати силу сигналу за режимом leg2 (ринковий годинник).
       У high-vol або тренді leg2 (зазвичай BTC) відносна сила пари може
-      трендити (break co-integration) → експозиція зменшується до 0.5.
+      трендити (break co-integration) → експозиція зменшується до factor.
       У range/normal/low — повний розмір (1.0). Розмір фіксується на
       моменті входу і не змінюється під час угоди (без resize-churn).
       Каузально: regime обчислюється на close ≤ t. Пере використовує
       існуючі пороги features/regimes.py (0 нових числових параметрів).
+  regime_scale_factor:
+    default: 0.5
+    min: 0.0
+    max: 1.0
+    step: 0.25
+    description: >
+      На скільки зменшувати експозицію у несприятливому режимі (high-vol/trend
+      leg2). 0.0 = повний блок (як hmm_vol_gate), 1.0 = без масштабування.
+      Не входить у param_space CSCV-пошуку (фіксований вибір, перевіряється
+      окремим sensitivity-тестом).
 
 invariants:
   no_lookahead: true

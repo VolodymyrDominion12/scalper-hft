@@ -95,8 +95,20 @@ def _make_sync_engine(
 #   LINK/BTC  з=2.0/lb=240: 3y +54.9% (PF 1.95), WF pos 65%                        альтернатива
 # XRP/BTC, BTC/ETH, LINK/ETH на 3y від'ємні (XRP/BTC — лише моніторинг);
 # раніше «валідовані» цифри (2026-08-30) отримані до фіксів моделі виконання.
+#
+# regime_scale overlay (iter6, 2026-09-08): CSCV PBO=0.000 (PASS), Calmar пік
+# при factor=0.25 (3.12 vs 2.65 при 0.5). maxDD зменшено вдвічі на всіх парах.
+# Див. docs/reports/iter6_regime_scale.md.
 VALIDATED_PAIRS: tuple[dict, ...] = (
-    {"leg1": "LINKUSDT", "leg2": "BTCUSDT", "entry_z": 2.0, "exit_z": 0.3, "lookback": 120},
+    {
+        "leg1": "LINKUSDT",
+        "leg2": "BTCUSDT",
+        "entry_z": 2.0,
+        "exit_z": 0.3,
+        "lookback": 120,
+        "regime_scale": True,
+        "regime_scale_factor": 0.25,
+    },
 )
 
 _RECENT_BARS = 800
@@ -148,7 +160,7 @@ def replay_pairs(
             float(row["l2_high"]),
             float(row["l2_low"]),
             float(row["l2_close"]),
-            int(signals.loc[ts]) if ts in signals.index else 0,
+            float(signals.loc[ts]) if ts in signals.index else 0.0,
             funding1=_funding_between(funding1, prev, ts),
             funding2=_funding_between(funding2, prev, ts),
         )
@@ -391,7 +403,7 @@ class PairsPaperRunner:
         if self._last_ts is not None and ts == self._last_ts:
             return "hold:same_bar"
         sig_df = pd.DataFrame({"leg1": common["l1_close"], "leg2": common["l2_close"]}, index=common.index)
-        signal = 0 if ctrl.flatten else int(self.strategy.generate_signals(sig_df).iloc[-1])
+        signal = 0.0 if ctrl.flatten else float(self.strategy.generate_signals(sig_df).iloc[-1])
         row = common.iloc[-1]
         action = self.engine.on_bar(
             ts,
@@ -496,6 +508,8 @@ class PairsPortfolioRunner:
                 entry_z=float(cfg.get("entry_z", 2.0)),
                 exit_z=float(cfg.get("exit_z", 0.3)),
                 lookback=int(cfg.get("lookback", 240)),
+                regime_scale=bool(cfg.get("regime_scale", False)),
+                regime_scale_factor=float(cfg.get("regime_scale_factor", 0.5)),
             )
             self.runners.append(
                 PairsPaperRunner(

@@ -51,6 +51,7 @@ class PairsArb(Strategy):
         kalman_r: float = 1e-3,
         dynamic_half_life: bool = False,
         regime_scale: bool = False,
+        regime_scale_factor: float = 0.5,
     ) -> None:
         super().__init__(
             entry_z=entry_z,
@@ -63,6 +64,7 @@ class PairsArb(Strategy):
             kalman_r=float(kalman_r),
             dynamic_half_life=bool(dynamic_half_life),
             regime_scale=bool(regime_scale),
+            regime_scale_factor=float(regime_scale_factor),
         )
         self.betas: pd.Series | None = None
 
@@ -132,7 +134,8 @@ class PairsArb(Strategy):
 
         # ── Regime-scale: масштабуємо силу сигналу за режимом leg2 ──
         if bool(self.get("regime_scale", False)):
-            sig = self._apply_regime_scale(sig, df)
+            factor = float(self.get("regime_scale_factor", 0.5))
+            sig = self._apply_regime_scale(sig, df, factor=factor)
 
         return sig
 
@@ -186,12 +189,12 @@ class PairsArb(Strategy):
             return sig
 
     @staticmethod
-    def _apply_regime_scale(sig: pd.Series, df: pd.DataFrame) -> pd.Series:
+    def _apply_regime_scale(sig: pd.Series, df: pd.DataFrame, factor: float = 0.5) -> pd.Series:
         """Масштабувати силу сигналу за режимом leg2 (ринковий годинник).
 
         leg2 — зазвичай BTC (валюта котирування пари). У спокійному range/normal
         mean-reversion спреду працює краще; у high-vol або тренді BTC відносна
-        сила може трендити (break co-integration) → зменшуємо експозицію вдвічі.
+        сила може трендити (break co-integration) → зменшуємо експозицію до factor.
 
         Каузально: regime обчислюється на close ≤ t (named_market_state —
         EMA/vol-percentile без lookahead). Розмір фіксується на моменті входу
@@ -207,10 +210,10 @@ class PairsArb(Strategy):
         state = named_market_state(leg2)
         vol = state["vol"].reindex(sig.index, method="ffill").fillna("normal")
         structure = state["structure"].reindex(sig.index, method="ffill").fillna("range")
-        # scale: 1.0 у сприятливому (range/normal/low), 0.5 у несприятливому
+        # scale: 1.0 у сприятливому (range/normal/low), factor у несприятливому
         scale = pd.Series(1.0, index=sig.index)
-        scale = scale.where(~(vol == "high"), 0.5)
-        scale = scale.where(~structure.isin(["trend_up", "trend_down"]), 0.5)
+        scale = scale.where(~(vol == "high"), factor)
+        scale = scale.where(~structure.isin(["trend_up", "trend_down"]), factor)
 
         sig_f = sig.astype(float)
         # новий вхід: sig != 0 після sig == 0

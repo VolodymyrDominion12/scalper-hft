@@ -200,3 +200,31 @@ def test_regime_scale_no_nan(seed: int) -> None:
     strat = PairsArb(entry_z=2.0, lookback=120, regime_scale=True)
     sig = strat.generate_signals(df)
     assert not sig.isna().any(), f"seed={seed}: NaN у сигналах"
+
+
+@pytest.mark.parametrize("factor", [0.0, 0.25, 0.5, 0.75, 1.0])
+def test_regime_scale_factor_respected(factor: float) -> None:
+    """factor=0.0 → блок (як hmm_vol_gate); factor=1.0 → без масштабування."""
+    leg1, leg2 = _cointegrated_pair(n=700, seed=42)
+    df = _pair_df(leg1, leg2)
+
+    strat = PairsArb(entry_z=2.0, lookback=120, regime_scale=True, regime_scale_factor=factor)
+    sig = strat.generate_signals(df)
+
+    from scalper_hft.features.regimes import named_market_state
+
+    state = named_market_state(leg2["close"])
+    vol = state["vol"].reindex(sig.index).fillna("normal")
+    structure = state["structure"].reindex(sig.index).fillna("range")
+    adverse = ((vol == "high") | structure.isin(["trend_up", "trend_down"])).to_numpy()
+    new_entry = (sig != 0).to_numpy() & np.roll((sig == 0).to_numpy(), 1)
+    new_entry[0] = False
+    adverse_entries = new_entry & adverse
+    if adverse_entries.any():
+        scaled = sig.abs().to_numpy()[adverse_entries]
+        if factor == 0.0:
+            assert np.allclose(scaled, 0.0), f"factor=0.0 має блокувати входи у adverse, got {scaled}"
+        elif factor == 1.0:
+            assert np.allclose(scaled, 1.0), f"factor=1.0 має не масштабувати, got {scaled}"
+        else:
+            assert np.allclose(scaled, factor), f"factor={factor} має масштабувати до {factor}, got {scaled}"

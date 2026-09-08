@@ -411,7 +411,7 @@ class PairsEngine:
             self.is_journal.log(ts, self.pid, o1.symbol, o1.side, o1.limit_price, px1, is_maker=m1)
             self.is_journal.log(ts, self.pid, o2.symbol, o2.side, o2.limit_price, px2, is_maker=m2)
 
-    def _quote(self, ts: pd.Timestamp, want: int, p1: float, p2: float) -> str:
+    def _quote(self, ts: pd.Timestamp, want: int, p1: float, p2: float, size_mult: float = 1.0) -> str:
         if want == self.have:
             return "hold"
         # Прямий реверс (want = -have): спершу закрити обидві ноги (reduce_only,
@@ -431,6 +431,9 @@ class PairsEngine:
             others = open_pair_size_pcts(self.account.positions, self.size_pct)
             others.pop(self.pid, None)
             size_pct *= correlated_size_mult(self.pid, self.size_pct, others, self.corr_notional_cap)
+            # regime_scale overlay: дробовий сигнал масштабує ноціонал входу.
+            # Для цілих сигналів {-1,0,1} size_mult=1.0 — без зміни поведінки.
+            size_pct *= max(0.0, min(size_mult, 1.0))
             if size_pct <= 0:
                 return "blocked:корельований ноціонал"
         if want == 0:
@@ -497,11 +500,16 @@ class PairsEngine:
         high2: float,
         low2: float,
         close2: float,
-        signal: int,
+        signal: float,
         funding1: float | None = None,
         funding2: float | None = None,
     ) -> str:
-        """Один закритий бар: спроба філла pending → новий сигнал → котирування."""
+        """Один закритий бар: спроба філла pending → новий сигнал → котирування.
+
+        signal: дробовий у [-1,1] (regime_scale) або цілий {-1,0,1} (класичний).
+        Напрямок = sign(signal), butціонал входу масштабується на |signal|
+        (для цілих сигналів size_mult=1.0 — без зміни поведінки).
+        """
         marks = self._marks(close1, close2)
         self.account.mark(marks)
         parts: list[str] = []
@@ -544,7 +552,12 @@ class PairsEngine:
             self.is_journal.apply_next_bar_markout(self.leg2, mid2)
         parts.append(self._resolve_pending(ts, high1, low1, high2, low2))
         if self.pending is None:
-            parts.append(self._quote(ts, int(signal), close1, close2))
+            # Дробовий сигнал (regime_scale): напрямок = sign, butціонал ∝ |signal|.
+            # Для цілих {-1,0,1} size_mult=1.0 — без зміни поведінки.
+            sig_f = float(signal)
+            want = int(np.sign(sig_f))
+            size_mult = abs(sig_f) if sig_f != 0.0 else 1.0
+            parts.append(self._quote(ts, want, close1, close2, size_mult=size_mult))
         if self.store:
             self.store.log_equity(
                 ts, self.pid, self.account.equity_at(marks), self.account.cash, self.account.realized_pnl

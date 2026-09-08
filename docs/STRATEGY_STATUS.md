@@ -35,6 +35,16 @@
 від'ємного у прибуткове; 400d повернення покращено всюди. Очікує CSCV/PBO +
 sensitivity перед validated-статусом.
 
+### CSCV/PBO + sensitivity (iter6b, 2026-09-08)
+
+[reports/iter6_regime_scale.md](reports/iter6_regime_scale.md). LINK/BTC lb=240:
+- **CSCV PBO = 0.000** для regime_scale=True та baseline (PASS — data-snooping відсутній).
+- Sensitivity factor ∈ {0.25,0.5,0.75,1.0}: Sharpe плато (різниця <7%); **Calmar пік при 0.25** (3.12, монотонно спадає).
+- Фінальна A/B (lb=120): **400d +0.5%** при fac=0.25 (vs −3.0% baseline), maxDD −3.7% (4× менше).
+
+**Вердикт: PASS ✅** — regime_scale робастний за PBO. Дефолт `regime_scale=True,
+regime_scale_factor=0.25` впроваджено у `VALIDATED_PAIRS`.
+
 ## ✅ Валідовані кандидати (станом на аудит 2026-08-30 — застарілі, див. перевалідацію)
 
 | Стратегія | Результат | Умови | Статус |

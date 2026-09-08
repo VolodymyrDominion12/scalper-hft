@@ -70,6 +70,47 @@ def test_engine_fills_both_legs_or_none():
     assert acc.positions["AAA/BBB:BBB"].side == "long"
 
 
+def test_engine_fractional_signal_scales_notional():
+    """regime_scale: дробовий сигнал 0.5 → butціонал входу вдвічі менший за сигнал 1.0."""
+    acc_full = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
+    eng_full = PairsEngine("AAA", "BBB", PairsArb(lookback=20), acc_full, wait_bars=1, is_maker=True)
+    acc_half = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
+    eng_half = PairsEngine("AAA", "BBB", PairsArb(lookback=20), acc_half, wait_bars=1, is_maker=True)
+    ts0 = pd.Timestamp("2025-01-01 00:00")
+    ts1 = pd.Timestamp("2025-01-01 01:00")
+    # quote з повним та половинним сигналом
+    eng_full.on_bar(ts0, 101, 99, 100, 51, 49, 50, signal=1.0)
+    eng_half.on_bar(ts0, 101, 99, 100, 51, 49, 50, signal=0.5)
+    # філл обох ніг
+    eng_full.on_bar(ts1, 101, 99, 100, 51, 49, 50, signal=1.0)
+    eng_half.on_bar(ts1, 101, 99, 100, 51, 49, 50, signal=0.5)
+    assert eng_full.have == 1 and eng_half.have == 1
+    # butціонал половинного сигналу має бути ≈ вдвічі менший
+    size_full = eng_full.account.positions["AAA/BBB:AAA"].size
+    size_half = eng_half.account.positions["AAA/BBB:AAA"].size
+    assert size_half < size_full, f"half size {size_half} має бути < full {size_full}"
+    assert abs(size_half / size_full - 0.5) < 0.02, (
+        f"відношення size_half/size_full має бути ≈0.5, got {size_half / size_full}"
+    )
+
+
+def test_engine_integer_signal_backward_compat():
+    """Цілий сигнал 1 (int) → той самий butціонал, що й 1.0 (float) — backward compat."""
+    acc_i = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
+    eng_i = PairsEngine("AAA", "BBB", PairsArb(lookback=20), acc_i, wait_bars=1, is_maker=True)
+    acc_f = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
+    eng_f = PairsEngine("AAA", "BBB", PairsArb(lookback=20), acc_f, wait_bars=1, is_maker=True)
+    ts0 = pd.Timestamp("2025-01-01 00:00")
+    ts1 = pd.Timestamp("2025-01-01 01:00")
+    eng_i.on_bar(ts0, 101, 99, 100, 51, 49, 50, signal=1)  # int
+    eng_f.on_bar(ts0, 101, 99, 100, 51, 49, 50, signal=1.0)  # float
+    eng_i.on_bar(ts1, 101, 99, 100, 51, 49, 50, signal=1)
+    eng_f.on_bar(ts1, 101, 99, 100, 51, 49, 50, signal=1.0)
+    s_i = eng_i.account.positions["AAA/BBB:AAA"].size
+    s_f = eng_f.account.positions["AAA/BBB:AAA"].size
+    assert abs(s_i - s_f) < 1e-9, f"int та float сигнал 1 → однаковий butціонал, got {s_i} vs {s_f}"
+
+
 def test_engine_unfilled_when_gap_against():
     acc = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
     eng = PairsEngine("AAA", "BBB", PairsArb(lookback=20), acc, wait_bars=1, is_maker=True)
