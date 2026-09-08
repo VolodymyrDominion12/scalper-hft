@@ -117,9 +117,8 @@ class SupertrendStrategy(Strategy):
 
         return st, direction
 
-    def generate_signals(
-        self, df: pd.DataFrame, trades: pd.DataFrame | None = None, funding: pd.DataFrame | None = None
-    ) -> pd.Series:
+    def _run_state_machine(self, df: pd.DataFrame) -> tuple[pd.Series, pd.DataFrame]:
+        """Спільний stateful-цикл: (сигнали, рівні SL/TP по барах)."""
         st, direction = self._supertrend_lines(df)
         close = df["close"].to_numpy(dtype=float)
         high = df["high"].to_numpy(dtype=float)
@@ -184,4 +183,22 @@ class SupertrendStrategy(Strategy):
             sl_price[i] = cur_sl if cur != 0 else float("nan")
             tp_price[i] = cur_tp if cur != 0 else float("nan")
 
-        return pd.Series(pos, index=df.index, dtype=int)
+        signals = pd.Series(pos, index=df.index, dtype=int)
+        levels = pd.DataFrame(index=df.index, dtype=float)
+        levels["sl_long"] = np.where(pos == 1, sl_price, np.nan)
+        levels["tp_long"] = np.where(pos == 1, tp_price, np.nan)
+        levels["sl_short"] = np.where(pos == -1, sl_price, np.nan)
+        levels["tp_short"] = np.where(pos == -1, tp_price, np.nan)
+        return signals, levels
+
+    def generate_signals(
+        self, df: pd.DataFrame, trades: pd.DataFrame | None = None, funding: pd.DataFrame | None = None
+    ) -> pd.Series:
+        signals, _ = self._run_state_machine(df)
+        return signals
+
+    def exit_levels(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Рівні SL/TP стан-машини (ATR від ціни входу) — для візуалізації
+        та intrabar-симуляції виходів у рушії (intrabar_exits=True)."""
+        _, levels = self._run_state_machine(df)
+        return levels

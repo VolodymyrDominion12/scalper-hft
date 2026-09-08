@@ -567,6 +567,77 @@ class Downloader:
             self.store.save_spot_klines(symbol, interval, out)
         return out
 
+    def oi(self, symbol: str, days: int) -> pd.DataFrame:
+        """Історія Open Interest (зазвичай 5m)."""
+        existing = self.store.load_oi(symbol)
+        needed_from_ms = _to_ms(_utc_now() - pd.Timedelta(days=days))
+        if existing is None or existing.empty:
+            start_ms = needed_from_ms
+        else:
+            oldest_ms = _to_ms(existing.index[0])
+            newest_ms = _to_ms(existing.index[-1])
+            start_ms = needed_from_ms if oldest_ms > needed_from_ms else newest_ms
+            logger.info(
+                "oi %s: у кеші %s … %s (%d); докачую з %s",
+                symbol,
+                existing.index[0],
+                existing.index[-1],
+                len(existing),
+                pd.Timestamp(start_ms, unit="ms"),
+            )
+
+        frames: list[pd.DataFrame] = [existing] if existing is not None and not existing.empty else []
+        new_frames: list[pd.DataFrame] = []
+        since = start_ms
+        guard = 0
+
+        def _make_merged() -> pd.DataFrame:
+            all_f = [*frames, *new_frames]
+            if not all_f:
+                return pd.DataFrame(columns=["openInterest"])
+            merged = pd.concat(all_f).sort_index()
+            return merged[~merged.index.duplicated(keep="last")]
+
+        try:
+            while True:
+                guard += 1
+                if guard > 5000:
+                    break
+                if self.batch_delay > 0:
+                    time.sleep(self.batch_delay)
+                batch = self._with_retry(self.client.fetch_open_interest_history, symbol, "5m", since, limit=500)
+                if not batch:
+                    break
+                df = pd.DataFrame(batch)
+                if df.empty:
+                    break
+                df["ts"] = pd.to_datetime(df["timestamp"], unit="ms")
+                df = df.set_index("ts")
+                new_frames.append(df[["openInterestValue"]])
+                since = int(df.index[-1].value // 1_000_000) + 1
+                if len(batch) < 500:
+                    break
+        except BaseException as exc:
+            if new_frames:
+                try:
+                    partial_df = _make_merged()
+                    self.store.save_oi(symbol, partial_df)
+                    logger.warning(
+                        "Збережено проміжний прогрес oi %s (%d записів) перед перериванням: %s",
+                        symbol,
+                        len(partial_df),
+                        exc,
+                    )
+                except Exception as save_err:
+                    logger.error("Не вдалося зберегти чекпоінт oi: %s", save_err)
+            raise
+
+        out = _make_merged()
+        if not out.empty:
+            out.rename(columns={"openInterestValue": "oi"}, inplace=True)
+            self.store.save_oi(symbol, out)
+        return out
+
     def agg_trades(self, symbol: str, days: int, start_ms: int | None = None) -> pd.DataFrame:
         """Завантажити історичні агреговані трейди (для CVD).
 
@@ -868,3 +939,34 @@ def download_spot_klines(
         batch_delay=batch_delay,
         checkpoint_batches=checkpoint_batches,
     ).spot_klines(symbol, interval, days, force=force)
+
+
+def download_oi(
+    symbol: str,
+    days: int,
+    force: bool = False,
+    retries: int | None = None,
+    batch_delay: float | None = None,
+    checkpoint_batches: int | None = None,
+    exchange_id: str | None = None,
+) -> pd.DataFrame:
+    store = get_store()
+    logger.info("Завантаження oi %s за %d днів", symbol, days)
+    return Downloader(
+        store=store,
+        retries=retries,
+        batch_delay=batch_delay,
+        checkpoint_batches=checkpoint_batches,
+        exchange_id=exchange_id,
+    ).oi(symbol, days)
+
+
+def download_liquidations(
+    symbol: str,
+    days: int,
+) -> pd.DataFrame:
+    from datetime import date, timedelta
+    from scalper_hft.data.binance_vision import download_liquidations_vision
+
+    start = date.today() - timedelta(days=days)
+    return download_liquidations_vision(symbol, start=start, freq="daily")

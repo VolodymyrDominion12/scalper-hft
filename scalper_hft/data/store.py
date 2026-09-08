@@ -159,6 +159,12 @@ class MarketDataStore(Protocol):
     def load_funding(self, symbol: str) -> pd.DataFrame | None: ...
     def save_funding(self, symbol: str, df: pd.DataFrame) -> None: ...
 
+    def load_liquidations(self, symbol: str) -> pd.DataFrame | None: ...
+    def save_liquidations(self, symbol: str, df: pd.DataFrame) -> None: ...
+
+    def load_oi(self, symbol: str) -> pd.DataFrame | None: ...
+    def save_oi(self, symbol: str, df: pd.DataFrame) -> None: ...
+
     def list_klines(self) -> list[tuple[str, str]]:
         """(symbol, interval) пари, наявні в кеші (для планування sweep)."""
         ...
@@ -220,6 +226,26 @@ class ParquetStore:
         from scalper_hft.data.storage import funding_path, save_funding
 
         save_funding(funding_path(self.data_dir, symbol), df)
+
+    def load_liquidations(self, symbol: str) -> pd.DataFrame | None:
+        from scalper_hft.data.storage import liquidations_path, load_liquidations
+
+        return load_liquidations(liquidations_path(self.data_dir, symbol))
+
+    def save_liquidations(self, symbol: str, df: pd.DataFrame) -> None:
+        from scalper_hft.data.storage import liquidations_path, save_liquidations
+
+        save_liquidations(liquidations_path(self.data_dir, symbol), df)
+
+    def load_oi(self, symbol: str) -> pd.DataFrame | None:
+        from scalper_hft.data.storage import load_oi, oi_path
+
+        return load_oi(oi_path(self.data_dir, symbol))
+
+    def save_oi(self, symbol: str, df: pd.DataFrame) -> None:
+        from scalper_hft.data.storage import oi_path, save_oi
+
+        save_oi(oi_path(self.data_dir, symbol), df)
 
     def list_klines(self) -> list[tuple[str, str]]:
         out: list[tuple[str, str]] = []
@@ -454,6 +480,18 @@ class PostgresStore:
             return
         self._replace("funding", symbol, df)
         logger.info("Postgres: збережено funding %s (%d рядків)", symbol, len(df))
+
+    def load_liquidations(self, symbol: str) -> pd.DataFrame | None:
+        return None
+
+    def save_liquidations(self, symbol: str, df: pd.DataFrame) -> None:
+        pass
+
+    def load_oi(self, symbol: str) -> pd.DataFrame | None:
+        return None
+
+    def save_oi(self, symbol: str, df: pd.DataFrame) -> None:
+        pass
 
     def list_klines(self) -> list[tuple[str, str]]:
         import psycopg

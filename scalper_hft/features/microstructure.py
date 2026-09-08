@@ -245,11 +245,34 @@ def signed_flow_autocorr(trades: pd.DataFrame, resample: str = "1min", lags: int
 # ── Зручний додавач ──────────────────────────────────────────────────────────
 
 
-def add_microstructure_features(df: pd.DataFrame, trades: pd.DataFrame, resample: str = "1min") -> pd.DataFrame:
+def liquidation_cascade(liquidations: pd.DataFrame, window: str = "15min") -> pd.Series:
+    """Сума об'ємів ліквідацій за часове вікно (cascade indicator)."""
+    if liquidations is None or liquidations.empty or "qty" not in liquidations.columns:
+        return pd.Series(dtype=float)
+    
+    # Використовуємо rolling(window) на time-based index
+    return liquidations["qty"].rolling(window).sum()
+
+
+def oi_delta(oi_df: pd.DataFrame, window_bars: int = 5) -> pd.Series:
+    """Зміна Open Interest за n барів."""
+    if oi_df is None or oi_df.empty or "oi" not in oi_df.columns:
+        return pd.Series(dtype=float)
+    return oi_df["oi"].diff(window_bars)
+
+
+def add_microstructure_features(
+    df: pd.DataFrame, 
+    trades: pd.DataFrame, 
+    resample: str = "1min",
+    liquidations: pd.DataFrame | None = None,
+    oi_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """Приєднати мікроструктурні фічі до свічкового DataFrame (ffill, без lookahead).
 
     Додає: vpin (на 1/10 середнього об'єму бару), kyle_t (t-value λ на барах),
-    roll_spread, amihud, parkinson_vol, signed_flow_ac.
+    roll_spread, amihud, parkinson_vol, signed_flow_ac, 
+    liquidation_15m (якщо є), oi_delta_5 (якщо є).
     """
     out = df.copy()
     close = out["close"]
@@ -269,6 +292,17 @@ def add_microstructure_features(df: pd.DataFrame, trades: pd.DataFrame, resample
 
         ac = signed_flow_autocorr(trades, resample)
         out["signed_flow_ac"] = ac.reindex(out.index, method="ffill").fillna(0.0)
+
+    if liquidations is not None and not liquidations.empty:
+        liq_15m = liquidation_cascade(liquidations, window="15min")
+        # reindex на close.index закриття свічок
+        out["liquidation_15m"] = liq_15m.reindex(out.index, method="ffill").fillna(0.0)
+        
+    if oi_df is not None and not oi_df.empty:
+        # Ресемплінг OI на індекс свічок (якщо вони відрізняються)
+        # зазвичай OI 5m, ми його заповнюємо вперед
+        oi_aligned = oi_df["oi"].reindex(out.index, method="ffill")
+        out["oi_delta_5"] = oi_aligned.diff(5).fillna(0.0)
 
     out["roll_spread"] = roll_spread(close).reindex(out.index).fillna(0.0)
     out["amihud"] = amihud(ret, dollar_vol).reindex(out.index).fillna(0.0)

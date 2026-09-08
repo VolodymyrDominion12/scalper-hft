@@ -106,3 +106,33 @@ def save_funding(path: Path, df: pd.DataFrame) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     df[["fundingRate"]].to_parquet(path, compression="zstd")
     logger.info("Збережено funding: %s (%d рядків)", path, len(df))
+
+
+def liquidations_path(data_dir: Path, symbol: str) -> Path:
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return data_dir / f"{symbol}_liquidations.parquet"
+
+
+def oi_path(data_dir: Path, symbol: str) -> Path:
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return data_dir / f"{symbol}_oi.parquet"
+
+
+def load_liquidations(path: Path) -> pd.DataFrame | None:
+    return _safe_load(path)
+
+
+def save_liquidations(path: Path, df: pd.DataFrame) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(path, compression="zstd")
+    logger.info("Збережено liquidations: %s (%d рядків)", path, len(df))
+
+
+def load_oi(path: Path) -> pd.DataFrame | None:
+    return _safe_load(path)
+
+
+def save_oi(path: Path, df: pd.DataFrame) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(path, compression="zstd")
+    logger.info("Збережено open interest: %s (%d рядків)", path, len(df))

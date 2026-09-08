@@ -95,6 +95,66 @@ def _extract_run_trades(pos: pd.Series, strat_ret: pd.Series) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=cols)
 
 
+def _queue_fill_features(
+    df: pd.DataFrame,
+    target_pos: pd.Series,
+    queue_model: QueuePositionModel,
+    *,
+    trades: pd.DataFrame | None = None,
+    spread_bps: float = 2.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Побарові (fill_prob, adverse_risk) для maker-симуляції з QueuePositionModel.
+
+    Барові проксі (без L2-історії):
+        - distance_bps = spread_bps / 2 (пасивний ліміт на half-spread);
+        - vol_frac = ATR14/close;
+        - vpin та imbalance — з тікового потоку (buy_ratio по барах), інакше
+          нейтральні 0.5 / 0.0;
+        - side — напрямок зміни цільової позиції (яку ногу ми ловимо).
+    """
+    n = len(df)
+    close = df["close"]
+    vol_frac = (_atr_from_ohlc(df) / close.replace(0, np.nan)).fillna(0.0).to_numpy(dtype=float)
+
+    imbalance = np.zeros(n)
+    vpin = np.full(n, 0.5)
+    if trades is not None and not trades.empty and "side" in trades.columns:
+        from scalper_hft.features.indicators import _infer_resample, cvd_from_trades
+
+        try:
+            cvd = cvd_from_trades(trades, resample=_infer_resample(df))
+            br = cvd["buy_ratio"].reindex(df.index).ffill()
+            br = br.clip(0.0, 1.0).fillna(0.5).to_numpy(dtype=float)
+            imbalance = 2.0 * br - 1.0
+            vpin = np.abs(imbalance)
+        except (ValueError, KeyError):
+            pass
+
+    t = target_pos.to_numpy(dtype=float)
+    dside = np.sign(np.diff(t, prepend=0.0))
+    # несемо останній ненульовий бік уперед (segment-continuation)
+    for i in range(1, n):
+        if dside[i] == 0.0:
+            dside[i] = dside[i - 1]
+
+    distance = spread_bps / 2.0
+    fill_prob = np.empty(n)
+    adverse_risk = np.empty(n)
+    for i in range(n):
+        fill_prob[i] = queue_model.estimate_fill_prob(
+            distance_bps=distance,
+            queue_ahead_ratio=0.5,
+            vol_frac=float(vol_frac[i]),
+            vpin=float(vpin[i]),
+        )
+        adverse_risk[i] = queue_model.adverse_selection_risk(
+            side=int(dside[i]) if dside[i] != 0 else 1,
+            imbalance=float(imbalance[i]),
+            vpin=float(vpin[i]),
+        )
+    return fill_prob, adverse_risk
+
+
 def _simulate_maker_fills(
     target_vals: np.ndarray,
     close_vals: np.ndarray,
@@ -104,12 +164,20 @@ def _simulate_maker_fills(
     adverse_bps: float = 0.0001,
     prob_touch: float = 0.5,
     seed: int = 42,
+    fill_prob: np.ndarray | None = None,
+    adverse_risk: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Симуляція Queue Position та Adverse Selection для maker-ордерів.
 
     Модель "chase": поки цільова позиція не заповнена, ліміт переставляється
     на close попереднього бару. Філ на барі i, якщо low[i] < close[i-1]
     (buy) / high[i] > close[i-1] (sell); рівність — з імовірністю prob_touch.
+
+    Якщо передано `fill_prob` (побарова ймовірність філу з QueuePositionModel),
+    то навіть проходження ціни КРІЗЬ рівень не гарантує філ — черга попереду
+    може не дійти до нас: fill = touch-through з імовірністю fill_prob[i],
+    exact touch — з fill_prob[i] × prob_touch. `adverse_risk` (0..1) масштабує
+    adverse-penalty філу (токсичний потік → гірша ціна відносно рішення).
 
     Векторизовано по сегментах константного target (parity з колишнім
     Python-циклом — той самий rng і ті самі умови по бару).
@@ -130,8 +198,13 @@ def _simulate_maker_fills(
     close_prev = np.empty(n)
     close_prev[0] = np.nan
     close_prev[1:] = close_vals[:-1]
-    buy_fill = (low_vals < close_prev) | ((low_vals == close_prev) & (rands < prob_touch))
-    sell_fill = (high_vals > close_prev) | ((high_vals == close_prev) & (rands < prob_touch))
+    if fill_prob is not None:
+        p = np.clip(fill_prob, 0.0, 1.0)
+        buy_fill = ((low_vals < close_prev) & (rands < p)) | ((low_vals == close_prev) & (rands < p * prob_touch))
+        sell_fill = ((high_vals > close_prev) & (rands < p)) | ((high_vals == close_prev) & (rands < p * prob_touch))
+    else:
+        buy_fill = (low_vals < close_prev) | ((low_vals == close_prev) & (rands < prob_touch))
+        sell_fill = (high_vals > close_prev) | ((high_vals == close_prev) & (rands < prob_touch))
     buy_fill[0] = False
     sell_fill[0] = False
 
@@ -153,12 +226,84 @@ def _simulate_maker_fills(
         if mask.any():
             f = s0 + int(np.argmax(mask))  # перший бар філу
             actual[s:f] = curr
-            adverse[f] += abs(tp - curr) * adverse_bps
+            risk_mult = 1.0 + float(adverse_risk[f]) if adverse_risk is not None else 1.0
+            adverse[f] += abs(tp - curr) * adverse_bps * risk_mult
             curr = tp
             actual[f:e] = curr
         else:
             actual[s:e] = curr  # unfilled — позиція лишається
     return actual, adverse
+
+
+def _apply_intrabar_exits(
+    pos: np.ndarray,
+    close_vals: np.ndarray,
+    high_vals: np.ndarray,
+    low_vals: np.ndarray,
+    levels: pd.DataFrame,
+    index: pd.Index,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Внутрішньобарові виходи за SL/TP рівнями стратегії (без lookahead).
+
+    Для кожного run-у константної позиції беруться рівні з бару РІШЕННЯ
+    (entry-1 — позиція активна з бару entry через shift(1) лаг). Далі по
+    барах run-у: якщо low/high торкається SL/TP — вихід за ЦІНОЮ РІВНЯ на
+    тому ж барі; при одночасному дотику SL і TP на одному барі — песимістично
+    SL. Позиція після бару виходу обнуляється до кінця run-у (повторний вхід
+    — лише за новим сигналом, тобто на межі сегмента target).
+
+    Повертає (pos_adj, ret_override): ret_override[i] не-NaN лише на барі
+    стоп-виходу — підміняє close-to-close дохідність бару фактичною
+    дохідністю до ціни рівня.
+    """
+    n = len(pos)
+    ret_override = np.full(n, np.nan)
+    if n == 0 or not np.any(pos != 0):
+        return pos, ret_override
+
+    lv = levels.reindex(index)
+    sl_long = lv["sl_long"].to_numpy(dtype=float)
+    tp_long = lv["tp_long"].to_numpy(dtype=float)
+    sl_short = lv["sl_short"].to_numpy(dtype=float)
+    tp_short = lv["tp_short"].to_numpy(dtype=float)
+
+    out = pos.copy()
+    change = np.empty(n, dtype=bool)
+    change[0] = pos[0] != 0.0
+    change[1:] = pos[1:] != pos[:-1]
+    starts = np.flatnonzero(change)
+    ends = np.append(starts[1:], n)
+
+    for i, s in enumerate(starts):
+        v = pos[s]
+        if v == 0.0:
+            continue
+        e = int(ends[i])
+        decision_bar = s - 1  # рівні з бару рішення (без lookahead)
+        if decision_bar < 0:
+            continue
+        side = 1 if v > 0 else -1
+        sl = sl_long[decision_bar] if side == 1 else sl_short[decision_bar]
+        tp = tp_long[decision_bar] if side == 1 else tp_short[decision_bar]
+        if not (np.isfinite(sl) and np.isfinite(tp)):
+            continue
+        for x in range(s, e):
+            if side == 1:
+                stop_hit = low_vals[x] <= sl
+                tp_hit = high_vals[x] >= tp
+            else:
+                stop_hit = high_vals[x] >= sl
+                tp_hit = low_vals[x] <= tp
+            if not (stop_hit or tp_hit):
+                continue
+            # обидва рівні на одному барі — песимістично SL
+            exit_price = sl if stop_hit else tp
+            prev_close = close_vals[x - 1] if x > 0 else close_vals[x]
+            if prev_close > 0:
+                ret_override[x] = side * (exit_price / prev_close - 1.0)
+            out[x + 1 : e] = 0.0  # flat до кінця run-у (перевхід — новий сигнал)
+            break
+    return out, ret_override
 
 
 def _extract_trades(positions: pd.Series, ret: pd.Series, fees: pd.Series, close: pd.Series) -> pd.DataFrame:
@@ -261,6 +406,9 @@ def run_backtest(
     trace: bool = False,
     overlay: CellPolicy | None = None,
     interval: str = "1m",
+    queue_model: QueuePositionModel | None = None,
+    spread_bps: float = 2.0,
+    intrabar_exits: bool = False,
 ) -> BacktestResult:
     """Запуск бектесту стратегії на свічкових даних.
 
@@ -271,6 +419,16 @@ def run_backtest(
         грошовий потік: лонг платить позитивний фандінг, шорт отримує.
     is_maker: якщо True — використання maker-комісії (лімітні ордери).
     trace: якщо True — записує FilterTrace (трейс фільтрів) в result.trace.
+    queue_model: якщо задано — побарова ймовірність maker-філу з черги
+        (QueuePositionModel): проходження ціни крізь ліміт НЕ гарантує філ,
+        adverse-penalty масштабується токсичністю потоку. Барові проксі:
+        vol_frac = ATR14/close, vpin = |imbalance| тікового потоку (якщо
+        trades доступні), queue_ahead=0.5.
+    spread_bps: оцінка half-spread (bps) як distance для queue_model
+        (калібрується з bookTicker через estimate_spread_from_bookticker).
+    intrabar_exits: якщо True і стратегія дає exit_levels — виходи за
+        SL/TP філимо за ЦІНОЮ РІВНЯ на барі дотику (песимістично SL при
+        одночасному дотику), а не close-to-close наступного бару.
     """
     if len(df) < 30:
         raise ValueError("Замало даних для бектесту")
@@ -311,11 +469,19 @@ def run_backtest(
 
     if is_maker:
         # Симуляція Queue Position та Adverse Selection для Maker-ордерів
+        fill_prob = None
+        adverse_risk = None
+        if queue_model is not None:
+            fill_prob, adverse_risk = _queue_fill_features(
+                df, target_pos, queue_model, trades=trades, spread_bps=spread_bps
+            )
         actual_pos, adverse_penalties = _simulate_maker_fills(
             target_pos.to_numpy(dtype=float),
             close.to_numpy(dtype=float),
             df["low"].to_numpy(dtype=float),
             df["high"].to_numpy(dtype=float),
+            fill_prob=fill_prob,
+            adverse_risk=adverse_risk,
         )
         pos = pd.Series(actual_pos, index=df.index)
         adv_penalty_series = pd.Series(adverse_penalties, index=df.index)
@@ -324,12 +490,39 @@ def run_backtest(
         pos = target_pos
         adv_penalty_series = pd.Series(0.0, index=df.index)
 
+    # Внутрішньобарові SL/TP: вихід за ціною рівня на барі дотику
+    ret_override: pd.Series | None = None
+    if intrabar_exits:
+        exit_levels_fn = getattr(strategy, "exit_levels", None)
+        levels = exit_levels_fn(df) if exit_levels_fn is not None else None
+        if levels is not None:
+            pos_adj, overrides = _apply_intrabar_exits(
+                pos.to_numpy(dtype=float),
+                close.to_numpy(dtype=float),
+                df["high"].to_numpy(dtype=float),
+                df["low"].to_numpy(dtype=float),
+                levels,
+                df.index,
+            )
+            pos = pd.Series(pos_adj, index=df.index)
+            ret_override = pd.Series(overrides, index=df.index)
+
     turnover = (pos - pos.shift(1)).abs().fillna(pos.abs())
-    fee_rate = cost.maker_cost_per_side() if is_maker else cost.taker_cost_per_side()
+    # Vol-aware slippage (Narang гл. 5): taker slippage масштабується
+    # поточною волатильністю, якщо задано cost.vol_ref (як у pairs-шляху).
+    fee_rate: float | pd.Series
+    if is_maker:
+        fee_rate = cost.maker_cost_per_side()
+    elif cost.vol_ref > 0:
+        vol_frac = (_atr_from_ohlc(df) / close.replace(0, np.nan)).fillna(cost.vol_ref)
+        fee_rate = cost.taker_fee + cost.vol_aware_slippage(vol_frac)
+    else:
+        fee_rate = cost.taker_cost_per_side()
     fees = turnover * fee_rate + adv_penalty_series
 
     # Прибуток за бар t = позиція, активна в t, × дохідність бару t, мінус комісії.
-    strat_ret = pos * ret - fees
+    bar_ret = ret if ret_override is None else ret_override.where(ret_override.notna(), ret)
+    strat_ret = pos * bar_ret - fees
 
     # Funding cash flow: платиться ОДИН раз на період ставки (не кожен бар!).
     # Ставка, опублікована в момент fts, застосовується до позиції, активної

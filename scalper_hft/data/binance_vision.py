@@ -200,3 +200,103 @@ def download_agg_trades_vision(
 
     store.save_trades(symbol, out)
     return out
+
+
+def _url_for_liquidations(symbol: str, d: date, freq: str) -> str:
+    if freq == "daily":
+        fname = f"{symbol}-liquidationSnapshot-{d.isoformat()}.zip"
+        folder = "daily"
+    else:
+        fname = f"{symbol}-liquidationSnapshot-{d.year:04d}-{d.month:02d}.zip"
+        folder = "monthly"
+    return f"{_BASE_URL}/{folder}/liquidationSnapshot/{symbol}/{fname}"
+
+
+def _parse_liquidations_zip(content: bytes) -> pd.DataFrame:
+    with zipfile.ZipFile(io.BytesIO(content)) as zf:
+        name = zf.namelist()[0]
+        with zf.open(name) as f:
+            raw = pd.read_csv(f)
+            if "time" not in raw.columns:
+                # sometimes header is missing, we try to guess based on standard format
+                # time,side,order_type,time_in_force,original_quantity,price,average_price,order_status,last_fill_quantity,accumulated_fill_quantity
+                raw = pd.read_csv(
+                    io.BytesIO(content),
+                    header=None,
+                    names=[
+                        "time",
+                        "side",
+                        "order_type",
+                        "time_in_force",
+                        "original_quantity",
+                        "price",
+                        "average_price",
+                        "order_status",
+                        "last_fill_quantity",
+                        "accumulated_fill_quantity",
+                    ],
+                )
+    df = raw.copy()
+    df["ts"] = pd.to_datetime(df["time"], unit="ms")
+    df["side"] = df["side"].str.lower()
+    df["price"] = df["price"].astype(float)
+    df["qty"] = df["original_quantity"].astype(float)
+    return df.set_index("ts")[["price", "qty", "side"]].sort_index()
+
+
+def download_liquidations_vision(
+    symbol: str,
+    start: date,
+    end: date | None = None,
+    freq: str = "daily",
+) -> pd.DataFrame:
+    """Завантажити ліквідації з архівів Binance за [start, end] і зберегти в кеш."""
+    from scalper_hft.data.store import get_store
+
+    store = get_store()
+    existing = store.load_liquidations(symbol)
+    end = end or date.today()
+    today = date.today()
+    periods = missing_vision_periods(existing, start, end, freq, today)
+    if existing is not None and not existing.empty:
+        have = f"{existing.index[0].date()} … {existing.index[-1].date()} ({len(existing)} записів)"
+    else:
+        have = "порожній"
+    preview = ", ".join(p.isoformat() for p in periods[:12])
+    if len(periods) > 12:
+        preview += "…"
+    logger.info(
+        "vision liquidations %s: у кеші %s; качаю %d %s періодів%s",
+        symbol,
+        have,
+        len(periods),
+        freq,
+        f" ({preview})" if preview else "",
+    )
+
+    frames: list[pd.DataFrame] = []
+    for current in periods:
+        url = _url_for_liquidations(symbol, current, freq)
+        content = _download_zip(url)
+        if content is None:
+            logger.info("Файл не знайдено (404): %s", url)
+            continue
+        df = _parse_liquidations_zip(content)
+        frames.append(df)
+        logger.info("%s: %d ліквідацій", url.split("/")[-1], len(df))
+        time.sleep(0.3)
+
+    if not frames:
+        if existing is not None and not existing.empty:
+            logger.info("vision liquidations %s: нічого докачувати", symbol)
+            return existing
+        return pd.DataFrame(columns=["price", "qty", "side"])
+
+    out = pd.concat(frames).sort_index()
+    out = out[~out.index.duplicated(keep="last")]
+    if existing is not None and not existing.empty:
+        out = pd.concat([out, existing[["price", "qty", "side"]]]).sort_index()
+        out = out[~out.index.duplicated(keep="last")]
+
+    store.save_liquidations(symbol, out)
+    return out

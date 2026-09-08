@@ -41,13 +41,24 @@ def decide_entry(
     cooldown_hours: float = 12.0,
     cooldown_size_mult: float = 0.5,
     flattening: bool = False,
+    calendar_df: pd.DataFrame | None = None,
+    news_window_mins: int = 15,
 ) -> EntryDecision:
     """Дозволити / зменшити / відхилити новий вхід.
 
     Flatten (закриття) ніколи не блокується. Halt має пріоритет над cooldown.
+    Перевіряє також макроекономічний календар (за наявності), щоб блокувати
+    входи під час важливих новин.
     """
     if flattening:
         return EntryDecision("allow", 1.0, "flatten", cooldown)
+
+    # Макроекономічний фільтр (блокує нові позиції)
+    if calendar_df is not None and not calendar_df.empty:
+        from scalper_hft.data.economic_calendar import is_news_time
+        if is_news_time(now, calendar_df, window_before_mins=news_window_mins, window_after_mins=news_window_mins):
+            return EntryDecision("reject", 0.0, "high_impact_news", cooldown)
+
     if consecutive_losses >= max_consecutive_losses:
         return EntryDecision("reject", 0.0, "серія збитків — пауза", cooldown)
     if cooldown.active(now):

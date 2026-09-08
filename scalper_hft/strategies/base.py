@@ -10,8 +10,9 @@
       ціна close бару t (див. backtest/engine.py);
     - 0 = поза ринком; +/-1 = лонг/шорт (або частка для часткових позицій).
 
-Примітка: Strategy.exit_levels() — лише для ВІЗУАЛІЗАЦІЇ (графіки SL/TP);
-рушій не симулює внутрішньобарове спрацювання стопів за цими рівнями.
+Примітка: Strategy.exit_levels() використовується для візуалізації (графіки
+SL/TP) і, якщо run_backtest(intrabar_exits=True), для внутрішньобарової
+симуляції виходів за ціною рівня (песимістично SL при одночасному дотику).
 
 Filter Tracing:
     generate_signals_traced() — розширена версія, яка повертає (signals, FilterTrace).
@@ -83,14 +84,15 @@ class Strategy(abc.ABC):
         return signals, FilterTrace()
 
     def exit_levels(self, df: pd.DataFrame) -> pd.DataFrame | None:
-        """Опційні рівні SL/TP для візуалізації угод (ціни).
+        """Опційні рівні SL/TP для візуалізації та intrabar-симуляції (ціни).
 
         Повертає DataFrame, індексований як df, з колонками:
             sl_long, tp_long, sl_short, tp_short — рівні стоп-лосу та
         тейк-профіту для лонга/шорта на кожному барі. Рушій бектесту бере
         рівні на барі входу угоди за її стороною і кладе у trades
-        (`sl_price`/`tp_price`). None — стратегія не має явних рівнів,
-        візуалізація просто не малює SL/TP.
+        (`sl_price`/`tp_price`); при intrabar_exits=True рівні з бару
+        рішення керують виходом за ціною SL/TP. None — стратегія не має
+        явних рівнів, візуалізація просто не малює SL/TP.
         """
         return None
 

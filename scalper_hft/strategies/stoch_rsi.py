@@ -74,9 +74,8 @@ class StochRsiStrategy(Strategy):
         d = k.rolling(smooth_d).mean()
         return k.fillna(50.0), d.fillna(50.0)
 
-    def generate_signals(
-        self, df: pd.DataFrame, trades: pd.DataFrame | None = None, funding: pd.DataFrame | None = None
-    ) -> pd.Series:
+    def _run_state_machine(self, df: pd.DataFrame) -> tuple[pd.Series, pd.DataFrame]:
+        """Спільний stateful-цикл: (сигнали, рівні SL/TP по барах)."""
         period = int(self.get("rsi_period", 14))
         smooth_k = int(self.get("smooth_k", 3))
         smooth_d = int(self.get("smooth_d", 3))
@@ -110,6 +109,8 @@ class StochRsiStrategy(Strategy):
         close_np = close.to_numpy(dtype=float)
 
         pos = np.zeros(n, dtype=np.int8)
+        sl_price = np.full(n, np.nan)
+        tp_price = np.full(n, np.nan)
         cur: int = 0
         cur_sl = cur_tp = float("nan")
 
@@ -140,8 +141,28 @@ class StochRsiStrategy(Strategy):
                 elif high[i] >= cur_sl or low[i] <= cur_tp:
                     cur = 0
             pos[i] = cur
+            sl_price[i] = cur_sl if cur != 0 else float("nan")
+            tp_price[i] = cur_tp if cur != 0 else float("nan")
 
-        return pd.Series(pos, index=df.index, dtype=int)
+        signals = pd.Series(pos, index=df.index, dtype=int)
+        levels = pd.DataFrame(index=df.index, dtype=float)
+        levels["sl_long"] = np.where(pos == 1, sl_price, np.nan)
+        levels["tp_long"] = np.where(pos == 1, tp_price, np.nan)
+        levels["sl_short"] = np.where(pos == -1, sl_price, np.nan)
+        levels["tp_short"] = np.where(pos == -1, tp_price, np.nan)
+        return signals, levels
+
+    def generate_signals(
+        self, df: pd.DataFrame, trades: pd.DataFrame | None = None, funding: pd.DataFrame | None = None
+    ) -> pd.Series:
+        signals, _ = self._run_state_machine(df)
+        return signals
+
+    def exit_levels(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Рівні SL/TP стан-машини (ATR від ціни входу) — для візуалізації
+        та intrabar-симуляції виходів у рушії (intrabar_exits=True)."""
+        _, levels = self._run_state_machine(df)
+        return levels
 
 
 __all__ = ["StochRsiStrategy"]

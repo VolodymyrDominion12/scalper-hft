@@ -48,6 +48,8 @@ class PassiveMarketMaker(Strategy):
         kappa: float = 1.5,
         use_vpin_shield: bool = False,
         vpin_threshold: float = 0.75,
+        use_liquidation_shield: bool = True,
+        liquidation_threshold: float = 5_000_000.0,
     ) -> None:
         super().__init__(
             spread_offset_mult=spread_offset_mult,
@@ -58,6 +60,8 @@ class PassiveMarketMaker(Strategy):
             kappa=float(kappa),
             use_vpin_shield=bool(use_vpin_shield),
             vpin_threshold=float(vpin_threshold),
+            use_liquidation_shield=bool(use_liquidation_shield),
+            liquidation_threshold=float(liquidation_threshold),
         )
 
     def reservation_price(
@@ -102,18 +106,26 @@ class PassiveMarketMaker(Strategy):
         vol: float,
         vpin: float | None = None,
         base_spread: float | None = None,
+        liquidation_cascade: float = 0.0,
     ) -> tuple[float, float, bool]:
         """Обчислює рівні котирування (bid, ask, active).
 
         Якщо увімкнено VPIN-щит і токсичність > vpin_threshold, котирування
         призупиняються або спред подвоюється для захисту від adverse selection.
+        Також додано захист від каскаду ліквідацій.
         """
         use_vpin = bool(self.get("use_vpin_shield", False))
         vpin_thresh = float(self.get("vpin_threshold", 0.75))
+        use_liq = bool(self.get("use_liquidation_shield", True))
+        liq_thresh = float(self.get("liquidation_threshold", 5_000_000.0))
         inv_cap = float(self.get("inventory_cap", 1.0))
 
         # Захист від токсичного потоку (VPIN circuit breaker)
         if use_vpin and vpin is not None and vpin > vpin_thresh:
+            return 0.0, float("inf"), False
+            
+        # Захист від каскаду ліквідацій (зупиняємо маркетмейкінг на сильних рухах)
+        if use_liq and liquidation_cascade > liq_thresh:
             return 0.0, float("inf"), False
 
         r = self.reservation_price(mid_or_micro, inventory, vol)
