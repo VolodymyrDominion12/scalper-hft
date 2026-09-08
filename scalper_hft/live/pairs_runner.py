@@ -46,6 +46,7 @@ from scalper_hft.strategies.pairs_arb import PairsArb
 __all__ = [
     "PendingOrder",
     "PairsEngine",
+    "PairsLiveRunner",
     "PairsPaperResult",
     "PairsPaperRunner",
     "PairsPortfolioRunner",
@@ -646,6 +647,162 @@ class PairsPortfolioRunner:
             "portfolio",
             lambda: sum(r.engine.n_filled for r in self.runners),
             lambda: sum(r.engine.n_unfilled for r in self.runners),
+            daemon=daemon,
+            iterations=iterations,
+            sleep_sec=sleep_sec,
+            stop=stop,
+            install_signals=install_signals,
+            on_stop=_on_stop,
+        )
+
+
+class PairsLiveRunner(PairsPaperRunner):
+    """Live-раннер однієї пари: реальні ордери ніг через PairsLiveAdapter.
+
+    Фаза 3 (DEPLOY_PLAN). На відміну від PairsPaperRunner:
+      - вимагає DRY_RUN=false + live-ключі (require_live_credentials);
+      - рушій = PairsLiveAdapter (реальні post_only ліміти, reconcile, KillSwitch);
+      - на старті: adapter.start_live() (звірка + гідратація);
+      - після кожного бару: adapter.reconcile_runtime() (drift → KillSwitch).
+
+    ⚠ Не стартує без явного DRY_RUN=false та ключів. Немає тихого шляху в live.
+    """
+
+    def __init__(
+        self,
+        leg1: str,
+        leg2: str,
+        interval: str = "1h",
+        strategy: Strategy | None = None,
+        account: PaperAccount | None = None,
+        store: PaperStore | None = None,
+        n_pairs: int = 1,
+        client: object | None = None,
+        restore: bool = True,
+        control_path: Path | str | None = None,
+    ) -> None:
+        from scalper_hft.config import require_live_credentials
+        from scalper_hft.live.pairs_live import PairsLiveAdapter
+
+        settings = get_settings()
+        require_live_credentials(settings)  # fail-closed: без ключів не стартує
+        if settings.dry_run:
+            raise RuntimeError(
+                "PairsLiveRunner — live: DRY_RUN=true заборонено. Для paper використовуйте PairsPaperRunner."
+            )
+        self._dry_run = False
+        self.leg1 = leg1
+        self.leg2 = leg2
+        self.interval = interval or "1h"
+        self.strategy = strategy or PairsArb()
+        self.store = store
+        self.client = client  # обов'язковий для live
+        if self.client is None:
+            raise RuntimeError("PairsLiveRunner потребує ExchangeClient (client)")
+        self.control_path = Path(control_path) if control_path is not None else DEFAULT_CONTROL_PATH
+        payload: dict[str, Any] | None = None
+        if restore and store is not None and account is None:
+            payload = store.load_runtime()
+            if payload and "account" in payload:
+                account = PaperAccount.from_snapshot(payload["account"])
+        self.account = account or PaperAccount(
+            initial_capital=10_000.0, taker_fee=settings.taker_fee, maker_fee=settings.maker_fee
+        )
+        self.engine = PairsLiveAdapter(
+            leg1,
+            leg2,
+            self.strategy,
+            self.account,
+            client=self.client,
+            store=store,
+            n_pairs=n_pairs,
+            is_maker=True,
+            legging_mode="chase",
+        )
+        self.sync_engine = _make_sync_engine(
+            store,
+            account=self.account,
+            scope={leg1, leg2},
+            dry_run=False,
+            mode="live",
+        )
+        self._last_ts: pd.Timestamp | None = None
+        if restore and store is not None:
+            payload = payload or store.load_runtime()
+            state = (payload or {}).get("runners", {}).get(self.engine.pid)
+            if state:
+                self.engine.apply_snapshot(state)
+                self._last_ts = self.engine.last_bar_ts
+
+    def step(
+        self,
+        now: pd.Timestamp | None = None,
+        *,
+        reconcile: bool = True,
+        control: ControlState | None = None,
+        persist: bool = True,
+    ) -> str:
+        ctrl = control if control is not None else load_control(self.control_path)
+        if ctrl.pause:
+            return "hold:paused"
+        # live: reconcile з біржею (drift → KillSwitch) замість paper no-op
+        self.engine.reconcile_runtime()
+        self.engine.control_block_entries = ctrl.no_new_entries
+        df1 = closed_klines(_fetch_ohlcv(self.leg1, self.interval), self.interval, now=now)
+        df2 = closed_klines(_fetch_ohlcv(self.leg2, self.interval), self.interval, now=now)
+        common = align_ohlc(df1, df2)
+        if len(common) < 50:
+            return "hold:мало барів"
+        self.engine.seed_spread_from_ohlc(common)
+        ts = common.index[-1]
+        if self._last_ts is not None and ts == self._last_ts:
+            return "hold:same_bar"
+        sig_df = pd.DataFrame({"leg1": common["l1_close"], "leg2": common["l2_close"]}, index=common.index)
+        signal = 0.0 if ctrl.flatten else float(self.strategy.generate_signals(sig_df).iloc[-1])
+        row = common.iloc[-1]
+        action = self.engine.on_bar(
+            ts,
+            float(row["l1_high"]),
+            float(row["l1_low"]),
+            float(row["l1_close"]),
+            float(row["l2_high"]),
+            float(row["l2_low"]),
+            float(row["l2_close"]),
+            signal,
+        )
+        self._last_ts = ts
+        logger.info("%s %s | equity=%.2f", self.engine.pid, action, self.account.equity)
+        if persist:
+            self._persist_if_needed(action)
+        return action
+
+    def run(
+        self,
+        iterations: int = 10,
+        sleep_sec: int = 300,
+        *,
+        daemon: bool = False,
+        stop: threading.Event | None = None,
+        install_signals: bool = True,
+    ) -> PairsPaperResult:
+        # live: на старті обов'язкова звірка + гідратація з біржі
+        self.engine.start_live()
+        if self.sync_engine:
+            self.sync_engine.start()
+
+        def _on_stop():
+            if self.sync_engine:
+                self.sync_engine.stop()
+            self.engine.cancel_pending(reason="shutdown")
+
+        return _paper_loop(
+            self.step,
+            self.save_runtime if self.store is not None else None,
+            self.interval,
+            self.account,
+            self.engine.pid,
+            lambda: self.engine.n_filled,
+            lambda: self.engine.n_unfilled,
             daemon=daemon,
             iterations=iterations,
             sleep_sec=sleep_sec,

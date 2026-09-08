@@ -243,7 +243,7 @@ live-vX.Y.Z       — той самий SHA після Paper-Gate (фаза 3)
 - [x] Фаза 1 (код): `deploy/scalper-paper-pairs.service`; SHA в Telegram на старті; `.env` не в релізі
 - [x] Фаза 1 (реліз): тег `paper-v0.1.0` створено (2026-09-08, SHA з regime_scale overlay)
 - [ ] Фаза 2: 8 тижнів paper на VPS; `paper-audit` зелений
-- [ ] Фаза 3: live-адаптер ніг під моком; paper як і раніше без реальних ордерів
+- [x] Фаза 3 (код): live-адаптер ніг `PairsLiveAdapter` + `PairsLiveRunner` під моком; paper як і раніше без реальних ордерів
 - [ ] Фаза 4: не стартує без явного запиту і закритої фази 2
 - [ ] `uv run pytest tests/ -q` зелений після кожної кодової фази
 - [ ] На VPS немає `git pull origin main`; `.env` не в релізі
