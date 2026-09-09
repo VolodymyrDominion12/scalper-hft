@@ -17,7 +17,12 @@ from scalper_hft.validation.sweep import (
 
 
 def _make_data(symbol: str, interval: str, days: int):
-    """Синтетичний GBM-провайдер даних (без мережі)."""
+    """Синтетичний GBM-провайдер даних (без мережі).
+
+    Повертає (klines, trades, funding): синтетичні aggTrades потрібні для
+    capability contract (Phase 5.2) — needs_trades стратегії без тікових
+    даних падають з MissingDataError, а не деградують у нулі.
+    """
     rng = np.random.default_rng(42 + len(symbol) + len(interval))  # локальний RNG — thread-safe
     n = 60 * 24 * int(days)
     idx = pd.date_range(end="2024-01-05", periods=n, freq="1min")
@@ -33,9 +38,17 @@ def _make_data(symbol: str, interval: str, days: int):
         },
         index=idx,
     )
+    trades = pd.DataFrame(
+        {
+            "price": close,
+            "amount": np.abs(rng.normal(1.0, 0.3, n)),
+            "side": np.where(rng.random(n) > 0.5, "buy", "sell"),
+        },
+        index=idx,
+    )
     if interval != "1m":
         df = resample_klines(df, interval, source="1m")
-    return df, None, None
+    return df, trades, None
 
 
 def test_default_strategies_exclusions() -> None:

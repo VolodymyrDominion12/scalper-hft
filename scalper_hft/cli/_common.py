@@ -84,6 +84,27 @@ def _load_klines(
     return df
 
 
+def _load_optional_streams(
+    strategy, symbol: str, days: int, exchange_id: str | None = None
+) -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
+    """aggTrades/funding для needs_* стратегій (capability contract, Phase 5.2).
+
+    Раніше funding ніколи не вантажився у CLI — needs_funding стратегії
+    (funding_carry/funding_arb/basis_reversion) тихо деградували в нулі.
+    """
+    trades = None
+    if getattr(strategy, "needs_trades", False):
+        from scalper_hft.data.downloader import download_agg_trades
+
+        trades = download_agg_trades(symbol, days, exchange_id=exchange_id)
+    funding = None
+    if getattr(strategy, "needs_funding", False):
+        from scalper_hft.data.downloader import download_funding
+
+        funding = download_funding(symbol, days)
+    return trades, funding
+
+
 def _param_combinations(strategy) -> int:
     """Кількість комбінацій параметрів у param_space (добуток розмірів ґраток).
 

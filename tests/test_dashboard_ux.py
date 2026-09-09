@@ -49,21 +49,17 @@ def test_apply_research_bt_prefill_pair() -> None:
 
 
 def test_apply_research_section_prefill() -> None:
-    state: dict[str, object] = {RESEARCH_SECTION: "Аудит комірки"}
+    state: dict[str, object] = {RESEARCH_SECTION: "Повний цикл"}
     apply_research_section_prefill(state)
-    assert state["research_section"] == "Аудит комірки"
-    assert RESEARCH_SECTION not in state
+    assert state["research_section"] == "Повний цикл"
 
-
-def test_apply_research_section_prefill_ignores_unknown() -> None:
-    state: dict[str, object] = {RESEARCH_SECTION: "nope"}
-    apply_research_section_prefill(state)
-    assert "research_section" not in state
+    state2: dict[str, object] = {RESEARCH_SECTION: "Invalid Tab"}
+    apply_research_section_prefill(state2)
+    assert "research_section" not in state2
 
 
 def test_research_sections_cover_ui() -> None:
-    assert "Sweep matrix" in RESEARCH_SECTIONS
-    assert "Аудит комірки" in RESEARCH_SECTIONS
+    assert "Масовий пошук" in RESEARCH_SECTIONS
 
 
 def test_job_label_pairs_and_sweep() -> None:

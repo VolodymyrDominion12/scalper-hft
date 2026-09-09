@@ -419,6 +419,7 @@ def run_backtest(
     max_leverage: float | None = None,
     vol_target_ann: float | None = None,
     vol_lookback: int = 168,
+    strict_data: bool = True,
 ) -> BacktestResult:
     """Запуск бектесту стратегії на свічкових даних.
 
@@ -449,9 +450,14 @@ def run_backtest(
         realized_ann — річна σ барових дохідностей за останні vol_lookback
         барів. Множник відомий на закритті бару рішення (shift(1) разом із
         сигналом) — без lookahead. None = фіксований position_pct.
+    strict_data: якщо True (дефолт, Phase 5.2) — fail-fast capability
+        contract: стратегія з needs_trades/needs_funding без відповідних
+        даних падає з MissingDataError замість тихої деградації в нулі.
     """
     if len(df) < 30:
         raise ValueError("Замало даних для бектесту")
+    if strict_data and signals is None:
+        strategy.validate_inputs(df, trades=trades, funding=funding)
     cost = cost or CostModel()
     filter_trace = None
     if signals is None:

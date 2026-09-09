@@ -227,12 +227,9 @@ def cmd_report(args: argparse.Namespace) -> None:
     strategy = get_strategy(args.strategy, **args.param_dict)
     settings = get_settings()
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
-    trades = None
-    if strategy.needs_trades:
-        from scalper_hft.data.downloader import download_agg_trades
+    from scalper_hft.cli._common import _load_optional_streams
 
-        trades = download_agg_trades(args.symbol, args.days)
-    funding = None
+    trades, funding = _load_optional_streams(strategy, args.symbol, args.days)
     if strategy.needs_funding:
         from scalper_hft.data.downloader import download_funding
 
@@ -345,12 +342,9 @@ def cmd_cscv(args: argparse.Namespace) -> None:
     strategy = get_strategy(args.strategy, **args.param_dict)
     settings = get_settings()
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
-    trades = None
-    if strategy.needs_trades:
-        from scalper_hft.data.downloader import download_agg_trades
+    from scalper_hft.cli._common import _load_optional_streams
 
-        trades = download_agg_trades(args.symbol, args.days)
-    funding = None
+    trades, funding = _load_optional_streams(strategy, args.symbol, args.days)
     if strategy.needs_funding:
         from scalper_hft.data.downloader import download_funding
 
@@ -418,12 +412,9 @@ def cmd_cohort(args: argparse.Namespace) -> None:
     strategy = get_strategy(args.strategy, **args.param_dict)
     settings = get_settings()
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
-    trades = None
-    if strategy.needs_trades:
-        from scalper_hft.data.downloader import download_agg_trades
+    from scalper_hft.cli._common import _load_optional_streams
 
-        trades = download_agg_trades(args.symbol, args.days)
-    funding = None
+    trades, funding = _load_optional_streams(strategy, args.symbol, args.days)
     if strategy.needs_funding:
         from scalper_hft.data.downloader import download_funding
 
@@ -449,12 +440,9 @@ def cmd_lift(args: argparse.Namespace) -> None:
     strategy = get_strategy(args.strategy, **args.param_dict)
     settings = get_settings()
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
-    trades = None
-    if strategy.needs_trades:
-        from scalper_hft.data.downloader import download_agg_trades
+    from scalper_hft.cli._common import _load_optional_streams
 
-        trades = download_agg_trades(args.symbol, args.days)
-    funding = None
+    trades, funding = _load_optional_streams(strategy, args.symbol, args.days)
     if strategy.needs_funding:
         from scalper_hft.data.downloader import download_funding
 
@@ -605,12 +593,9 @@ def cmd_stress(args: argparse.Namespace) -> None:
     strategy = get_strategy(args.strategy, **args.param_dict)
     settings = get_settings()
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
-    trades = None
-    if strategy.needs_trades:
-        from scalper_hft.data.downloader import download_agg_trades
+    from scalper_hft.cli._common import _load_optional_streams
 
-        trades = download_agg_trades(args.symbol, args.days)
-    funding = None
+    trades, funding = _load_optional_streams(strategy, args.symbol, args.days)
     if strategy.needs_funding:
         from scalper_hft.data.downloader import download_funding
 
@@ -641,12 +626,9 @@ def cmd_capacity(args: argparse.Namespace) -> None:
     strategy = get_strategy(args.strategy, **args.param_dict)
     settings = get_settings()
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
-    trades = None
-    if strategy.needs_trades:
-        from scalper_hft.data.downloader import download_agg_trades
+    from scalper_hft.cli._common import _load_optional_streams
 
-        trades = download_agg_trades(args.symbol, args.days)
-    funding = None
+    trades, funding = _load_optional_streams(strategy, args.symbol, args.days)
     if strategy.needs_funding:
         from scalper_hft.data.downloader import download_funding
 
@@ -681,12 +663,9 @@ def cmd_survival(args: argparse.Namespace) -> None:
     strategy = get_strategy(args.strategy, **args.param_dict)
     settings = get_settings()
     cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
-    trades = None
-    if strategy.needs_trades:
-        from scalper_hft.data.downloader import download_agg_trades
+    from scalper_hft.cli._common import _load_optional_streams
 
-        trades = download_agg_trades(args.symbol, args.days)
-    funding = None
+    trades, funding = _load_optional_streams(strategy, args.symbol, args.days)
     if strategy.needs_funding:
         from scalper_hft.data.downloader import download_funding
 
