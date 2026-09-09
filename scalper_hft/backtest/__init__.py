@@ -4,7 +4,13 @@ from scalper_hft.backtest.engine import BacktestResult, run_backtest
 from scalper_hft.backtest.event_engine import EventBacktestResult, run_event_backtest
 from scalper_hft.backtest.execution import CostModel, ImplementationShortfallTracker, apply_breakeven_gate
 from scalper_hft.backtest.metrics import BacktestMetrics, compute_metrics
-from scalper_hft.backtest.micro_price import QueuePositionModel, calculate_micro_price, estimate_order_book_imbalance
+from scalper_hft.backtest.micro_price import (
+    QueueCalibration,
+    QueuePositionModel,
+    calculate_micro_price,
+    calibrate_queue_from_depth,
+    estimate_order_book_imbalance,
+)
 
 __all__ = [
     "BacktestResult",
@@ -19,4 +25,6 @@ __all__ = [
     "calculate_micro_price",
     "estimate_order_book_imbalance",
     "QueuePositionModel",
+    "QueueCalibration",
+    "calibrate_queue_from_depth",
 ]

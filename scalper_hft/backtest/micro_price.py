@@ -106,3 +106,54 @@ class QueuePositionModel:
         directional_pressure = -side * imbalance  # > 0 якщо ринок тисне проти нашого лімітного ордера
         risk_score = 0.5 + 0.3 * directional_pressure + 0.2 * (vpin - 0.5) * 2.0
         return float(np.clip(risk_score, 0.0, 1.0))
+
+
+@dataclass(frozen=True, slots=True)
+class QueueCalibration:
+    """Емпіричний спред/глибина з depth5 для QueuePositionModel.
+
+    Не вмикає MM/OBI. Лише числа: `spread_bps` у run_backtest і типовий L1 qty.
+    """
+
+    median_spread_bps: float
+    p90_spread_bps: float
+    median_l1_qty: float
+    n_snapshots: int
+    quality_ok: bool
+
+    def engine_spread_bps(self) -> float:
+        """Повний спред у bps — аргумент `run_backtest(spread_bps=…)`."""
+        return float(self.median_spread_bps)
+
+
+def calibrate_queue_from_depth(depth: pd.DataFrame) -> QueueCalibration:
+    """Калібрування черги зі снапшотів depth5 (без lookahead: лише статистика ≤ t).
+
+    MM/OBI не відроджуються тут: роадмап 5.4 чекає quality_ok покриття + окремий аудит.
+    """
+    from scalper_hft.data.validate import validate_depth
+    from scalper_hft.features.depth_features import depth_spread_bps
+
+    if depth is None or depth.empty:
+        return QueueCalibration(2.0, 2.0, 0.0, 0, False)
+    q = validate_depth(depth)
+    spread = depth_spread_bps(depth).dropna()
+    spread = spread[spread > 0]
+    if spread.empty:
+        med, p90 = 2.0, 2.0
+    else:
+        med = float(spread.median())
+        p90 = float(spread.quantile(0.9))
+    l1 = 0.0
+    if "bid1_qty" in depth.columns and "ask1_qty" in depth.columns:
+        tot = pd.to_numeric(depth["bid1_qty"], errors="coerce") + pd.to_numeric(depth["ask1_qty"], errors="coerce")
+        tot = tot[tot > 0]
+        if not tot.empty:
+            l1 = float(tot.median())
+    return QueueCalibration(
+        median_spread_bps=med,
+        p90_spread_bps=p90,
+        median_l1_qty=l1,
+        n_snapshots=int(len(depth)),
+        quality_ok=bool(q.ok),
+    )

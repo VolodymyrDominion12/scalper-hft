@@ -110,14 +110,30 @@ def save_klines(path: Path, df: pd.DataFrame, *, strict: bool = True) -> None:
     logger.info("Збережено klines: %s (%d рядків)", path, len(df))
 
 
-def save_trades(path: Path, df: pd.DataFrame) -> None:
+def save_trades(path: Path, df: pd.DataFrame, *, strict: bool = True) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if df is not None and not df.empty:
+        from scalper_hft.data.validate import stream_is_critical, validate_trades
+
+        report = validate_trades(df)
+        if not report.ok:
+            if strict and stream_is_critical(report):
+                raise ValueError(f"Відмова у збереженні битих aggTrades {path.name}: {report.summary()}")
+            logger.warning("Якість aggTrades %s: %s", path.name, report.summary())
     df[_TRADES_COLUMNS].to_parquet(path, compression="zstd")
     logger.info("Збережено aggTrades: %s (%d рядків)", path, len(df))
 
 
-def save_funding(path: Path, df: pd.DataFrame) -> None:
+def save_funding(path: Path, df: pd.DataFrame, *, strict: bool = True) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if df is not None and not df.empty:
+        from scalper_hft.data.validate import stream_is_critical, validate_funding
+
+        report = validate_funding(df)
+        if not report.ok:
+            if strict and stream_is_critical(report):
+                raise ValueError(f"Відмова у збереженні битого funding {path.name}: {report.summary()}")
+            logger.warning("Якість funding %s: %s", path.name, report.summary())
     df[["fundingRate"]].to_parquet(path, compression="zstd")
     logger.info("Збережено funding: %s (%d рядків)", path, len(df))
 

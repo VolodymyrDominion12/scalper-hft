@@ -180,6 +180,21 @@ def estimate_spread_from_bookticker(bt: pd.DataFrame) -> float:
     return float(spread.median()) if len(spread) else 0.0
 
 
+def estimate_spread_from_depth(depth: pd.DataFrame) -> float:
+    """Медіанний відносний спред з depth5 (ask1−bid1)/mid — як bookTicker."""
+    if depth is None or depth.empty:
+        return 0.0
+    bid_col = "bid1" if "bid1" in depth.columns else ("bid" if "bid" in depth.columns else None)
+    ask_col = "ask1" if "ask1" in depth.columns else ("ask" if "ask" in depth.columns else None)
+    if bid_col is None or ask_col is None:
+        return 0.0
+    bid = depth[bid_col].astype(float)
+    ask = depth[ask_col].astype(float)
+    mid = (bid + ask) / 2.0
+    spread = ((ask - bid) / mid.replace(0, np.nan)).dropna()
+    return float(spread.median()) if len(spread) else 0.0
+
+
 def _atr_from_ohlc(df: pd.DataFrame, period: int = 14) -> pd.Series:
     """ATR-фолбек з OHLC, якщо у df немає готової колонки atr."""
     high, low, close = df["high"], df["low"], df["close"]

@@ -265,6 +265,43 @@ class TestCostModelSprint2:
         s = estimate_spread_from_bookticker(bt)
         assert 0.0001 < s < 0.001
 
+    def test_estimate_spread_from_depth_matches_l1(self):
+        from scalper_hft.backtest.execution import estimate_spread_from_depth
+
+        idx = pd.date_range("2025-01-01", periods=50, freq="100ms")
+        depth = pd.DataFrame({"bid1": np.full(50, 100.0), "ask1": np.full(50, 100.02)}, index=idx)
+        s = estimate_spread_from_depth(depth)
+        assert abs(s - 0.0002) < 1e-6
+
+
+def test_calibrate_queue_from_depth_quality_and_spread() -> None:
+    from scalper_hft.backtest.micro_price import calibrate_queue_from_depth
+
+    n = 80
+    idx = pd.date_range("2026-09-08", periods=n, freq="100ms")
+    mid = 100.0
+    rows: dict[str, object] = {}
+    for i in range(1, 6):
+        rows[f"bid{i}"] = mid - i * 0.01
+        rows[f"ask{i}"] = mid + i * 0.01
+        rows[f"bid{i}_qty"] = 2.0
+        rows[f"ask{i}_qty"] = 2.0
+    depth = pd.DataFrame(rows, index=idx)
+    cal = calibrate_queue_from_depth(depth)
+    assert cal.quality_ok
+    assert cal.n_snapshots == n
+    assert cal.median_l1_qty == pytest.approx(4.0)
+    # full spread 0.02 / 100 * 1e4 = 2 bps
+    assert cal.median_spread_bps == pytest.approx(2.0, rel=0.05)
+    assert cal.engine_spread_bps() == cal.median_spread_bps
+
+
+def test_calibrate_queue_empty_not_quality_ok() -> None:
+    from scalper_hft.backtest.micro_price import calibrate_queue_from_depth
+
+    cal = calibrate_queue_from_depth(pd.DataFrame())
+    assert not cal.quality_ok and cal.n_snapshots == 0
+
 
 # ── 5. ERC / risk-parity ─────────────────────────────────────────────────────
 

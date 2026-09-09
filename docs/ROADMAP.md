@@ -147,10 +147,12 @@ paper-replay реверсує і рахує daily-loss на mark-to-market. Те
 | M3 | Meta-OOF: expanding TS-split + t1-purge (каузальний AFML purge; повний K-fold тренував би на майбутньому IS). Seeded `seq_bootstrap`; `cpcv_validate_returns`; Optuna CLI завжди лишає сліпий holdout (20%, якщо `HOLDOUT_PCT=0`) і пише `holdout_sharpe` | ✅ код |
 | M4 | `cmd_report` завжди має стрес: fees×2 + slippage×2 і вилучення топ-5 угод (`cost_concentration_stress`) | ✅ код |
 
-### 5.4 — Дані під HFT (паралельно, довгостроково)
+### 5.4 — Дані під HFT
 
-1. Валідація trades/funding/depth у `data/validate.py` (зараз — лише OHLCV).
-2. Історичний L2 (Tardis або накопичення depth5) → калібрування queue model → лише тоді відродження MM/OBI стратегій.
+| ID | Що | Статус |
+|---|---|---|
+| D1 | `validate_trades` / `validate_funding` / `validate_depth` / `validate_bookticker` у `data/validate.py`. Fail-closed запис кешу (`save_trades`/`save_funding`). `load_research_data` пише `quality_*` звіти | ✅ код |
+| D2 | `calibrate_queue_from_depth` + `estimate_spread_from_depth` — емпіричний спред/L1 qty для `QueuePositionModel`. **MM/OBI не відроджено**: потрібне `quality_ok` покриття depth5 (VPS/Tardis) і окремий OOS-аудит | ✅ калібрування; ⏳ історія L2 / revival |
 
 ### 5.5 — Live gate (без змін)
 
@@ -183,3 +185,4 @@ Paper Gate ≥8 тижнів на конфігурації LINK/BTC 1h maker + r
 | 5.1 | AFML purge/embargo дефолти; DSR на OOS у report; haircut у sweep; pairs_arb v1.3 дефолти | ✅ Код цього циклу |
 | 5.2 | vol-target у paper; max_leverage у рушії; partial-fill; capability basket/l2/multi_symbol | ✅ Код цього циклу |
 | 5.3 | preferred_regimes з OOS-матриці; supervisor на haircut-рострі; ML PurgedKFold/CPCV; стрес у report | ✅ Код цього циклу |
+| 5.4 | валідація trades/funding/depth; queue calibration з depth5 (MM/OBI ще ні) | ✅ Код цього циклу (revival ⏳) |

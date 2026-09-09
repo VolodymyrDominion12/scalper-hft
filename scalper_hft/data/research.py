@@ -8,7 +8,15 @@ from pathlib import Path
 import pandas as pd
 
 from scalper_hft.config import get_settings
-from scalper_hft.data.validate import BarQualityReport, validate_bars
+from scalper_hft.data.validate import (
+    BarQualityReport,
+    StreamQualityReport,
+    validate_bars,
+    validate_bookticker,
+    validate_depth,
+    validate_funding,
+    validate_trades,
+)
 from scalper_hft.strategies.base import Strategy
 
 
@@ -20,6 +28,10 @@ class MarketDataBundle:
     book: pd.DataFrame | None = None
     depth: pd.DataFrame | None = None
     quality: BarQualityReport | None = None
+    quality_trades: StreamQualityReport | None = None
+    quality_funding: StreamQualityReport | None = None
+    quality_book: StreamQualityReport | None = None
+    quality_depth: StreamQualityReport | None = None
 
 
 def load_bookticker(data_dir: Path, symbol: str) -> pd.DataFrame | None:
@@ -100,6 +112,10 @@ def load_research_data(
         klines = attach_imbalance(klines, book)
 
     quality = validate_bars(klines, interval=interval) if validate else None
+    quality_trades = validate_trades(trades) if validate and trades is not None else None
+    quality_funding = validate_funding(funding) if validate and funding is not None else None
+    quality_book = validate_bookticker(book) if validate and book is not None else None
+    quality_depth = validate_depth(depth) if validate and depth is not None else None
     return MarketDataBundle(
         klines=klines,
         trades=trades,
@@ -107,4 +123,8 @@ def load_research_data(
         book=book,
         depth=depth,
         quality=quality,
+        quality_trades=quality_trades,
+        quality_funding=quality_funding,
+        quality_book=quality_book,
+        quality_depth=quality_depth,
     )

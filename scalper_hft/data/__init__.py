@@ -20,7 +20,15 @@ from scalper_hft.data.storage import (
     save_trades,
     trades_path,
 )
-from scalper_hft.data.validate import BarQualityReport, validate_bars
+from scalper_hft.data.validate import (
+    BarQualityReport,
+    StreamQualityReport,
+    validate_bars,
+    validate_bookticker,
+    validate_depth,
+    validate_funding,
+    validate_trades,
+)
 
 __all__ = [
     "ExchangeClient",
@@ -32,6 +40,11 @@ __all__ = [
     "MarketDataBundle",
     "validate_bars",
     "BarQualityReport",
+    "StreamQualityReport",
+    "validate_trades",
+    "validate_funding",
+    "validate_bookticker",
+    "validate_depth",
     "klines_path",
     "trades_path",
     "funding_path",
