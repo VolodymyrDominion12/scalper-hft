@@ -76,6 +76,20 @@ def test_check_and_burn_no_enforce_always_ok(tmp_path: Path) -> None:
     assert ok is True
 
 
+def test_check_and_burn_empty_path_disabled() -> None:
+    """Path('') == Path('.'): порожній OOS_REGISTRY_PATH не має валити
+    read_text('.') з IsADirectoryError — реєстр просто вимкнено."""
+    from scalper_hft.validation.oos_registry import check_and_burn
+
+    df = _klines(48, start="2025-06-01")
+    for disabled in (Path(""), Path(".")):
+        ok, reason = check_and_burn(
+            strategy="s", symbol="X", df=df, days=2, purpose="t", registry_path=disabled, enforce=True
+        )
+        assert ok is True
+        assert reason == ""
+
+
 def test_audit_cell_burns_and_blocks_on_enforce(monkeypatch, tmp_path: Path) -> None:
     """audit_cell під OOS_ENFORCE_BURN=true: перший виклик OK + спалює; другий — error."""
     from scalper_hft import config as cfg

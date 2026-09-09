@@ -56,13 +56,17 @@ class PendingOrderManager:
         dry_run: bool,
         interval: str,
         maker_fill_wait_bars: int = 1,
+        partial_fill_policy: str = "cancel",
     ) -> None:
+        if partial_fill_policy not in ("cancel", "wait"):
+            raise ValueError(f"partial_fill_policy має бути 'cancel' або 'wait', отримано {partial_fill_policy!r}")
         self.symbol = symbol
         self.account = account
         self.client = client
         self.dry_run = dry_run
         self.interval = interval
         self.maker_fill_wait_bars = maker_fill_wait_bars
+        self.partial_fill_policy = partial_fill_policy
         self.pending_orders: dict[str, PendingOrder] = {}
         self._lock = threading.RLock()
 
@@ -131,6 +135,23 @@ class PendingOrderManager:
                     continue
                 if filled > 1e-9:
                     self._book_fill_delta(live_po, filled, avg, ts)
+                    if self.partial_fill_policy == "wait":
+                        # Тримаємо ордер: дельта забукана, залишок resting —
+                        # але лише до таймауту (maker_fill_wait_bars барів).
+                        age_s = 0.0
+                        if live_po.placed_ts is not None:
+                            age_s = (ts - _as_naive_utc(live_po.placed_ts)).total_seconds()
+                        if age_s > timeout_s:
+                            if cancel is not None:
+                                try:
+                                    cancel(live_po.order_id, live_po.symbol)
+                                except Exception as exc:  # noqa: BLE001
+                                    logger.warning("cancel partial-timeout %s: %s", live_po.order_id, exc)
+                            self.pending_orders.pop(coid, None)
+                            events.append(f"timeout_cancel:{coid}")
+                        else:
+                            events.append(f"partial_wait:{coid}")
+                        continue
                     if cancel is not None:
                         try:
                             cancel(live_po.order_id, live_po.symbol)

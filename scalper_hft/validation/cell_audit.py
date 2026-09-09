@@ -457,7 +457,15 @@ def audit_cell(
             from scalper_hft.validation.trial_ledger import effective_n_trials, record_trial
 
             raw_ledger = getattr(settings, "trial_ledger_path", None)
-            ledger_path = raw_ledger if raw_ledger and str(raw_ledger) else None
+            # Path("") == Path(".") і Path-об'єкти завжди truthy: пусте значення
+            # конфігу НЕ можна ловити через `raw_ledger and ...` — інакше журнал
+            # "вимкнено" перетворюється на спробу відкрити '.' як файл
+            # (IsADirectoryError, валило overfit-аудит без TRIAL_LEDGER_PATH).
+            ledger_path = None
+            if raw_ledger is not None:
+                raw_s = str(raw_ledger).strip()
+                if raw_s and raw_s != ".":
+                    ledger_path = raw_ledger
             n_trials = int(
                 effective_n_trials(
                     ledger_path,

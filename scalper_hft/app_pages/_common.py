@@ -29,13 +29,9 @@ RESEARCH_BT_PREFILL = "research_bt_prefill"
 RESEARCH_AUDIT_PREFILL = "research_audit_prefill"
 RESEARCH_SECTION = "research_section_prefill"
 RESEARCH_SECTIONS: tuple[str, ...] = (
-    "Sweep matrix",
-    "Filter attribution",
+    "Масовий пошук",
+    "Повний цикл",
     "Порівняння equity",
-    "Якість угод",
-    "Топ комбінації",
-    "Аудит комірки",
-    "Режими",
 )
 JOB_STATUSES: tuple[str, ...] = ("queued", "running", "succeeded", "failed", "cancelled")
 JOB_KINDS: tuple[str, ...] = ("backtest", "pairs", "sweep", "overfit", "capacity")

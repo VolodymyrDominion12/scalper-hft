@@ -41,7 +41,7 @@ from scalper_hft.live.risk_gate import (
     margin_proximity_ok,
     per_symbol_notional_ok,
 )
-from scalper_hft.live.trader_bars import as_naive_utc, closed_klines
+from scalper_hft.live.trader_bars import as_naive_utc, closed_klines, interval_seconds
 from scalper_hft.live.trader_loop import (
     SilentAttritionKillSwitch,
     TradeDecision,
@@ -52,6 +52,24 @@ from scalper_hft.live.ws_user_stream import BinanceUserDataStream, OrderTradeEve
 from scalper_hft.strategies.base import Strategy
 
 logger = logging.getLogger(__name__)
+
+
+def _intent_key(
+    symbol: str,
+    side: str,
+    kind: str,
+    reduce_only: bool,
+    interval: str,
+    now: pd.Timestamp | None = None,
+) -> str:
+    """Ключ наміру для ідемпотентного coid: один намір = одне рішення бару.
+
+    Retry у межах того ж бару → той самий ключ (і той самий coid); наступний
+    бар → новий ключ, тож stale coid попереднього рішення не успадковується.
+    """
+    ts = now if now is not None else pd.Timestamp.now(tz="UTC")
+    bar_bucket = int(ts.timestamp() // interval_seconds(interval))
+    return f"{symbol}:{side}:{kind}:{int(reduce_only)}:{bar_bucket}"
 
 
 def _is_duplicate_order_id(exc: Exception) -> bool:
@@ -144,6 +162,7 @@ class LiveTrader:
             dry_run=self.settings.dry_run,
             interval=self.interval,
             maker_fill_wait_bars=int(getattr(self.settings, "maker_fill_wait_bars", 1)),
+            partial_fill_policy=str(getattr(self.settings, "partial_fill_policy", "cancel")),
         )
         # Ідемпотентність submit: намір → coid, що пережив таймаут (retry з тим
         # самим id). Персистентно (IntentStore, JSON) — переживає і рестарт
@@ -540,12 +559,15 @@ class LiveTrader:
             params["reduceOnly"] = True
         from scalper_hft.live.orders import next_client_order_id
 
-        # Ідемпотентність retry: намір (symbol/side/kind/reduceOnly) тримає свій
-        # coid після таймауту. Повторна відправка йде з ТИМ САМИМ id — біржа
-        # дедуплікує (DuplicateOrderId), а ми відновлюємо існуючий ордер
-        # замість розміщення дубля. Персистентність між рестартами процесу
-        # забезпечує reconcile з біржею (KillSwitch при розбіжності).
-        intent = f"{self.symbol}:{side}:{kind}:{int(reduce_only)}"
+        # Ідемпотентність retry: намір (symbol/side/kind/reduceOnly/бар) тримає
+        # свій coid після таймауту. Повторна відправка В МЕЖАХ ТОГО Ж БАРУ йде
+        # з ТИМ САМИМ id — біржа дедуплікує (DuplicateOrderId), а ми відновлюємо
+        # існуючий ордер замість розміщення дубля. Баровий префікс часу в ключі
+        # не дає НОВІЙ уяві (наступний бар, можливо інший розмір/ціна) успадкувати
+        # stale coid попередньої — колізія «один намір = одне рішення бару».
+        # Персистентність між рестартами процесу забезпечує reconcile з біржею
+        # (KillSwitch при розбіжності).
+        intent = _intent_key(self.symbol, side, kind, reduce_only, self.interval)
         coid = self._intent_coids.get(intent) or self._intent_store.get(intent) or next_client_order_id("sh")
         try:
             if self.settings.maker_execution:

@@ -49,6 +49,78 @@ def test_pair_size_pct_portfolio_cap():
     assert abs(pair_size_pct(3, 0.30, 0.60) - 0.20) < 1e-12
 
 
+def _engine_vol_target(vol_target_ann: float | None, **kw) -> PairsEngine:
+    acc = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
+    return PairsEngine(
+        "AAA",
+        "BBB",
+        PairsArb(lookback=20, regime_scale=False),
+        acc,
+        wait_bars=1,
+        is_maker=True,
+        vol_target_ann=vol_target_ann,
+        **kw,
+    )
+
+
+def _spread_hist(values: np.ndarray) -> pd.Series:
+    idx = pd.date_range("2025-01-01", periods=len(values), freq="1h")
+    return pd.Series(np.asarray(values, dtype=float), index=idx)
+
+
+def test_vol_target_disabled_by_default() -> None:
+    """Без vol_target_ann — множник лишається 1.0 (зворотна сумісність)."""
+    eng = _engine_vol_target(None)
+    rng = np.random.default_rng(0)
+    eng._spread_hist = _spread_hist(np.cumsum(rng.normal(0, 0.02, 300)))
+    eng._update_vol_size_mult()
+    assert eng._vol_size_mult == 1.0
+
+
+def test_vol_target_scales_down_in_high_vol() -> None:
+    """Висока realized vol спреду → ноціонал входу зменшується до target/realized."""
+    eng = _engine_vol_target(0.05)
+    rng = np.random.default_rng(1)
+    eng._spread_hist = _spread_hist(np.cumsum(rng.normal(0, 0.02, 300)))
+    eng._update_vol_size_mult()
+    # realized ≈ 0.02·√8760 ≈ 1.87 → mult ≈ 0.05/1.87 ≈ 0.027
+    assert 0.0 < eng._vol_size_mult < 0.1
+
+
+def test_vol_target_calm_spread_keeps_full_size() -> None:
+    """Низька realized vol (нижча за ціль) → кліп до 1.0 (без плеча понад base)."""
+    eng = _engine_vol_target(0.50)
+    eng._spread_hist = _spread_hist(np.linspace(0.0, 1e-4, 300))
+    eng._update_vol_size_mult()
+    assert eng._vol_size_mult == 1.0
+
+
+def test_vol_target_zero_blocks_entry() -> None:
+    """vol_target_ann=0 → mult=0 → вхід заблоковано з явною причиною."""
+    eng = _engine_vol_target(0.0, coint_kill=False)
+    rng = np.random.default_rng(2)
+    eng._spread_hist = _spread_hist(np.cumsum(rng.normal(0, 0.01, 300)))
+    eng._update_vol_size_mult()
+    assert eng._vol_size_mult == 0.0
+    action = eng._quote(pd.Timestamp("2025-01-02 00:00"), 1, 100.0, 100.0)
+    assert action == "blocked:vol_target"
+
+
+def test_vol_target_is_causal() -> None:
+    """Майбутні бари спреду не впливають на поточний множник."""
+    eng = _engine_vol_target(0.05)
+    rng = np.random.default_rng(3)
+    hist = np.cumsum(rng.normal(0, 0.01, 300))
+    eng._spread_hist = _spread_hist(hist)
+    eng._update_vol_size_mult()
+    mult_before = eng._vol_size_mult
+    # «майбутній» шок волатильності не має змінити поточний множник
+    shocked = np.concatenate([hist, hist[-1] + np.cumsum(rng.normal(0, 0.5, 100))])
+    eng._spread_hist = _spread_hist(shocked[:300])  # той самий префікс
+    eng._update_vol_size_mult()
+    assert eng._vol_size_mult == mult_before
+
+
 def test_engine_fills_both_legs_or_none():
     acc = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
     eng = PairsEngine("AAA", "BBB", PairsArb(lookback=20, regime_scale=False), acc, wait_bars=1, is_maker=True)

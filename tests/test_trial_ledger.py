@@ -46,3 +46,19 @@ def test_record_trial_none_path_noop() -> None:
 
     record_trial(None, strategy="x", symbol="y", purpose="t")  # не падає
     assert count_trials(None) == 0
+
+
+def test_empty_or_dot_path_is_disabled_not_cwd() -> None:
+    """Path('') == Path('.'): без TRIAL_LEDGER_PATH config віддавав Path(''),
+    і count_trials падав IsADirectoryError (відкриття '.' як файлу).
+    Тепер ''/'.' = журнал вимкнено: no-op замість краху."""
+    from scalper_hft.validation.trial_ledger import count_trials, effective_n_trials, record_trial
+
+    for disabled in (Path(""), Path(".")):
+        # не падає і не читає теку директорію
+        assert count_trials(disabled) == 0
+        record_trial(disabled, strategy="s", symbol="x", purpose="t")  # не падає, нічого не пише
+        assert count_trials(disabled) == 0
+        # effective_n_trials повертає оцінку combos×backtests_per_combo
+        n = effective_n_trials(disabled, param_combinations=10, backtests_per_combo=50)
+        assert n == 500

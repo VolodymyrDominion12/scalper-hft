@@ -33,6 +33,15 @@ if TYPE_CHECKING:
     from scalper_hft.research.filter_trace import FilterTrace
 
 
+class MissingDataError(ValueError):
+    """Стратегія заявила потребу в даних, які не передані (fail-fast).
+
+    Phase 5.2: capability contract — замість тихої деградації (нулі в сигналі,
+    фіктивні метрики) рушій падає з явною причиною. Обхід — лише свідомий:
+    run_backtest(strict_data=False).
+    """
+
+
 class Strategy(abc.ABC):
     """Базовий клас стратегії."""
 
@@ -58,6 +67,42 @@ class Strategy(abc.ABC):
 
     def get(self, key: str, default: Any = None) -> Any:
         return self.params.get(key, default)
+
+    def required_data(self) -> frozenset[str]:
+        """Набір обов'язкових потоків даних: {"ohlcv", "trades", "funding"}.
+
+        Виводиться з needs_trades/needs_funding; стратегії зі специфічними
+        вимогами (напр. bookTicker, ліквідації) можуть перевизначити.
+        """
+        req = {"ohlcv"}
+        if self.needs_trades:
+            req.add("trades")
+        if self.needs_funding:
+            req.add("funding")
+        return frozenset(req)
+
+    def validate_inputs(
+        self,
+        df: pd.DataFrame,
+        trades: pd.DataFrame | None = None,
+        funding: pd.DataFrame | None = None,
+    ) -> None:
+        """Fail-fast перевірка capability contract перед генерацією сигналів.
+
+        Raises:
+            MissingDataError: якщо заявлений потік даних відсутній/порожній.
+        """
+        missing: list[str] = []
+        if self.needs_trades and (trades is None or trades.empty):
+            missing.append("trades (aggTrades)")
+        if self.needs_funding and (funding is None or funding.empty):
+            missing.append("funding")
+        if missing:
+            raise MissingDataError(
+                f"{self.name}: заявлено {sorted(self.required_data())}, але відсутні: "
+                f"{', '.join(missing)}. Тиха деградація (нулі у фічах) заборонена — "
+                f"передайте дані або свідомо викличте з strict_data=False."
+            )
 
     @abc.abstractmethod
     def generate_signals(

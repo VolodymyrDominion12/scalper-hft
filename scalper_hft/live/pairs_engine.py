@@ -135,6 +135,9 @@ class PairsEngine:
         legging_mode: str = "strict_both",
         max_drift_bps: float = 10.0,
         coint_kill: bool = True,
+        vol_target_ann: float | None = None,
+        vol_lookback: int = 168,
+        bars_per_year: float = 8760.0,
     ) -> None:
         settings = get_settings()
         self.leg1 = leg1
@@ -165,6 +168,14 @@ class PairsEngine:
         self.cooldown = CooldownState()
         self.consecutive_pair_losses = 0
         self._entry_size_mult = 1.0
+        # Vol-target sizing (Phase 5.2): якщо vol_target_ann задано — ноціонал
+        # входу масштабується на clip(target_vol / realized_vol, 0, 1), де
+        # realized_vol — річна σ Δlog-спреду за останні vol_lookback барів.
+        # None = фіксований size_pct (зворотна сумісність).
+        self.vol_target_ann = float(vol_target_ann) if vol_target_ann is not None else None
+        self.vol_lookback = max(int(vol_lookback), 20)
+        self.bars_per_year = float(bars_per_year)
+        self._vol_size_mult = 1.0
         self.week_start_equity = account.equity
         self._last_day: object | None = None
         self._last_week: tuple[int, int] | None = None
@@ -244,6 +255,28 @@ class PairsEngine:
         if decision.status == "reject":
             return False, decision.reason
         return True, decision.reason
+
+    def _update_vol_size_mult(self) -> None:
+        """Переважити _vol_size_mult за realized vol спреду (каузально, ≤ t).
+
+        Дельта-нейтральна пара заробляє Δlog-спреду на одиницю ноціоналу,
+        тому цільова волатильність позиції досягається масштабуванням
+        ноціоналу на target/realized. Кліп [0, 1]: vol-target лише зменшує
+        розмір (без плеча понад базовий size_pct). При нестачі історії або
+        нульовій волатильності — 1.0 (без зміни поведінки).
+        """
+        if self.vol_target_ann is None:
+            self._vol_size_mult = 1.0
+            return
+        diffs = self._spread_hist.diff().dropna().tail(self.vol_lookback)
+        if len(diffs) < 20:
+            self._vol_size_mult = 1.0
+            return
+        realized = float(diffs.std(ddof=0)) * float(np.sqrt(self.bars_per_year))
+        if realized <= 0 or not np.isfinite(realized):
+            self._vol_size_mult = 1.0
+            return
+        self._vol_size_mult = float(np.clip(self.vol_target_ann / realized, 0.0, 1.0))
 
     def _log_order(self, ts: pd.Timestamp, o: PendingOrder, status: str, reason: str) -> None:
         if self.store:
@@ -445,8 +478,10 @@ class PairsEngine:
             # regime_scale overlay: дробовий сигнал масштабує ноціонал входу.
             # Для цілих сигналів {-1,0,1} size_mult=1.0 — без зміни поведінки.
             size_pct *= max(0.0, min(size_mult, 1.0))
+            # Vol-target overlay (Phase 5.2): множник 1.0 коли вимкнено.
+            size_pct *= self._vol_size_mult
             if size_pct <= 0:
-                return "blocked:корельований ноціонал"
+                return "blocked:vol_target" if self._vol_size_mult <= 0 else "blocked:корельований ноціонал"
             # Жорсткий ліміт плеча: сумарний ноціонал (існуючі позиції за
             # entry_price як проксі марки + нова пара) ≤ equity × max_leverage.
             cur_notional = sum(p.size * p.entry_price for p in self.account.positions.values())
@@ -562,6 +597,7 @@ class PairsEngine:
         self._roll_month(ts, equity)
         if close1 > 0 and close2 > 0:
             self._spread_hist.loc[pd.Timestamp(ts)] = float(np.log(close1) - np.log(close2))  # type: ignore[call-overload]
+        self._update_vol_size_mult()
         if self.is_journal.records:
             mid1 = 0.5 * (high1 + low1)
             mid2 = 0.5 * (high2 + low2)

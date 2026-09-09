@@ -43,6 +43,69 @@ class _AlwaysLong(Strategy):
         return s
 
 
+# ── 5.2 max_leverage та vol-target sizing у векторному рушії ────────────────
+
+
+def test_max_leverage_caps_target_position() -> None:
+    """max_leverage — жорсткий кліп |позиції| (position_pct=1.0 → 0.5)."""
+    df = _make_df(n=60)
+    res = run_backtest(df, _AlwaysLong(), position_pct=1.0, max_leverage=0.5, interval="1m")
+    assert res.positions.abs().max() <= 0.5 + 1e-12
+    # без кліпу — позиція сягає 1.0
+    res_full = run_backtest(df, _AlwaysLong(), position_pct=1.0, interval="1m")
+    assert res_full.positions.abs().max() > 0.9
+
+
+def test_max_leverage_none_is_backward_compatible() -> None:
+    df = _make_df(n=60)
+    a = run_backtest(df, _AlwaysLong(), position_pct=0.01, interval="1m")
+    b = run_backtest(df, _AlwaysLong(), position_pct=0.01, max_leverage=None, interval="1m")
+    pd.testing.assert_series_equal(a.equity, b.equity)
+
+
+def test_vol_target_scales_down_in_high_vol() -> None:
+    """Висока realized vol → цільова позиція менша за position_pct."""
+    n = 400
+    idx = pd.date_range("2024-01-01", periods=n, freq="1h")
+    rng = np.random.default_rng(11)
+    # спокійна перша половина, штормова друга
+    rets = np.concatenate([rng.normal(0, 0.0005, n // 2), rng.normal(0, 0.02, n // 2)])
+    c = 100.0 * np.exp(np.cumsum(rets))
+    df = pd.DataFrame({"open": c, "close": c, "high": c * 1.001, "low": c * 0.999, "volume": 1000.0}, index=idx)
+
+    res = run_backtest(df, _AlwaysLong(), position_pct=1.0, vol_target_ann=0.10, vol_lookback=100, interval="1h")
+    pos_calm = res.positions.iloc[150:190].abs().mean()
+    pos_storm = res.positions.iloc[-50:].abs().mean()
+    assert pos_storm < pos_calm * 0.5
+    assert (res.positions.abs() <= 1.0 + 1e-12).all()  # кліп [0,1] — без плеча
+
+
+def test_vol_target_none_is_backward_compatible() -> None:
+    df = _make_df(n=60)
+    a = run_backtest(df, _AlwaysLong(), position_pct=0.01, interval="1m")
+    b = run_backtest(df, _AlwaysLong(), position_pct=0.01, vol_target_ann=None, interval="1m")
+    pd.testing.assert_series_equal(a.equity, b.equity)
+
+
+def test_vol_target_no_lookahead() -> None:
+    """Множник vol-target відомий на барі рішення: мутація майбутніх барів
+    не змінює позиції в минулому."""
+    n = 400
+    idx = pd.date_range("2024-01-01", periods=n, freq="1h")
+    rng = np.random.default_rng(12)
+    rets = rng.normal(0, 0.005, n)
+    c = 100.0 * np.exp(np.cumsum(rets))
+    df = pd.DataFrame({"open": c, "close": c, "high": c * 1.001, "low": c * 0.999, "volume": 1000.0}, index=idx)
+
+    res = run_backtest(df, _AlwaysLong(), position_pct=1.0, vol_target_ann=0.10, vol_lookback=100, interval="1h")
+    df_mut = df.copy()
+    df_mut.iloc[300:] = df_mut.iloc[300:] * 3.0
+    res_mut = run_backtest(
+        df_mut, _AlwaysLong(), position_pct=1.0, vol_target_ann=0.10, vol_lookback=100, interval="1h"
+    )
+    pd.testing.assert_series_equal(res.positions.iloc[:300], res_mut.positions.iloc[:300])
+
+
 class _LongWithLevels(Strategy):
     """Лонг з бару 5; постійні SL/TP рівні."""
 

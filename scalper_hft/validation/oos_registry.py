@@ -53,14 +53,31 @@ def is_burned(windows: list[OosWindow], strategy: str, symbol: str, start: date,
     return False
 
 
+def _enabled_path(path: Path | str | None) -> Path | None:
+    """None або порожній/'.'-подібний шлях → реєстр вимкнено (no-op).
+
+    Path("") == Path("."): відкривати його як файл не можна (IsADirectoryError).
+    Виникає, коли OOS_REGISTRY_PATH задано порожнім рядком у env.
+    """
+    if path is None:
+        return None
+    p = Path(path)
+    if p == Path(".") or str(path).strip() == "":
+        return None
+    return p
+
+
 def append_usage(
-    path: Path,
+    path: Path | str | None,
     strategy: str,
     symbol: str,
     start: date,
     end: date,
     purpose: str,
 ) -> None:
+    path = _enabled_path(path)
+    if path is None:
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         path.write_text(
@@ -118,7 +135,10 @@ def check_and_burn(
 
     Призначення: єдина точка OOS-дисципліни для audit_cell/overfit/sweep/optimize.
     """
-    path = registry_path if registry_path is not None else default_path()
+    path = _enabled_path(registry_path if registry_path is not None else default_path())
+    if path is None:
+        # реєстр вимкнено (порожній/'.' шлях) — не блокуємо і не пишемо
+        return True, ""
     rng = oos_range_from_df(df, days)  # type: ignore[arg-type]
     if rng is None:
         # без дат немає чого реєструвати — не блокуємо

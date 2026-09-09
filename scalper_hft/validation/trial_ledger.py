@@ -29,6 +29,21 @@ def default_path() -> Path:
     return _DEFAULT
 
 
+def _enabled_path(path: object) -> Path | None:
+    """None або порожній/'.'-подібний шлях → журнал вимкнено (no-op).
+
+    Path("") дорівнює Path("."): спроба відкрити його як файл кидає
+    IsADirectoryError (це валило overfit-аудит, коли TRIAL_LEDGER_PATH
+    не задано). Тут такі значення трактуємо як «журнал не налаштовано».
+    """
+    if path is None:
+        return None
+    p = Path(path)
+    if p == Path(".") or str(path).strip() == "":
+        return None
+    return p
+
+
 def record_trial(
     path: Path | None,
     *,
@@ -39,10 +54,10 @@ def record_trial(
     score: float | None = None,
     extra: dict | None = None,
 ) -> None:
-    """Дописати один запис про спробу (append-only). None path → no-op."""
+    """Дописати один запис про спробу (append-only). None/порожній path → no-op."""
+    path = _enabled_path(path)
     if path is None:
         return
-    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     row = {
         "ts": datetime.now(UTC).isoformat(timespec="seconds"),
@@ -66,7 +81,8 @@ def count_trials(
     purpose: str | None = None,
 ) -> int:
     """Кількість записаних спроб (сума n_trials) за фільтром. None path → 0."""
-    if path is None or not Path(path).exists():
+    path = _enabled_path(path)
+    if path is None or not path.exists():
         return 0
     total = 0
     with Path(path).open("r", encoding="utf-8") as fh:

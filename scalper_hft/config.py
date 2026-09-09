@@ -58,6 +58,18 @@ def _env_bool(key: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_path(key: str) -> Path | None:
+    """Шлях з env; порожнє/відсутнє значення → None (функція вимкнена).
+
+    НЕ Path("") — той дорівнює Path(".") і намагається відкрити поточну
+    директорію як файл (IsADirectoryError), що валило overfit-jobs.
+    """
+    raw = os.getenv(key)
+    if raw is None or raw.strip() == "":
+        return None
+    return Path(raw)
+
+
 @dataclass(frozen=True)
 class Settings:
     """Єдина точка конфігурації. Поля незмінні після створення."""
@@ -105,6 +117,13 @@ class Settings:
     vol_target_ann: float = field(default_factory=lambda: _env_float("VOL_TARGET_ANN", 0.10))
     max_losing_months: int = field(default_factory=lambda: _env_int("MAX_LOSING_MONTHS", 2))
     maker_fill_wait_bars: int = field(default_factory=lambda: _env_int("MAKER_FILL_WAIT_BARS", 1))
+    # Partial-fill політика для resting maker-ордерів (Phase 5.2):
+    # "cancel" — зафіксувати частковий філ і скасувати залишок (історичний
+    # дефолт); "wait" — зафіксувати дельту і ТРИМАТИ ордер до повного філу
+    # або таймауту (maker_fill_wait_bars). Requote = wait + перекотирування
+    # наступним баром стратегічного циклу (без дубля: pending блокує новий
+    # виставлення для того ж символу).
+    partial_fill_policy: str = field(default_factory=lambda: os.getenv("PARTIAL_FILL_POLICY", "cancel"))
     # Hard-гейт overfitting-аудиту: live (DRY_RUN=false) і paper-run-pairs
     # вимагають свіжий PASS (пара — комірка LEG1/LEG2). Цей прапорець лишився
     # для інших paper-шляхів.
@@ -117,7 +136,8 @@ class Settings:
     # повторні прогони дослідника; вмикати для дисциплінованого фінального аудиту.
     enforce_oos_burn: bool = field(default_factory=lambda: _env_bool("OOS_ENFORCE_BURN", False))
     oos_registry_path: Path = field(
-        default_factory=lambda: Path(os.getenv("OOS_REGISTRY_PATH", "docs/reports/oos_usage.md"))
+        # Порожнє значення env = дефолт (не Path("") → Path(".")!)
+        default_factory=lambda: _env_path("OOS_REGISTRY_PATH") or Path("docs/reports/oos_usage.md")
     )
     # «Замкований» holdout (Narang гл. 9): останні `holdout_pct`% даних НЕ
     # використовуються для підбору параметрів (WF/Optuna/sensitivity/DSR), а
@@ -127,8 +147,9 @@ class Settings:
     enforce_holdout_pct: float = field(default_factory=lambda: _env_float("HOLDOUT_PCT", 0.0))
     # Append-only журнал спроб (trials) для чесного DSR (замість «магічної» 50):
     # кожен бектест/аудит/оптимізація дописує рядок; лічильник дає реальну
-    # кількість перебраних варіантів → n_trials для DSR. Порожнє → вимкнено.
-    trial_ledger_path: Path = field(default_factory=lambda: Path(os.getenv("TRIAL_LEDGER_PATH", "")))
+    # кількість перебраних варіантів → n_trials для DSR. Порожнє → вимкнено
+    # (None; Path("") дорівнює Path(".") — валив overfit-jobs IsADirectoryError).
+    trial_ledger_path: Path | None = field(default_factory=lambda: _env_path("TRIAL_LEDGER_PATH"))
 
     # Дані
     data_dir: Path = field(default_factory=lambda: Path(os.getenv("DATA_DIR", "./data")))

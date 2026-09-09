@@ -416,6 +416,9 @@ def run_backtest(
     spread_bps: float = 2.0,
     intrabar_exits: bool = False,
     signals: pd.Series | None = None,
+    max_leverage: float | None = None,
+    vol_target_ann: float | None = None,
+    vol_lookback: int = 168,
 ) -> BacktestResult:
     """Запуск бектесту стратегії на свічкових даних.
 
@@ -438,6 +441,14 @@ def run_backtest(
     intrabar_exits: якщо True і стратегія дає exit_levels — виходи за
         SL/TP філимо за ЦІНОЮ РІВНЯ на барі дотику (песимістично SL при
         одночасному дотику), а не close-to-close наступного бару.
+    max_leverage: якщо задано — жорсткий кліп |цільова позиція| ≤ max_leverage
+        (позиція у частках equity = плече ноціоналу). None = без кліпу
+        (зворотна сумісність).
+    vol_target_ann: якщо задано — vol-target sizing: цільова позиція
+        масштабується на clip(target_ann / realized_ann, 0, 1), де
+        realized_ann — річна σ барових дохідностей за останні vol_lookback
+        барів. Множник відомий на закритті бару рішення (shift(1) разом із
+        сигналом) — без lookahead. None = фіксований position_pct.
     """
     if len(df) < 30:
         raise ValueError("Замало даних для бектесту")
@@ -478,6 +489,22 @@ def run_backtest(
 
     # Вектор цільових позицій (з лагом 1)
     target_pos = signals.astype(float).shift(1).fillna(0.0).clip(-1, 1) * position_pct
+
+    # Vol-target sizing (Phase 5.2): множник відомий на закритті бару t−1
+    # (разом із сигналом), застосовується до позиції бару t — без lookahead.
+    if vol_target_ann is not None:
+        unit = interval[-1]
+        num = int(interval[:-1])
+        sec_per_bar = num * {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
+        bpy = 365.0 * 86400.0 / float(sec_per_bar)
+        realized = ret.rolling(vol_lookback, min_periods=max(20, vol_lookback // 4)).std(ddof=0) * np.sqrt(bpy)
+        vol_mult = (float(vol_target_ann) / realized.replace(0.0, np.nan)).clip(0.0, 1.0)
+        vol_mult = vol_mult.shift(1).fillna(1.0)
+        target_pos = target_pos * vol_mult
+
+    # Жорсткий ліміт плеча (як у live risk_gate): |позиція| ≤ max_leverage.
+    if max_leverage is not None:
+        target_pos = target_pos.clip(-float(max_leverage), float(max_leverage))
 
     if is_maker:
         # Симуляція Queue Position та Adverse Selection для Maker-ордерів

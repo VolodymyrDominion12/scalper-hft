@@ -332,6 +332,7 @@ class PairsPaperRunner:
         control_path: Path | str | None = None,
         require_audit: bool = True,
         audit_path: Path | None = None,
+        vol_target_ann: float | None = None,
     ) -> None:
         settings = get_settings()
         if not settings.dry_run:
@@ -369,8 +370,19 @@ class PairsPaperRunner:
         self.account = account or PaperAccount(
             initial_capital=10_000.0, taker_fee=settings.taker_fee, maker_fee=settings.maker_fee
         )
+        from scalper_hft.live.trader_bars import interval_seconds
+
+        bars_per_year = 365.0 * 86400.0 / interval_seconds(self.interval)
         self.engine = PairsEngine(
-            leg1, leg2, self.strategy, self.account, store=store, n_pairs=n_pairs, is_maker=is_maker
+            leg1,
+            leg2,
+            self.strategy,
+            self.account,
+            store=store,
+            n_pairs=n_pairs,
+            is_maker=is_maker,
+            vol_target_ann=vol_target_ann,
+            bars_per_year=bars_per_year,
         )
         mode = "paper" if self._dry_run else "live"
         self.sync_engine = _make_sync_engine(
@@ -530,6 +542,10 @@ class PairsPortfolioRunner:
             initial_capital=10_000.0, taker_fee=settings.taker_fee, maker_fee=settings.maker_fee
         )
         n = len(self.configs)
+        # Phase 5.2: vol-target sizing реально застосовується у PairsEngine
+        # (масштаб ноціоналу входу = clip(target/realized σ спреду, 0, 1)).
+        self.enable_vol_target = bool(getattr(settings, "enable_vol_target", False))
+        vol_target_ann = float(settings.vol_target_ann) if self.enable_vol_target else None
         self.runners: list[PairsPaperRunner] = []
         for cfg in self.configs:
             strat = PairsArb(
@@ -554,13 +570,13 @@ class PairsPortfolioRunner:
                     control_path=self.control_path,
                     require_audit=require_audit,
                     audit_path=audit_path,
+                    vol_target_ann=vol_target_ann,
                 )
             )
         self.daily_loss_limit = settings.daily_loss_limit
         self.weekly_loss_limit = settings.weekly_loss_limit
         self.week_start_equity = self.account.equity
         self._last_week: tuple[int, int] | None = None
-        self.enable_vol_target = bool(getattr(settings, "enable_vol_target", False))
         mode = "paper" if self._dry_run else "live"
         all_legs = {cfg["leg1"] for cfg in self.configs} | {cfg["leg2"] for cfg in self.configs}
         self.sync_engine = _make_sync_engine(
