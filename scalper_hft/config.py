@@ -98,6 +98,11 @@ class Settings:
     liquidation_proximity_buffer: float = field(
         default_factory=lambda: _env_float("LIQUIDATION_PROXIMITY_BUFFER", 0.10)
     )
+    # Vol-targeting у live/pairs_runner (2D): ERC + vol-target sizing замість
+    # фіксованого position_pct. Дефолт False (зворотна сумісність); вмикати для
+    # regime-scaled sizing прив'язаного до supervisor ваг.
+    enable_vol_target: bool = field(default_factory=lambda: _env_bool("ENABLE_VOL_TARGET", False))
+    vol_target_ann: float = field(default_factory=lambda: _env_float("VOL_TARGET_ANN", 0.10))
     max_losing_months: int = field(default_factory=lambda: _env_int("MAX_LOSING_MONTHS", 2))
     maker_fill_wait_bars: int = field(default_factory=lambda: _env_int("MAKER_FILL_WAIT_BARS", 1))
     # Hard-гейт overfitting-аудиту: live (DRY_RUN=false) і paper-run-pairs

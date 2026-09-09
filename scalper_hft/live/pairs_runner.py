@@ -560,7 +560,7 @@ class PairsPortfolioRunner:
         self.weekly_loss_limit = settings.weekly_loss_limit
         self.week_start_equity = self.account.equity
         self._last_week: tuple[int, int] | None = None
-        self.enable_vol_target = False
+        self.enable_vol_target = bool(getattr(settings, "enable_vol_target", False))
         mode = "paper" if self._dry_run else "live"
         all_legs = {cfg["leg1"] for cfg in self.configs} | {cfg["leg2"] for cfg in self.configs}
         self.sync_engine = _make_sync_engine(

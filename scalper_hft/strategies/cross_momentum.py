@@ -79,10 +79,12 @@ class CrossMomentum(Strategy):
     def _cross_sectional(prices: pd.DataFrame, lookback: int, top_pct: float, smooth: int) -> pd.Series:
         """Ранжуємо symbols за returns; 1D-сигнал = перша колонка (не портфель).
 
-        Рушій бектесту сам робить lag-1 — тут сигнал на закритті бару t.
+        Використовує єдину cross-sectional feature matrix (2D): rank + z-score
+        з `scalper_hft.features.cross_section`. Рушій бектесту сам робить lag-1.
         """
-        ret = prices.pct_change(lookback)
-        ranks = ret.rank(axis=1, pct=True)
+        from scalper_hft.features.cross_section import cross_section_rank
+
+        ranks = cross_section_rank(prices, lookback)
         sig_matrix = np.where(ranks.values >= 1.0 - top_pct, 1.0, np.where(ranks.values <= top_pct, -1.0, 0.0))
         first = pd.Series(sig_matrix[:, 0], index=prices.index, dtype=float)
         if smooth > 1:

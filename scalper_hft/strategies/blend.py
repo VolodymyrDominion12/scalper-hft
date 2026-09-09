@@ -101,10 +101,18 @@ class HedgeBlend:
         """Зважена сума сигналів експертів поточними вагами."""
         return float(np.dot(self.weights(), np.asarray(signals, dtype=float)))
 
-    def step(self, returns: np.ndarray) -> None:
-        """Оновити ваги після спостереження прибутковостей експертів."""
+    def step(self, returns: np.ndarray, turnover: np.ndarray | None = None, turnover_penalty: float = 0.0) -> None:
+        """Оновити ваги після спостереження прибутковостей експертів.
+
+        Args (2C):
+            turnover: опційний вектор |Δsignal| per експерт — додається до loss
+                як turnover_penalty × turnover (net-PnL-свідоме навчання).
+            turnover_penalty: коефіцієнт turnover-штрафу.
+        """
         r = np.asarray(returns, dtype=float)
         loss = -np.log(np.clip(1.0 + r, 1e-3, 10.0))
+        if turnover is not None and turnover_penalty > 0:
+            loss = loss + float(turnover_penalty) * np.asarray(turnover, dtype=float)
         if self.eta is None:
             self._q += float(np.sum((loss - loss.mean()) ** 2))
             current_eta = float(np.sqrt((8.0 / max(self._q, 1e-12)) * np.log(self.n)))
@@ -199,7 +207,13 @@ class ContextualHedgeBlend:
         blender = self._blenders.get(regime, self._global)
         return blender.blend(np.asarray(signals, dtype=float))
 
-    def step(self, returns: np.ndarray, regime: str) -> None:
+    def step(
+        self,
+        returns: np.ndarray,
+        regime: str,
+        turnover: np.ndarray | None = None,
+        turnover_penalty: float = 0.0,
+    ) -> None:
         """Оновити ваги після спостереження результатів бару.
 
         Оновлюється ТІЛЬКИ блендер відповідного режиму + глобальний fallback.
@@ -207,12 +221,13 @@ class ContextualHedgeBlend:
         Args:
             returns: вектор прибутковостей стратегій (n_experts,).
             regime: режим ринку на барі, що щойно закрився.
+            turnover/turnover_penalty (2C): net-PnL-свідоме навчання.
         """
         r = np.asarray(returns, dtype=float)
         if regime in self._blenders:
-            self._blenders[regime].step(r)
+            self._blenders[regime].step(r, turnover=turnover, turnover_penalty=turnover_penalty)
             self._bar_counts[regime] += 1
-        self._global.step(r)
+        self._global.step(r, turnover=turnover, turnover_penalty=turnover_penalty)
 
     def regime_weights_summary(self) -> dict[str, np.ndarray]:
         """Ваги стратегій по режимах (для логування / Telegram)."""

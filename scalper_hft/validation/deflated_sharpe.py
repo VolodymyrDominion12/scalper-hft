@@ -226,10 +226,83 @@ def probabilistic_sharpe_ratio(
     return _norm_cdf(z_stat)
 
 
+def meta_dsr(
+    oos_sharpes: Sequence[float],
+    n_meta_trials: int | None = None,
+    ledger_path: object | None = None,
+    *,
+    strategy: str = "supervisor",
+    symbol: str = "portfolio",
+) -> tuple[float, int]:
+    """DSR-корекція для мета-параметрів (2C): blend mode, roster, dwell, gates.
+
+    Сам вибір мета-конфігурації — теж «підбір параметра», який треба врахувати в
+    DSR, інакше ми перенавчаємо мета-шар (учитель над стратегіями). Ця функція
+    бере OOS-Sharpes всіх перебраних мета-конфігів і рахує DSR з числом спроб =
+    max(n_meta_trials, лічильник журналу для purpose='meta').
+
+    Args:
+        oos_sharpes: OOS-Sharpes перебраних мета-конфігів.
+        n_meta_trials: явна оцінка числа мета-спроб. Якщо None — з журналу.
+        ledger_path: шлях до TrialLedger (для підрахунку реальних мета-спроб).
+        strategy/symbol: ключі для журналу.
+
+    Returns:
+        (dsr_winner, n_trials): DSR найкращого мета-конфіга + використане n_trials.
+    """
+    arr = np.asarray([float(x) for x in oos_sharpes if np.isfinite(x)], dtype=float)
+    if len(arr) == 0:
+        return 0.0, int(n_meta_trials or 1)
+    # n_trials: max(явний, лічильник журналу для meta-purpose).
+    n_trials = int(n_meta_trials) if n_meta_trials else len(arr)
+    if ledger_path is not None and str(ledger_path):
+        try:
+            from scalper_hft.validation.trial_ledger import count_trials
+
+            ledger_n = count_trials(str(ledger_path), strategy=strategy, symbol=symbol)
+            n_trials = max(n_trials, int(ledger_n))
+        except Exception:
+            pass
+    n_trials = max(n_trials, 1)
+    winner = float(np.max(arr))
+    return float(deflated_sharpe_ratio_from_sharpe(winner, n_trials=n_trials, n_obs=None)), n_trials
+
+
+def deflated_sharpe_ratio_from_sharpe(
+    sharpe: float, *, n_trials: int, n_obs: int | None, skew: float = 0.0, kurt: float = 3.0
+) -> float:
+    """DSR для вже обчисленого Sharpe (без ряду дохідностей) — апроксимація.
+
+    Використовує PSR-формулу з Bailey–López de Prado з припущенням n_obs з ряду.
+    Якщо n_obs невідоме — повертає занижену апроксимацію через n_trials.
+    """
+    if n_obs is None:
+        # Без n_obs неможливо точно; повертаємо консервативну оцінку: чим більше
+        # trials, тим нижче DSR. Апроксимація: DSR ≈ Φ(SR × √n_obs − E[max|SR|]).
+        # Без n_obs — повертаємо зниження через n_trials (евристика).
+        expected_max = _expected_max_sharpe(n_trials) if n_trials > 1 else 0.0
+        return _norm_cdf((sharpe - expected_max) * 3.0)
+    var_term = 1.0 - skew * sharpe + (kurt - 1.0) / 4.0 * sharpe**2
+    if var_term <= 0.0:
+        return 0.0
+    expected_max = _expected_max_sharpe(n_trials) if n_trials > 1 else 0.0
+    z = (sharpe - expected_max) * math.sqrt(max(n_obs - 1, 1)) / math.sqrt(var_term)
+    return _norm_cdf(z)
+
+
+def _expected_max_sharpe(n_trials: int) -> float:
+    """E[max|SR|] з N(0,1) за n_trials — Bailey–López de Prado (2014)."""
+    if n_trials <= 1:
+        return 0.0
+    return float((1.0 - 1.0 / (2.0 * n_trials)) * _norm_ppf(1.0 - 1.0 / n_trials))
+
+
 __all__ = [
     "estimate_n_trials",
     "selection_haircut",
     "deflated_sharpe_ratio",
     "probability_of_backtest_overfitting",
     "probabilistic_sharpe_ratio",
+    "meta_dsr",
+    "deflated_sharpe_ratio_from_sharpe",
 ]

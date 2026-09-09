@@ -104,6 +104,7 @@ def exp3_select_signals(
     returns_df: pd.DataFrame,
     gamma: float = 0.05,
     seed: int | None = None,
+    turnover_penalty: float = 0.0,
 ) -> pd.Series:
     """Векторизований бектест вибору сигналів через Exp3 Bandit (без lookahead).
 
@@ -115,6 +116,9 @@ def exp3_select_signals(
         returns_df: (T x N) матриця фактичних повернень суб-стратегій.
         gamma: exploration rate.
         seed: seed для відтворюваного вибору рук (1D). None = nondeterministic.
+        turnover_penalty (2C): вартість зміни позиції при перемиканні рук.
+            Віднімається від reward у update() — net-PnL-свідоме навчання.
+            Штраф = turnover_penalty × |Δsignal| при зміні руки. 0 = як раніше.
 
     Returns:
         Series обраного сигналу в [-1, 1], індексована як signals_df.
@@ -127,6 +131,7 @@ def exp3_select_signals(
     ret_vals = returns_df.values
 
     last_arm: int | None = None
+    last_signal: float = 0.0
     for i in range(t):
         arm = bandit.select_arm()
         chosen_signals.append(sig_vals[i, arm])
@@ -137,7 +142,12 @@ def exp3_select_signals(
         # не навчався. Тримаємо обрану руку явно.
         if last_arm is not None:
             prev_ret = ret_vals[i - 1, int(last_arm)]
-            bandit.update(int(last_arm), prev_ret)
+            # Turnover-штраф (2C): вартість зміни позиції при перемиканні руки.
+            turnover_cost = 0.0
+            if turnover_penalty > 0:
+                turnover_cost = turnover_penalty * abs(float(sig_vals[i, arm]) - last_signal)
+            bandit.update(int(last_arm), prev_ret, turnover_cost=turnover_cost)
         last_arm = arm
+        last_signal = float(sig_vals[i, arm])
 
     return pd.Series(chosen_signals, index=signals_df.index, dtype=float).clip(-1.0, 1.0)

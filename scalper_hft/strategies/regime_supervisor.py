@@ -306,6 +306,7 @@ class RegimeSupervisor(Strategy):
         regimes_arr = regime_df.reindex(sig_df.index)["structure"].fillna("range").values
         rets = ret.reindex(sig_df.index).values
         result_vals = np.zeros(len(sig_df))
+        turnover_penalty = float(self.get("turnover_penalty", 0.0))
 
         for t in range(len(sig_df)):
             regime = str(regimes_arr[t])
@@ -314,7 +315,11 @@ class RegimeSupervisor(Strategy):
             if t > 0:
                 prev_regime = str(regimes_arr[t - 1])
                 strat_rets = sigs[t - 1] * float(rets[t])  # sig_{t-1} * ret_t
-                blend.step(strat_rets, prev_regime)
+                # Turnover-штраф (2C): |Δsignal| між t-2 і t-1.
+                turnover = None
+                if turnover_penalty > 0 and t >= 2:
+                    turnover = np.abs(sigs[t - 1] - sigs[t - 2])
+                blend.step(strat_rets, prev_regime, turnover=turnover, turnover_penalty=turnover_penalty)
 
             # Базові ваги з taxonomy (static prior) — модифікуємо Hedge-ваги
             prior = np.array(
@@ -349,7 +354,9 @@ class RegimeSupervisor(Strategy):
         gamma = float(self.get("exp3_gamma", 0.05))
         seed = self.get("exp3_seed", None)
         seed = int(seed) if seed not in (None, "") else None
-        return exp3_select_signals(sig_df, returns_df, gamma=gamma, seed=seed)
+        # Turnover penalty (2C): net-PnL-свідоме навчання Exp3.
+        turnover_penalty = float(self.get("turnover_penalty", 0.0))
+        return exp3_select_signals(sig_df, returns_df, gamma=gamma, seed=seed, turnover_penalty=turnover_penalty)
 
     # ────────────────────────────────────────────────────────────────────────
     # Helpers
