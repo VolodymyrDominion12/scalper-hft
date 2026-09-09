@@ -216,6 +216,7 @@ def test_hmm_blocked_fail_closed_on_exception(monkeypatch) -> None:
         raise RuntimeError("hmm fit failed")
 
     monkeypatch.setattr("scalper_hft.features.hmm_regime.GaussianHMM", _boom)
+    monkeypatch.setattr("scalper_hft.features.regime_detector.GaussianHMM", _boom)
     df = _ohlc(80)
     assert trader.hmm_blocked(df) is True
 

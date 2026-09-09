@@ -364,6 +364,19 @@ class RegimeDetector:
     def is_fitted(self) -> bool:
         return self._fitted
 
+    @property
+    def hmm_calm_state(self) -> int | None:
+        """Індекс HMM-стану з найменшою волатильністю («найспокійніший» режим).
+
+        Спирається на дизайн спостережень [ret, |ret|, vol]: стан із мінімальним
+        covars_[:, 2] (дисперсія vol) — спокійний. None, якщо HMM не навчений.
+        Використовується live-гейтом `LiveTrader.hmm_blocked` та мета-шаром для
+        єдиної семантики «calm regime» у всьому проєкті.
+        """
+        if self._hmm is None or self._hmm.covars_ is None:
+            return None
+        return int(np.argmin(self._hmm.covars_[:, 2]))
+
     # ── Persistence ──────────────────────────────────────────────────────────
 
     def save(self, path: str) -> None:

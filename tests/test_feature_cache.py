@@ -88,8 +88,13 @@ def test_live_trader_aux_data_ttl_cache() -> None:
         dl.download_funding = orig
 
 
-def test_hmm_refit_cached(monkeypatch) -> None:
-    """HMM fit викликається не частіше ніж раз на _HMM_REFIT_BARS барів."""
+def test_hmm_fit_once(monkeypatch) -> None:
+    """HMM fit викликається рівно один раз (єдина політика RegimeDetector).
+
+    Раньше live робив refit кожні 250 барів (давав ту саму модель — фіксований
+    seed + ті самі перші 2000 барів). Тепер делегує до RegimeDetector з єдиним
+    навчанням, тож fit викликається рівно один раз незалежно від росту даних.
+    """
     from types import SimpleNamespace
 
     from scalper_hft.live.account import PaperAccount
@@ -109,8 +114,10 @@ def test_hmm_refit_cached(monkeypatch) -> None:
             return np.tile([0.8, 0.1, 0.1], (len(X), 1))
 
     import scalper_hft.features.hmm_regime as hmm_mod
+    import scalper_hft.features.regime_detector as det_mod
 
     monkeypatch.setattr(hmm_mod, "GaussianHMM", _FakeHMM)
+    monkeypatch.setattr(det_mod, "GaussianHMM", _FakeHMM)
 
     class _Flat:
         name = "flat"
@@ -128,6 +135,6 @@ def test_hmm_refit_cached(monkeypatch) -> None:
     trader.hmm_blocked(df)
     trader.hmm_blocked(df)  # той самий обсяг даних — без refit
     assert fits["n"] == 1
-    df2 = _df(300 + LiveTrader._HMM_REFIT_BARS + 10)
-    trader.hmm_blocked(df2)  # дані "виросли" — refit
-    assert fits["n"] == 2
+    df2 = _df(300 + 250 + 10)  # дані "виросли" — все одно без refit (єдина політика)
+    trader.hmm_blocked(df2)
+    assert fits["n"] == 1

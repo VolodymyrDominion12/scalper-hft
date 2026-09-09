@@ -285,7 +285,7 @@ def audit_cell(
     from scalper_hft.data.access import ensure_klines
     from scalper_hft.data.downloader import download_agg_trades, download_funding
     from scalper_hft.strategies import get_strategy
-    from scalper_hft.validation.deflated_sharpe import deflated_sharpe_ratio, estimate_n_trials
+    from scalper_hft.validation.deflated_sharpe import deflated_sharpe_ratio
     from scalper_hft.validation.sensitivity import parameter_sensitivity
     from scalper_hft.validation.walk_forward import run_walk_forward
 
@@ -308,6 +308,48 @@ def audit_cell(
             )
         trades = download_agg_trades(symbol, days) if strategy.needs_trades else None
         funding = download_funding(symbol, days) if strategy.needs_funding else None
+
+        # «Замкований» holdout (Narang гл. 9): якщо HOLDOUT_PCT > 0, останні
+        # holdout_pct% даних НЕ використовуються для WF/sensitivity/DSR/CSCV —
+        # лише research-частина (перші 100-holdout_pct %). Holdout лишається
+        # недоторканим для фінального сліпого тесту (окремий виклик audit_cell).
+        from scalper_hft.validation.holdout import split_research_holdout
+
+        df, _holdout = split_research_holdout(df, settings.enforce_holdout_pct)
+        if df.empty:
+            return CellAudit(
+                symbol=symbol,
+                interval=interval,
+                strategy=strategy_name,
+                status="error",
+                error="після holdout-обрізу немає даних (зменшіть HOLDOUT_PCT або збільшіть --days)",
+            )
+
+        # OOS-дисципліна (Narang гл. 9): якщо увімкнено OOS_ENFORCE_BURN,
+        # перевіряємо, чи цей OOS-відрізок (strategy×symbol×дати) вже
+        # «спалений» у реєстрі. Якщо так — fail-closed (status=error). Після
+        # успішного аудиту — дописуємо використання, щоб повторний прогін цієї
+        # ж комірки вже не міг «випадково» пере-валідуватись на тих самих даних.
+        from scalper_hft.validation.oos_registry import check_and_burn
+
+        burn_ok, burn_reason = check_and_burn(
+            strategy=strategy_name,
+            symbol=symbol,
+            df=df,
+            days=days,
+            purpose=f"audit_cell{'/cscv' if with_cscv else ''}",
+            registry_path=settings.oos_registry_path,
+            enforce=settings.enforce_oos_burn,
+        )
+        if not burn_ok:
+            return CellAudit(
+                symbol=symbol,
+                interval=interval,
+                strategy=strategy_name,
+                status="error",
+                error=burn_reason,
+            )
+
         train, test = default_train_test(interval)
         if train_bars is not None:
             train = int(train_bars)
@@ -376,7 +418,29 @@ def audit_cell(
                 step_f = float(_s) if _s else 1.0
                 combos *= max(int((float(_hi) - float(_lo)) / step_f) + 1, 1)
             combos = min(max(combos, 1), 100_000)
-            n_trials = int(estimate_n_trials(param_combinations=combos, backtests_per_combo=DSR_BACKTESTS_PER_COMBO))
+            # Чесна n_trials: max(оцінка combos×backtests_per_combo, реальний
+            # лічильник журналу спроб) — замість «магічної» 50. Журнал append-only,
+            # опційний (TRIAL_LEDGER_PATH). Записуємо цей аудит як спробу.
+            from scalper_hft.validation.trial_ledger import effective_n_trials, record_trial
+
+            ledger_path = settings.trial_ledger_path if str(settings.trial_ledger_path) else None
+            n_trials = int(
+                effective_n_trials(
+                    ledger_path,
+                    param_combinations=combos,
+                    backtests_per_combo=DSR_BACKTESTS_PER_COMBO,
+                    strategy=strategy_name,
+                    symbol=symbol,
+                )
+            )
+            record_trial(
+                ledger_path,
+                strategy=strategy_name,
+                symbol=symbol,
+                purpose=f"audit_cell{'/cscv' if with_cscv else ''}",
+                n_trials=combos,
+                score=float(wf.avg_oos_sharpe),
+            )
             dsr = float(deflated_sharpe_ratio(ret.to_numpy(dtype=float), n_trials=n_trials))
 
         # CSCV PBO (опційно): чи не є IS-кращий варіант перенавченим

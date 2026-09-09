@@ -98,6 +98,25 @@ class Settings:
     # для інших paper-шляхів.
     require_audit_pass: bool = field(default_factory=lambda: _env_bool("REQUIRE_AUDIT_PASS", False))
     audit_max_age_days: int = field(default_factory=lambda: _env_int("AUDIT_MAX_AGE_DAYS", 30))
+    # OOS-дисципліна (Narang гл. 9 — burning data): якщо True, audit_cell
+    # перевіряє, чи OOS-вікно (strategy×symbol×дати) вже «спалене» в реєстрі, і
+    # якщо так — повертає status=error (fail-closed). Після успішного аудиту —
+    # автоматично дописує використання у реєстр. Дефолт False, щоб не ламати
+    # повторні прогони дослідника; вмикати для дисциплінованого фінального аудиту.
+    enforce_oos_burn: bool = field(default_factory=lambda: _env_bool("OOS_ENFORCE_BURN", False))
+    oos_registry_path: Path = field(
+        default_factory=lambda: Path(os.getenv("OOS_REGISTRY_PATH", "docs/reports/oos_usage.md"))
+    )
+    # «Замкований» holdout (Narang гл. 9): останні `holdout_pct`% даних НЕ
+    # використовуються для підбору параметрів (WF/Optuna/sensitivity/DSR), а
+    # лишаються для фінального сліпого тесту. Значення у відсотках 0–100
+    # (напр. 20); 0 = вимкнено (дефолт, поточна поведінка). audit_cell за
+    # замовчуванням тримає лише research-частину, якщо holdout_pct > 0.
+    enforce_holdout_pct: float = field(default_factory=lambda: _env_float("HOLDOUT_PCT", 0.0))
+    # Append-only журнал спроб (trials) для чесного DSR (замість «магічної» 50):
+    # кожен бектест/аудит/оптимізація дописує рядок; лічильник дає реальну
+    # кількість перебраних варіантів → n_trials для DSR. Порожнє → вимкнено.
+    trial_ledger_path: Path = field(default_factory=lambda: Path(os.getenv("TRIAL_LEDGER_PATH", "")))
 
     # Дані
     data_dir: Path = field(default_factory=lambda: Path(os.getenv("DATA_DIR", "./data")))

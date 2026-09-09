@@ -222,8 +222,37 @@ def _build_cell_runner(
             return SweepRow(
                 strategy=strategy.name, symbol=symbol, interval=interval, status="error", error="немає даних"
             )
+        # «Замкований» holdout (Narang гл. 9): якщо HOLDOUT_PCT > 0, останні
+        # holdout_pct% даних не використовуються навіть у exploratory sweep —
+        # щоб матриця не «бачила» holdout жодного разу.
+        from scalper_hft.config import get_settings as _get_settings
+        from scalper_hft.validation.holdout import split_research_holdout as _split_research_holdout
+
+        _s = _get_settings()
+        if _s.enforce_holdout_pct > 0:
+            klines, _h = _split_research_holdout(klines, _s.enforce_holdout_pct)
+            if klines.empty:
+                return SweepRow(
+                    strategy=strategy.name, symbol=symbol, interval=interval, status="error", error="holdout: порожньо"
+                )
         if mode == "walkforward":
             train, test = resolve_wf_windows(interval, train_bars, test_bars)
+            # OOS-дисципліна: WF-клітинка «спалює» свій OOS-відрізок. У межах
+            # одного sweep кожна клітинка унікальна, тож гонки на реєстрі немає;
+            # повторний sweep тієї ж клітинки при OOS_ENFORCE_BURN=true — fail-closed.
+            from scalper_hft.validation.oos_registry import check_and_burn as _check_and_burn
+
+            _burn_ok, _burn_reason = _check_and_burn(
+                strategy=name,
+                symbol=symbol,
+                df=klines,
+                days=days,
+                purpose=f"sweep/wf:{interval}",
+                registry_path=_s.oos_registry_path,
+                enforce=_s.enforce_oos_burn,
+            )
+            if not _burn_ok:
+                return SweepRow(strategy=name, symbol=symbol, interval=interval, status="error", error=_burn_reason)
             return _run_wf_cell(
                 strategy,
                 symbol,

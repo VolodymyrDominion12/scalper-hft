@@ -120,3 +120,131 @@ def test_pairs_arb_betas_reset_on_early_return() -> None:
     bad = pd.DataFrame({"close": leg1})
     strat.generate_signals(bad)
     assert strat.betas is None
+
+
+def test_hmm_regime_features_default_is_causal() -> None:
+    """Дефолт hmm_regime_features має бути causal=True (без lookahead)."""
+    import inspect
+
+    from scalper_hft.features.hmm_regime import hmm_regime_features
+
+    sig = inspect.signature(hmm_regime_features)
+    assert sig.parameters["causal"].default is True, "causal має бути True за замовчуванням"
+
+
+def test_hmm_regime_features_causal_no_lookahead() -> None:
+    """causal=True: дописування майбутніх барів не змінює вже видані значення.
+
+    Головна ознака відсутності lookahead: прогноз у момент t залежить лише від
+    даних ≤ t. Тому префікс ряду, обчислений на повному ряду, має збігатися з
+    рядом, обчисленим лише на префіксі (на спільному відрізку).
+    """
+    from scalper_hft.features.hmm_regime import hmm_regime_features
+
+    rng = np.random.default_rng(5)
+    n = 600
+    idx = pd.date_range("2025-01-01", periods=n, freq="1h")
+    # два режими: низьковол + високовол блоки
+    vol = np.where(np.arange(n) % 200 < 100, 0.002, 0.02)
+    rets = rng.normal(0, vol, n)
+    close = pd.Series(100 * np.exp(np.cumsum(rets)), index=idx)
+
+    out_full = hmm_regime_features(close, n_states=3, causal=True, fit_window=200, seed=7)
+    cut = 350
+    out_part = hmm_regime_features(close.iloc[:cut], n_states=3, causal=True, fit_window=200, seed=7)
+
+    pcols = [c for c in out_full.columns if c.startswith("hmm_p")]
+    # на спільному відрізку після прогріву ймовірності мають збігатись
+    common = out_full.index.intersection(out_part.index)
+    # лишаємо лише барі після завершення fit_window у частковому ряду
+    warm = out_part.index[out_part.index.get_indexer(out_part.index) >= 200]
+    common = common.intersection(warm)
+    for c in pcols:
+        a = out_full.loc[common, c].to_numpy()
+        b = out_part.loc[common, c].to_numpy()
+        assert np.allclose(a, b, atol=1e-8), f"lookahead у {c}: майбутні барі змінили прогноз"
+
+
+def test_live_hmm_gate_uses_regime_detector_parity() -> None:
+    """LiveTrader.hmm_blocked делегує до RegimeDetector (та сама політика, що backtest).
+
+    Демонструє уніфікацію: backtest (RegimeSupervisor) і live (LiveTrader HMM-гейт)
+    використовують єдиний RegimeDetector → єдина політика fit (перші 2000 барів) +
+    filtered_proba (forward-only). Результати calm-prob у backtest і live збігаються.
+    """
+    from scalper_hft.features.regime_detector import RegimeDetector
+    from scalper_hft.live.account import PaperAccount
+    from scalper_hft.live.trader import LiveTrader
+
+    rng = np.random.default_rng(9)
+    n = 600
+    idx = pd.date_range("2025-01-01", periods=n, freq="1h")
+    vol = np.where(np.arange(n) % 200 < 100, 0.002, 0.02)
+    rets = rng.normal(0, vol, n)
+    close = pd.Series(100 * np.exp(np.cumsum(rets)), index=idx)
+    df = _ohlcv(close)
+
+    class _Flat:
+        name = "flat"
+        param_space: dict = {}
+        needs_trades = False
+        needs_funding = False
+
+        def generate_signals(self, d, trades=None, funding=None):
+            return pd.Series(0, index=d.index)
+
+    # backtest-шлях: RegimeDetector напряму
+    det = RegimeDetector(n_hmm_states=3, hmm_fit_bars=2000, hmm_seed=42)
+    state_df = det.detect(close)
+    calm = det.hmm_calm_state
+    assert calm is not None
+    backtest_calm_prob = float(state_df[f"hmm_p{calm}"].iloc[-1])
+
+    # live-шлях: LiveTrader.hmm_blocked (делегує до RegimeDetector)
+    trader = LiveTrader(_Flat(), "BTCUSDT", "1h", account=PaperAccount(10_000.0), hmm_block=True, hmm_threshold=0.5)
+    trader.hmm_blocked(df)  # ініціалізує внутрішній RegimeDetector
+    live_det = trader._regime_detector
+    assert isinstance(live_det, RegimeDetector), "live має делегувати до RegimeDetector"
+    live_calm_prob = float(live_det.detect(close)[f"hmm_p{calm}"].iloc[-1])
+
+    assert np.isclose(backtest_calm_prob, live_calm_prob, atol=1e-10), (
+        "backtest і live HMM дають різний calm-prob — розходження політики fit"
+    )
+
+
+def test_ml_features_no_lookahead_truncation_equivalence() -> None:
+    """ML-фічі (_build_features) каузальні: префікс ряду збігається з повним рядом.
+
+    Головна ознака відсутності lookahead у фічах: значення фічі на барі t
+    залежить лише від даних ≤ t. Тому `_build_features(full).iloc[:n]` має
+    дорівнювати `_build_features(full.iloc[:n])` на спільному відрізку.
+
+    Тестує базовий шлях (add_standard_features + frac_diff + cvd-константа при
+    trades=None) — найчутливіший до lookahead. HMM/GARCH каузальність перевіряється
+    окремо (test_hmm_regime_features_causal_no_lookahead + volatility-тести).
+    """
+    from scalper_hft.ml.features import _build_features
+
+    rng = np.random.default_rng(13)
+    n = 500
+    idx = pd.date_range("2025-01-01", periods=n, freq="1h")
+    close = pd.Series(100 + np.cumsum(rng.normal(0, 0.2, n)), index=idx)
+    df = _ohlcv(close)
+
+    feats_full = _build_features(
+        df, trades=None, add_frac=True, frac_d=0.4, add_micro=False, add_hmm=False, add_garch=False
+    )
+    cut = 300
+    feats_part = _build_features(
+        df.iloc[:cut], trades=None, add_frac=True, frac_d=0.4, add_micro=False, add_hmm=False, add_garch=False
+    )
+
+    common = feats_full.index.intersection(feats_part.index)
+    # порівнюємо всі спільні колонки
+    cols = [c for c in feats_full.columns if c in feats_part.columns]
+    for c in cols:
+        a = feats_full.loc[common, c].to_numpy()
+        b = feats_part.loc[common, c].to_numpy()
+        assert np.allclose(a, b, equal_nan=True, atol=1e-10), (
+            f"lookahead у ML-фічі {c!r}: значення на префіксі відрізняється від повного ряду"
+        )

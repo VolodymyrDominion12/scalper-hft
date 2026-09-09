@@ -155,8 +155,13 @@ class LiveTrader:
         # TTL-кеш довідкових даних live-кроку (funding/aggTrades): без нього
         # кожен сигнал гребе REST; TTL=300с достатній для барових кроків.
         self._aux_data_cache: dict[str, tuple[float, pd.DataFrame | None]] = {}
-        # HMM: (n_bars_fitted, model) — refit не частіше ніж раз на 250 барів
-        self._hmm_fit_state: tuple[int, object] | None = None
+        # HMM-гейт делегує до єдиного RegimeDetector (та сама політика fit, що в
+        # backtest/RegimeSupervisor: єдине навчання на перших hmm_fit_bars барах,
+        # далі filtered_proba forward-only — без lookahead і без розходження
+        # backtest↔live). Раньше live мав власний HMM з refit кожні 250 барів,
+        # що давав ту саму модель (фіксований seed + ті самі перші 2000 барів),
+        # але дублював логіку і ризикував розходженням при зміні політики.
+        self._regime_detector: object | None = None
 
     @property
     def pending_orders(self) -> dict[str, PendingOrder]:
@@ -173,7 +178,6 @@ class LiveTrader:
         self._pending.maker_fill_wait_bars = int(getattr(self.settings, "maker_fill_wait_bars", 1))
 
     _AUX_DATA_TTL_SEC = 300.0
-    _HMM_REFIT_BARS = 250
 
     def _cached_aux_data(self, key: str, loader: Callable[[], pd.DataFrame | None]) -> pd.DataFrame | None:
         """TTL-кеш для funding/aggTrades у live-кроці."""
@@ -250,34 +254,37 @@ class LiveTrader:
     def hmm_blocked(self, df: pd.DataFrame) -> bool:
         """True, якщо поточний HMM-стан «неспокійний» (висока волатильність).
 
-        Модель навчається на перших 2000 барах, поточна ймовірність —
-        фільтрована (forward-only) → без lookahead.
+        Делегує до єдиного `RegimeDetector` (той самий, що в backtest/
+        RegimeSupervisor): одне навчання на перших `hmm_fit_bars` барах,
+        поточна ймовірність — фільтрована (forward-only) → без lookahead і без
+        розходження backtest↔live. Блокує лише НОВІ входи; close ніколи не
+        блокується (див. `trader_loop.execute_signal`).
         """
         if not self.hmm_block:
             return False
         try:
-            from scalper_hft.features.hmm_regime import GaussianHMM
+            from scalper_hft.features.regime_detector import RegimeDetector
 
             close = df["close"]
-            ret = close.pct_change().fillna(0.0)
-            vol = ret.rolling(20, min_periods=10).std().fillna(0.0)
-            obs = pd.DataFrame({"ret": ret, "abs_ret": ret.abs(), "vol": vol}).iloc[20:]
-            if len(obs) < self.hmm_states * 20:
+            if len(close) < max(self.hmm_states * 20, 80):
                 return False
-            # Refit не частіше ніж раз на _HMM_REFIT_BARS барів: fit на 2000
-            # барів — CPU-вартісний; filtered_proba лишається per-call (каузально).
-            model = None
-            if self._hmm_fit_state is not None and len(obs) - self._hmm_fit_state[0] < self._HMM_REFIT_BARS:
-                model = self._hmm_fit_state[1]  # type: ignore[assignment]
-            if model is None:
-                model = GaussianHMM(n_states=self.hmm_states, seed=42).fit(obs.iloc[:2000].values)
-                self._hmm_fit_state = (len(obs), model)
-            covars = getattr(model, "covars_", None)
-            if covars is None:
+            det = self._regime_detector
+            if det is None:
+                det = RegimeDetector(
+                    n_hmm_states=self.hmm_states,
+                    hmm_fit_bars=2000,
+                    hmm_seed=42,
+                )
+                self._regime_detector = det
+            state_df = det.detect(close)
+            calm = det.hmm_calm_state
+            if calm is None:
                 return False
-            calm = int(np.argmin(covars[:, 2]))  # стан з найменшою vol
-            post = model.filtered_proba(obs.values)
-            return bool(post[-1, calm] < self.hmm_threshold)
+            col = f"hmm_p{calm}"
+            if col not in state_df.columns:
+                return False
+            calm_prob = float(state_df[col].iloc[-1])
+            return calm_prob < self.hmm_threshold
         except Exception:
             logger.exception("HMM-гейт: помилка моделі — блокуємо нові входи")
             return True

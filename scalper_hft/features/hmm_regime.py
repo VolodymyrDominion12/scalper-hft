@@ -219,7 +219,7 @@ def hmm_regime_features(
     window: int | None = None,
     n_iter: int = 60,
     seed: int | None = 42,
-    causal: bool = False,
+    causal: bool = True,
     fit_window: int | None = None,
 ) -> pd.DataFrame:
     """Режимні HMM-фічі для ряду close.
@@ -229,10 +229,15 @@ def hmm_regime_features(
         hmm_state     — стан (0..K-1, відсортований за середнім ret);
         hmm_p0..hmm_pK-1 — P(режим = k) на кожному барі.
 
-    causal=True: модель навчається лише на ПЕРШИХ `fit_window` барах, далі
-    використовуються фільтровані ймовірності (forward-only) — БЕЗ lookahead
-    (для ML-фіч у walk-forward). За замовчуванням — згладжені (smoothed)
-    ймовірності (для аналізу/гейтів поза ML).
+    causal=True (ДЕФОЛТ): модель навчається лише на ПЕРШИХ `fit_window` барах,
+    далі використовуються фільтровані ймовірності (forward-only) — БЕЗ lookahead.
+    Використовуйте цей режим для ML-фіч у walk-forward та для будь-якого шляху,
+    що впливає на рішення (backtest/live/gating).
+
+    causal=False (ЗГЛАДЖЕНИЙ, forward+backward): ВМИКАЄ LOOKAHEAD — значення в
+    момент t залежить від майбутніх даних. Дозволено ЛИШЕ для офлайн-аналізу
+    вже завершеної історії; НІКОЛИ не використовувати у backtest/live/ML-фічах
+    або гейтах, що впливають на рішення.
     """
     ret = close.pct_change().fillna(0.0)
     vol = ret.rolling(20, min_periods=10).std().fillna(0.0)

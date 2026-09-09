@@ -154,6 +154,29 @@ def cmd_optimize(args: argparse.Namespace) -> None:
     )
     strategy = get_strategy(args.strategy)
     settings = get_settings()
+    # «Замкований» holdout: Optuna-підбір йде лише на research-частині
+    # (перші 100-holdout_pct %); останні holdout_pct% — сліпий фінальний тест.
+    from scalper_hft.validation.holdout import split_research_holdout
+
+    df, _holdout = split_research_holdout(df, settings.enforce_holdout_pct)
+    if df.empty:
+        fail("після holdout-обрізу немає даних (зменшіть HOLDOUT_PCT або збільшіть --days)")
+    # OOS-дисципліна: Optuna-підбір «спалює» OOS-відрізок (strategy×symbol×дати),
+    # щоб повторна оптимізація на тих самих даних не могла «випадково»
+    # пере-підібрати під вже спалений OOS. Прапорець OOS_ENFORCE_BURN (default off).
+    from scalper_hft.validation.oos_registry import check_and_burn
+
+    burn_ok, burn_reason = check_and_burn(
+        strategy=args.strategy,
+        symbol=args.symbol,
+        df=df,
+        days=args.days,
+        purpose="optimize/optuna",
+        registry_path=settings.oos_registry_path,
+        enforce=settings.enforce_oos_burn,
+    )
+    if not burn_ok:
+        fail("OOS-дисципліна: %s", burn_reason)
     res = optimize_params(
         df,
         strategy,

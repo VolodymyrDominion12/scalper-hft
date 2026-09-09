@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+import pandas as pd
+
 _DEFAULT = Path("docs/reports/oos_usage.md")
 
 
@@ -74,3 +76,67 @@ def append_usage(
 
 def default_path() -> Path:
     return _DEFAULT
+
+
+def oos_range_from_df(df: pd.DataFrame, days: int) -> tuple[date, date] | None:
+    """Діапазон дат OOS-вікна для датасету `df` (останні `days` днів).
+
+    Повертає (start, end) календарні дати першого та останнього бару датасету.
+    None, якщо df порожній або без DatetimeIndex. Використовується audit_cell для
+    реєстрації «спаленого» OOS — увесь завантажений відрізок вважається OOS-зоною
+    (дослідник завантажує саме той шматок, на якому приймає рішення).
+    """
+    if df is None or len(df) == 0:
+        return None
+    idx = df.index
+    if not isinstance(idx, pd.DatetimeIndex):
+        # спробуємо перетворити
+        try:
+            idx = pd.to_datetime(idx)
+        except Exception:
+            return None
+    start = pd.Timestamp(idx[0]).date()
+    end = pd.Timestamp(idx[-1]).date()
+    return start, end
+
+
+def check_and_burn(
+    *,
+    strategy: str,
+    symbol: str,
+    df: object,
+    days: int,
+    purpose: str,
+    registry_path: Path | None = None,
+    enforce: bool = True,
+) -> tuple[bool, str]:
+    """Перевірити OOS-вікно на «спаленість» і (опційно) дописати використання.
+
+    Повертає (ok, reason). Якщо enforce=True і вікно вже спалене — (False,
+    reason). Якщо ok — дописує використання у реєстр (ідемпотентно) і повертає
+    (True, ""). Якщо enforce=False — лише дописує без перевірки (завжди ok).
+
+    Призначення: єдина точка OOS-дисципліни для audit_cell/overfit/sweep/optimize.
+    """
+    path = registry_path if registry_path is not None else default_path()
+    rng = oos_range_from_df(df, days)  # type: ignore[arg-type]
+    if rng is None:
+        # без дат немає чого реєструвати — не блокуємо
+        return True, ""
+    start, end = rng
+    existing = parse_registry(path.read_text(encoding="utf-8")) if path.exists() else []
+    if enforce and is_burned(existing, strategy, symbol, start, end):
+        return False, f"OOS-вікно вже спалене ({start}..{end}) для {strategy}/{symbol}"
+    append_usage(path, strategy, symbol, start, end, purpose)
+    return True, ""
+
+
+__all__ = [
+    "OosWindow",
+    "parse_registry",
+    "is_burned",
+    "append_usage",
+    "default_path",
+    "oos_range_from_df",
+    "check_and_burn",
+]
