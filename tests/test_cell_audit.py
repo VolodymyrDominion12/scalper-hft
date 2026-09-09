@@ -15,10 +15,20 @@ from scalper_hft.app_pages._common import (
 from scalper_hft.validation.cell_audit import (
     CellAudit,
     cell_verdict,
+    default_purge_embargo,
     default_train_test,
     min_trades_for,
     resolve_wf_windows,
 )
+
+
+def test_default_purge_embargo_nonzero_afml() -> None:
+    """AFML-дефолт: max(1, 1% OOS-вікна) — ненульовий прогін/ембарго."""
+    assert default_purge_embargo(200) == (2, 2)
+    assert default_purge_embargo(500) == (5, 5)
+    # мінімум 1 бар навіть для крихітних вікон
+    assert default_purge_embargo(50) == (1, 1)
+    assert default_purge_embargo(10) == (1, 1)
 
 
 def _ok(**over: object) -> CellAudit:

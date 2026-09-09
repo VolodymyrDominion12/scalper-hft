@@ -281,3 +281,76 @@ def test_sweep_store_load_coerces_numeric_columns(tmp_path) -> None:
         assert loaded["avg_oos_sharpe"].dtype == "float64"
         assert loaded["oos_positive_frac"].dtype == "float64"
         assert loaded["sharpe"].dtype == "float64"
+
+
+def _sweep_df(rows: list[dict]) -> pd.DataFrame:
+    base = {"status": "ok", "symbol": "BTCUSDT", "n_trades": 50}
+    return pd.DataFrame([{**base, **r} for r in rows])
+
+
+def test_sweep_winners_haircut_prefers_oos_metric() -> None:
+    """Walkforward-режим: haircut рахується по avg_oos_sharpe, не по IS sharpe."""
+    from scalper_hft.validation.sweep import sweep_winners_haircut
+
+    df = _sweep_df(
+        [
+            {"strategy": "a", "interval": "1h", "sharpe": 9.9, "avg_oos_sharpe": 0.5},
+            {"strategy": "b", "interval": "1h", "sharpe": 0.1, "avg_oos_sharpe": 1.5},
+            {"strategy": "c", "interval": "1h", "sharpe": 0.2, "avg_oos_sharpe": 0.4},
+        ]
+    )
+    w = sweep_winners_haircut(df)
+    assert len(w) == 1
+    row = w.iloc[0]
+    assert row["metric"] == "avg_oos_sharpe"
+    assert row["winner_strategy"] == "b"
+    assert row["n_candidates"] == 3
+    assert row["selection_sr0"] > 0.0
+    assert row["deflated_sharpe"] == pytest.approx(row["winner_sharpe"] - row["selection_sr0"])
+
+
+def test_sweep_winners_haircut_flags_random_maximum() -> None:
+    """Якщо переможець не кращий за очікуваний випадковий максимум → survives=False."""
+    from scalper_hft.validation.sweep import sweep_winners_haircut
+
+    # 20 кандидатів з близькими Sharpe — max серед них ≈ випадковий максимум
+    rng = np.random.default_rng(0)
+    sharpes = rng.normal(0.0, 0.3, 20)
+    df = _sweep_df([{"strategy": f"s{i}", "interval": "1h", "avg_oos_sharpe": float(s)} for i, s in enumerate(sharpes)])
+    w = sweep_winners_haircut(df)
+    assert len(w) == 1
+    assert bool(w.iloc[0]["survives_haircut"]) is False
+
+
+def test_sweep_winners_haircut_backtest_metric_and_empty() -> None:
+    """Backtest-режим (немає avg_oos_sharpe) → метрика sharpe; порожній df → порожній результат."""
+    from scalper_hft.validation.sweep import sweep_winners_haircut
+
+    df = _sweep_df(
+        [
+            {"strategy": "a", "interval": "5m", "sharpe": 0.5},
+            {"strategy": "b", "interval": "5m", "sharpe": 0.9},
+        ]
+    )
+    w = sweep_winners_haircut(df)
+    assert w.iloc[0]["metric"] == "sharpe"
+    assert w.iloc[0]["winner_strategy"] == "b"
+
+    assert sweep_winners_haircut(pd.DataFrame()).empty
+
+
+def test_save_sweep_report_includes_haircut_section(tmp_path) -> None:
+    """MD-звіт sweep містить секцію переможців зі selection haircut."""
+    from scalper_hft.validation.sweep import save_sweep_report
+
+    df = _sweep_df(
+        [
+            {"strategy": "a", "interval": "1h", "avg_oos_sharpe": 0.5},
+            {"strategy": "b", "interval": "1h", "avg_oos_sharpe": 1.5},
+        ]
+    )
+    out_md = tmp_path / "sweep.md"
+    save_sweep_report(df, out_md=str(out_md))
+    text = out_md.read_text(encoding="utf-8")
+    assert "selection haircut" in text
+    assert "deflated" in text

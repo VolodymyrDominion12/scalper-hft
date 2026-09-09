@@ -36,12 +36,19 @@ def _pair_df(leg1: pd.DataFrame, leg2: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({"leg1": leg1["close"], "leg2": leg2["close"]}, index=leg1.index)
 
 
+def test_regime_scale_default_on_validated_config() -> None:
+    """Дефолт v1.3 — валідована конфігурація iter6b: regime_scale=True, factor=0.25."""
+    strat = PairsArb()
+    assert strat.get("regime_scale") is True
+    assert float(strat.get("regime_scale_factor")) == 0.25
+
+
 def test_regime_scale_off_keeps_int_signals() -> None:
-    """regime_scale=False (дефолт) → сигнали лишаються {-1,0,1}."""
+    """regime_scale=False (явно) → сигнали лишаються {-1,0,1}."""
     leg1, leg2 = _cointegrated_pair()
     df = _pair_df(leg1, leg2)
 
-    strat = PairsArb(entry_z=2.0, lookback=120)
+    strat = PairsArb(entry_z=2.0, lookback=120, regime_scale=False)
     sig = strat.generate_signals(df)
 
     assert set(sig.dropna().unique()).issubset({-1.0, 0.0, 1.0}), "без regime_scale сигнали мають бути цілі {-1,0,1}"
@@ -144,7 +151,7 @@ def test_regime_scale_exits_preserved() -> None:
     leg1, leg2 = _cointegrated_pair()
     df = _pair_df(leg1, leg2)
 
-    strat_base = PairsArb(entry_z=2.0, lookback=120)
+    strat_base = PairsArb(entry_z=2.0, lookback=120, regime_scale=False)
     sig_base = strat_base.generate_signals(df)
     strat_scaled = PairsArb(entry_z=2.0, lookback=120, regime_scale=True)
     sig_scaled = strat_scaled.generate_signals(df)

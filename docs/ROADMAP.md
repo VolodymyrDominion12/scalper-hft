@@ -114,6 +114,47 @@ paper-replay реверсує і рахує daily-loss на mark-to-market. Те
 
 ---
 
+## Phase 5 — Аудит 2026-09-09: «dead wiring» і чесна валідація
+
+Зовнішній аудит показав: платформа зріла, але багато правильних механізмів
+**існують, проте вимкнені за замовчуванням або не підключені** до
+рекомендаційного контуру. План усунення (пріоритет зверху вниз).
+
+### 5.1 — Чесна валідація (код цього циклу) ✅
+
+| ID | Що | Статус |
+|---|---|---|
+| V1 | `audit_cell`: purge/embargo за замовчуванням `max(1, 1% test-вікна)` (AFML Ch.7/11); явний 0 = відтворення старих прогонів; прапорці `--purge-bars/--embargo-bars` у CLI `overfit`/`cscv`; purge/embargo проброшено у `pbo_cscv` | ✅ код |
+| V2 | `cmd_report`: DSR на конкатенованих OOS-дохідностях WF (як `audit_cell`), а не на IS-забрудненій full-sample equity | ✅ код |
+| V3 | `sweep_winners_haircut()` + секція у `save_sweep_report`: переможець per interval з Bailey–LdP selection haircut (`survives=False` → випадковий максимум) | ✅ код |
+| V4 | `pairs_arb` v1.3: дефолт = валідована конфігурація iter6b (`regime_scale=True`, `factor=0.25`; CSCV PBO=0.000); spec YAML синхронізовано; engine-тести ізольовані явним `regime_scale=False` | ✅ код |
+
+### 5.2 — Живий ризик-шар (наступний цикл)
+
+1. Підключити `portfolio/sizing.py:erc_vol_target_sizes` / `risk_budget` у paper-runner — прапорець `enable_vol_target` у `pairs_runner.py` зараз читається, але ніколи не використовується.
+2. `max_leverage` cap у векторному бектест-рушії (задокументовано, не реалізовано) + опційний vol-target sizing у `run_backtest`.
+3. Partial-fill політика конфігурованою (`cancel|wait|requote`, зараз — завжди cancel залишку); ключ IntentStore додати bar/ts (колізії паралельних інтентів).
+4. Capability contract стратегій: `requires = {"basket", "l2", "multi_symbol"}` → fail-fast замість тихої деградації (`sparse_basket` без кошика → односерійний z-score; `cross_momentum` на 1 символі → TS-моментум).
+
+### 5.3 — Мультифакторна режимна система
+
+1. Заповнити `preferred_regimes` з OOS `validation/regime_map.py` для всіх 17 стратегій (9 зараз порожні = «всі режими»).
+2. `RegimeSupervisor`: posterior blend поверх haircut-відібраного ростру (3–5 стратегій, що пройшли аудит), не всіх 17.
+3. ML: PurgedKFold у meta-OOF (`trainer.py` зараз `time_series_split` з gap), seeded sequential bootstrap, CPCV як валідатор моделі, Optuna → обов'язковий holdout-прогін.
+4. Стрес-секція обов'язковою у `report` (fees ×2, slippage ×2, вилучення топ-5 угод).
+
+### 5.4 — Дані під HFT (паралельно, довгостроково)
+
+1. Валідація trades/funding/depth у `data/validate.py` (зараз — лише OHLCV).
+2. Історичний L2 (Tardis або накопичення depth5) → калібрування queue model → лише тоді відродження MM/OBI стратегій.
+
+### 5.5 — Live gate (без змін)
+
+Paper Gate ≥8 тижнів на конфігурації LINK/BTC 1h maker + regime_scale(0.25)
++ vol-target sizing (після 5.2). Live — тільки після Gate і явного запиту.
+
+---
+
 ## Що категорично не робити
 
 - Не вмикати live на `mean_reversion` / `cvd_momentum` / `funding_carry` / `basis_reversion` / 1m pairs — усі відхилені.
@@ -135,3 +176,6 @@ paper-replay реверсує і рахує daily-loss на mark-to-market. Те
 | 2 | Hardening: reconcile в циклі; kill-switch; OLS/Johansen. Ladders/risk budget — модулі | ✅ Код + тести |
 | 3 | ML meta-labeling, CFI, micro-price, sparse basket, stress/cohort валідація | ✅ Реалізовано в коді |
 | 4 | L2 Tardis дані, черга лімітних ордерів, live під реальний капітал | 🔜 Наступний етап |
+| 5.1 | AFML purge/embargo дефолти; DSR на OOS у report; haircut у sweep; pairs_arb v1.3 дефолти | ✅ Код цього циклу |
+| 5.2 | risk_budget/ERC sizing у live-циклі; max_leverage у рушії; partial-fill політика | 🔜 Наступний цикл |
+| 5.3 | preferred_regimes з regime_map; supervisor на haircut-рострі; ML CPCV | 🔜 |
