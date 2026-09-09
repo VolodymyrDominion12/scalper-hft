@@ -72,11 +72,55 @@ def both_or_neither(d1: FillDecision, d2: FillDecision) -> tuple[FillDecision, F
     """Не допускаємо одноногу позицію: філл лише якщо обидві ноги торкнулись."""
     if d1.filled and d2.filled:
         return d1, d2
-    reason = "unfilled_partial" if (d1.filled or d2.filled) else "unfilled_no_touch"
+    if d1.filled or d2.filled:
+        reason = "unfilled_partial"
+    elif d1.reason == "unfilled_prob" or d2.reason == "unfilled_prob":
+        reason = "unfilled_prob"
+    else:
+        reason = "unfilled_no_touch"
     return (
         FillDecision(False, d1.fill_price, reason),
         FillDecision(False, d2.fill_price, reason),
     )
+
+
+def maker_fill_rng(seed: int | None = None) -> np.random.Generator:
+    """Детермінований Generator для paper і backtest (той самий MAKER_FILL_SEED)."""
+    if seed is None:
+        from scalper_hft.config import get_settings
+
+        seed = get_settings().maker_fill_seed
+    return np.random.default_rng(int(seed))
+
+
+def _jsonable_rng_state(obj: object) -> object:
+    """JSON-нативні типи: numpy uint64 інакше ламає json.dumps або стає str."""
+    if isinstance(obj, dict):
+        return {str(k): _jsonable_rng_state(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_jsonable_rng_state(v) for v in obj]
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    return obj
+
+
+def dump_fill_rng_state(rng: np.random.Generator) -> dict[str, Any]:
+    """Стан bit_generator, придатний для SQLite JSON snapshot."""
+    dumped = _jsonable_rng_state(rng.bit_generator.state)
+    if not isinstance(dumped, dict):
+        raise TypeError("bit_generator.state має бути dict")
+    return dumped
+
+
+def load_fill_rng_state(state: dict[str, Any]) -> np.random.Generator:
+    """Відновити Generator з dump_fill_rng_state (або json.loads того знімка)."""
+    rng = np.random.default_rng()
+    rng.bit_generator.state = state
+    return rng
 
 
 def vector_post_only_touched(side: str, limit: np.ndarray, high: np.ndarray, low: np.ndarray) -> np.ndarray:

@@ -72,10 +72,11 @@ def _maker_pair_positions(
     position_pct: float,
     rng: np.random.Generator | None = None,
 ) -> pd.Series:
-    """Та сама модель філу, що й paper: touch + P(fill | distance-to-mid).
+    """Та сама модель філу, що й paper: touch + P(fill | distance-to-mid) + seeded rng.
 
     Hot loop використовує попередньо обчислені numpy-масиви touch/probability
-    замість Python-викликів decide_fill на кожному барі.
+    замість Python-викликів decide_fill на кожному барі. Прод-шлях
+    (`run_pairs_backtest` з maker_execution) завжди передає Generator.
     """
     from scalper_hft.live.fills import (
         vector_fill_probability,
@@ -188,6 +189,8 @@ def run_pairs_backtest(
     cost: CostModel | None = None,
     initial_capital: float = 10_000.0,
     maker_execution: bool = False,
+    fill_seed: int | None = None,
+    fill_rng: np.random.Generator | None = None,
 ) -> PairsResult:
     """Бектест пари перп-ф'ючерсів на спільному часовому індексі.
 
@@ -203,7 +206,14 @@ def run_pairs_backtest(
     signals = strategy.generate_signals(common)
     has_range = {"l1_high", "l1_low", "l2_high", "l2_low"}.issubset(common.columns)
     if maker_execution and has_range:
-        pos = _maker_pair_positions(signals, common, position_pct)
+        rng = fill_rng
+        if rng is None:
+            if fill_seed is None:
+                from scalper_hft.config import get_settings
+
+                fill_seed = get_settings().maker_fill_seed
+            rng = np.random.default_rng(int(fill_seed))
+        pos = _maker_pair_positions(signals, common, position_pct, rng=rng)
     else:
         pos = signals.astype(float).shift(1).fillna(0.0).clip(-1, 1) * position_pct
 

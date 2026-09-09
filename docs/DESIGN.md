@@ -95,7 +95,8 @@ Paper/testnet за замовчуванням (`DRY_RUN=true`).
 6. ✅ MCP-сервер для трейдінгу та Streamlit дашборд.
 
 ### Наступні кроки (Roadmap):
-1. **Paper-Gate**: 8 тижнів безперервного paper-прогону портфеля пар (`paper-run-pairs`) для верифікації відсутності розходжень з бектестом.
-2. **VPS / research split**: демон + persist стану, реліз git-тегом, paper на сервері паралельно з локальним дослідженням — [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
-3. **L2 Order Book**: накопичення тривалого масиву depth-даних та інтеграція Tardis.dev для моделювання черги лімітних ордерів у маркет-мейкінгу.
-4. **Live Execution**: перехід на реальний рахунок (лише за явним запитом і після успішного Paper-Gate + live-адаптера ніг).
+1. **Цикл R1–R8** — fill-parity paper↔BT, bind API, профілі .env: [CHANGE_PLAN_REVIEW.md](CHANGE_PLAN_REVIEW.md). Потім тег `paper-v0.2.0`.
+2. **Paper-Gate**: 8 тижнів безперервного paper LINK/BTC 1h maker на тому тегу (`paper-audit` vs та сама модель філу).
+3. **VPS / research split**: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
+4. **L2 Order Book**: [L2_DATA_PLAN.md](L2_DATA_PLAN.md) + R5 sync; Tardis лише для ретроспективи MM.
+5. **Live Execution**: лише за явним запитом після Paper-Gate (фаза L3 плану).

@@ -9,7 +9,8 @@
 Проєкт — зріла **квант-платформа** (Alpha → Risk → T-Cost → Portfolio → Execution, бектест, walk-forward, DSR, CSCV, ML meta-labeling, стрес-тести, MCP) з валідованим кандидатом: **pairs_arb LINK/BTC 1h maker** (`VALIDATED_PAIRS`).
 Це **не** субмілісекундний тіковий HFT-скальпер. Taker-скальпінг на 1m відхилено через fee-drag;
 funding/basis сплять у низькому режимі 2025–26. Phase 0 закрито повністю.
-Поточний цикл коду: [CHANGE_PLAN_HEALTH.md](CHANGE_PLAN_HEALTH.md).
+Поточний цикл коду: [CHANGE_PLAN_REVIEW.md](CHANGE_PLAN_REVIEW.md) (R1–R8, fill-parity / API bind / профілі .env).
+H1–H8 закриті: [CHANGE_PLAN_HEALTH.md](CHANGE_PLAN_HEALTH.md).
 Юніт-тести: `uv run pytest tests/ -q`.
 
 **Головне правило розгортання:** жоден live з реальними коштами, доки paper pairs не пройде **≥8 тижнів безперервного моніторингу** без розходження з бектестом.
@@ -186,9 +187,10 @@ Paper Gate ≥8 тижнів на конфігурації LINK/BTC 1h maker + r
 | Фаза | Головна метрика | Статус |
 |---|---|---|
 | 0 | Усі P0 закриті тестами; `cli pairs` і weekly-audit зелені | ✅ Закрито |
-| 1 | Paper vs backtest tracking error; % unfilled post-only; 8 тижнів без розриву | ⏳ В процесі моніторингу |
+| 1 | Paper vs backtest tracking error; % unfilled post-only; 8 тижнів без розриву | ⏳ Після тегу з R1+R3, не на старій моделі філу |
 | 1.5 | WS `/public`/`private` + keepalive; chase=taker; ADF-kill; Kalman OOS; IS→cost + halt; session/markout | код у циклі 2026-09-03; paper-gate ще відкритий |
 | 1.6 | Persist+daemon; VPS paper з git-тегу; live-адаптер ніг лише після Gate | 📋 [DEPLOY_PLAN.md](DEPLOY_PLAN.md) |
+| R | Fill-parity, API bind, .env-профілі, sync depth, тонкий application | 📋 [CHANGE_PLAN_REVIEW.md](CHANGE_PLAN_REVIEW.md) |
 | 2 | Hardening: reconcile в циклі; kill-switch; OLS/Johansen. Ladders/risk budget — модулі | ✅ Код + тести |
 | 3 | ML meta-labeling, CFI, micro-price, sparse basket, stress/cohort валідація | ✅ Реалізовано в коді |
 | 4 | L2 Tardis дані, черга лімітних ордерів, live під реальний капітал | 🔜 Наступний етап |

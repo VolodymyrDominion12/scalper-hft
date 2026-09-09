@@ -41,11 +41,24 @@
 
 ## ⏳ Відкриті задачі (актуальний backlog)
 
-Поточний цикл коду (H1–H8): [CHANGE_PLAN_HEALTH.md](CHANGE_PLAN_HEALTH.md).
+Поточний цикл коду (R1–R8): [CHANGE_PLAN_REVIEW.md](CHANGE_PLAN_REVIEW.md).
+H1–H8 закриті: [CHANGE_PLAN_HEALTH.md](CHANGE_PLAN_HEALTH.md).
 Архів A–E: [CHANGE_PLAN.md](CHANGE_PLAN.md). VPS: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
 
+### 0. Цикл R1–R8 (до рестарту Paper-Gate)
+Деталі: [CHANGE_PLAN_REVIEW.md](CHANGE_PLAN_REVIEW.md). R1 змінює модель філу —
+не котити на живий `paper-v0.1.0` без нового тегу і скидання 8-тижневого годинника.
+- [ ] **R1** Fill-parity paper ↔ backtest (mid + `MAKER_FILL_SEED`, snapshot rng)
+- [ ] **R2** `scalper-api.service` localhost + lifespan `require_safe_api_bind`
+- [ ] **R3** Профілі `docs/env/vps-paper.env.example` і `research.env.example`
+- [ ] **R4** Явне `use_exit_ladders=false` (не вмикати в циклі)
+- [ ] **R5** `scripts/sync_depth.sh` + quality-звіт
+- [ ] **R6** I/O геть з `application/use_cases.py`
+- [ ] **R7** Тести `trader_loop` + вузькі except на fetch позицій
+- [x] **R8** Покажчики ROADMAP/TODO/DESIGN на цей план
+
 ### 1. Paper-валідація та моніторинг (Phase 1 Gate)
-- [ ] Безперервний моніторинг paper pairs портфеля (`results/paper_pairs.sqlite`) протягом **≥8 тижнів** без розходження з бектестом.
+- [ ] Безперервний моніторинг paper pairs (`results/paper_pairs.sqlite`) протягом **≥8 тижнів** без розходження з бектестом — **після тегу з R1+R3**.
 - [x] Щотижневий звіт tracking error: CLI `paper-audit` (`validation/paper_audit.py`) — fill-rate, maxDD vs BT×1.5, MAE/MFE forensics.
 
 ### 1b. Research локально / робот на VPS

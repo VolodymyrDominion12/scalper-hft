@@ -11,7 +11,13 @@ import pandas as pd
 
 from scalper_hft.config import get_settings
 from scalper_hft.live.account import PaperAccount
-from scalper_hft.live.fills import both_or_neither, decide_fill
+from scalper_hft.live.fills import (
+    both_or_neither,
+    decide_fill,
+    dump_fill_rng_state,
+    load_fill_rng_state,
+    maker_fill_rng,
+)
 from scalper_hft.live.risk_gate import (
     CooldownState,
     DrawdownBreaker,
@@ -138,6 +144,8 @@ class PairsEngine:
         vol_target_ann: float | None = None,
         vol_lookback: int = 168,
         bars_per_year: float = 8760.0,
+        fill_rng: np.random.Generator | None = None,
+        fill_seed: int | None = None,
     ) -> None:
         settings = get_settings()
         self.leg1 = leg1
@@ -192,6 +200,8 @@ class PairsEngine:
         self.last_bar_ts: pd.Timestamp | None = None
         self._ws_leg1_fill: float | None = None
         self._ws_leg2_fill: float | None = None
+        self._fill_seed = int(fill_seed) if fill_seed is not None else int(settings.maker_fill_seed)
+        self._fill_rng = fill_rng if fill_rng is not None else maker_fill_rng(self._fill_seed)
 
     def _k(self, symbol: str) -> str:
         return pos_key(self.pid, symbol)
@@ -288,8 +298,8 @@ class PairsEngine:
         o1, o2 = self.pending
         mid1 = 0.5 * (high1 + low1)
         mid2 = 0.5 * (high2 + low2)
-        d1 = decide_fill(o1.side, o1.limit_price, high1, low1)
-        d2 = decide_fill(o2.side, o2.limit_price, high2, low2)
+        d1 = decide_fill(o1.side, o1.limit_price, high1, low1, mid=mid1, rng=self._fill_rng)
+        d2 = decide_fill(o2.side, o2.limit_price, high2, low2, mid=mid2, rng=self._fill_rng)
 
         if self.legging_mode == "strict_both":
             d1, d2 = both_or_neither(d1, d2)
@@ -668,6 +678,8 @@ class PairsEngine:
             "pending": pending,
             "cooldown_until": str(until) if until is not None else None,
             "cooldown_reason": self.cooldown.reason,
+            "fill_seed": int(self._fill_seed),
+            "fill_rng_state": dump_fill_rng_state(self._fill_rng),
         }
 
     def apply_snapshot(self, data: dict[str, Any]) -> None:
@@ -697,3 +709,13 @@ class PairsEngine:
             until=pd.Timestamp(until_raw) if until_raw else None,
             reason=str(data.get("cooldown_reason") or ""),
         )
+        if data.get("fill_seed") is not None:
+            self._fill_seed = int(data["fill_seed"])
+        raw_rng = data.get("fill_rng_state")
+        if isinstance(raw_rng, dict):
+            try:
+                self._fill_rng = load_fill_rng_state(raw_rng)
+            except (ValueError, TypeError, KeyError):
+                self._fill_rng = maker_fill_rng(self._fill_seed)
+        else:
+            self._fill_rng = maker_fill_rng(self._fill_seed)

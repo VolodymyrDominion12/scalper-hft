@@ -118,6 +118,9 @@ class Settings:
     vol_target_ann: float = field(default_factory=lambda: _env_float("VOL_TARGET_ANN", 0.10))
     max_losing_months: int = field(default_factory=lambda: _env_int("MAX_LOSING_MONTHS", 2))
     maker_fill_wait_bars: int = field(default_factory=lambda: _env_int("MAKER_FILL_WAIT_BARS", 1))
+    # Seed моделі філу maker pairs (paper PairsEngine і run_pairs_backtest).
+    # Той самий seed → той самий Bernoulli-потік; snapshot зберігає стан rng.
+    maker_fill_seed: int = field(default_factory=lambda: _env_int("MAKER_FILL_SEED", 42))
     # Partial-fill політика для resting maker-ордерів (Phase 5.2):
     # "cancel" — зафіксувати частковий філ і скасувати залишок (історичний
     # дефолт); "wait" — зафіксувати дельту і ТРИМАТИ ордер до повного філу
