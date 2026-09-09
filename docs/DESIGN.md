@@ -33,7 +33,8 @@ Research & Validation:
 | `backtest` | Векторизований/подієвий рушії, парний/портфельний бектест, емпіричний CostModel, micro-price, router | `engine.py`, `event_engine.py`, `pairs.py`, `pairs_portfolio.py`, `execution.py`, `micro_price.py`, `metrics.py`, `router.py` |
 | `validation` | Анти-перенавчання, статистична та сценарна валідація | `walk_forward.py`, `cv.py`, `deflated_sharpe.py`, `cscv.py`, `sensitivity.py`, `stress.py`, `cohort.py`, `lift.py`, `capacity.py`, `survival.py`, `time_decay.py`, `quintile.py`, `coint_scan.py`, `hedge_ratio.py`, `optimize.py`, `oos_registry.py` |
 | `ml` | LightGBM meta-labeling, bet sizing, sample weights, MDI/MDA/SFI, CFI, LOB models | `labeling.py`, `trainer.py`, `bet_sizing.py`, `features.py`, `feature_importance.py`, `clustered_importance.py`, `sample_weights.py`, `frac_diff.py`, `lob_models.py`, `train_lob.py` |
-| `live` | Paper/testnet/live трейдер, bookTicker/depth recorder, exit ladders, reconciliation & kill-switch, SQLite | `account.py`, `trader.py`, `pairs_runner.py`, `paper_runner.py`, `paper_replay.py`, `reconcile.py`, `bookticker_recorder.py`, `exit_ladders.py`, `fills.py`, `is_log.py`, `store.py`, `telegram.py` |
+| `live` | Paper/testnet/live трейдер, bookTicker/depth recorder, exit ladders, reconciliation & kill-switch, SQLite, structured metrics | `account.py`, `trader.py`, `pairs_runner.py`, `paper_runner.py`, `paper_replay.py`, `reconcile.py`, `bookticker_recorder.py`, `exit_ladders.py`, `fills.py`, `is_log.py`, `metrics.py`, `store.py`, `telegram.py` |
+| `application` | Тонкий шар use-cases (backtest, cell audit, pairs paper) над infrastructure | `use_cases.py` |
 | `mcp_trading.py` | MCP (Model Context Protocol) сервер для AI-асистентів | `mcp_trading.py` |
 | `research` | Sweep store, черга дослідницьких задач (SQLite + worker-процеси, без брокера) | `jobs.py`, `job_worker.py`, `job_handlers.py`, `sweep_store.py` |
 | `dashboard.py` | Streamlit аналітичний та моніторинговий дашборд | `dashboard.py` |
@@ -54,6 +55,7 @@ Research & Validation:
 `breakeven_move_pct` та `breakeven_gate` запобігають входам, коли очікуваний рух менший за round-trip витрати.
 
 ### 3.3. Анти-перенавчання (гл. 9 книги + AFML)
+- **AuditMode**: `exploratory` (дефолт дослідження → `EXPLORATORY_PASS`) vs `final` (holdout+OOS burn+CSCV → live-eligible `PASS`).
 - **Walk-forward**: ковзні IS/OOS вікна, головна метрика — avg OOS Sharpe.
 - **Purged K-fold CV & CPCV** (López de Prado): purging + embargo проти витоку інформації та автокореляції.
 - **Deflated Sharpe (Bailey & LdP)**: коригування на кількість спроб (DSR > 0.95 = значущий edge).

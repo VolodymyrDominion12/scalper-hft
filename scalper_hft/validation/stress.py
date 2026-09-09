@@ -151,8 +151,8 @@ def cost_concentration_stress(
     """
     from dataclasses import replace
 
-    from scalper_hft.backtest.engine import run_backtest
     from scalper_hft.backtest.metrics import compute_metrics
+    from scalper_hft.backtest.router import run_strategy_backtest as run_backtest
 
     base = baseline or run_backtest(df, strategy, cost=cost, trades=trades, funding=funding, position_pct=position_pct)
     cost2 = replace(

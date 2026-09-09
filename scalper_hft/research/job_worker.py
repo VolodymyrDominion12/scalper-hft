@@ -7,7 +7,7 @@ import os
 import signal
 import sys
 import time
-from multiprocessing import Process, get_context
+from multiprocessing import Process, cpu_count, get_context
 from pathlib import Path
 from typing import Any, cast
 
@@ -23,6 +23,12 @@ logger = logging.getLogger(__name__)
 
 POLL_SEC = 1.0
 IDLE_SLEEP = 0.5
+JOB_CPU_BUDGET_ENV = "SCALPER_JOB_CPU_BUDGET"
+
+
+def per_job_cpu_budget(parallel_workers: int = 1) -> int:
+    """CPU-бюджет на один job-процес (щоб sweep ProcessPool не перевантажував хост)."""
+    return max(1, cpu_count() // max(1, int(parallel_workers)))
 
 
 def _job_child_main(job_id: int, kind: str, params: dict, job_dir: str, store_path: str) -> None:
@@ -137,9 +143,14 @@ def worker_loop(
     idle_sleep: float = IDLE_SLEEP,
     stop: list[bool] | None = None,
     mp_context: str | None = None,
+    cpu_budget: int | None = None,
 ) -> None:
     """Крутити claim→run, поки stop[0] не True (або вічно)."""
-    logger.info("job worker pid=%s db=%s", os.getpid(), store.path)
+    if cpu_budget is not None:
+        os.environ[JOB_CPU_BUDGET_ENV] = str(max(1, int(cpu_budget)))
+    elif JOB_CPU_BUDGET_ENV not in os.environ:
+        os.environ[JOB_CPU_BUDGET_ENV] = str(cpu_count())
+    logger.info("job worker pid=%s db=%s budget=%s", os.getpid(), store.path, os.environ.get(JOB_CPU_BUDGET_ENV))
     while stop is None or not stop[0]:
         store.touch_worker()
         job = store.claim(pid=os.getpid())
@@ -157,19 +168,20 @@ def worker_loop(
 def spawn_workers(n: int, store_path: Path | str | None = None) -> None:
     """N процесів worker_loop у цьому інтерпретаторі (блокирує)."""
     path = Path(store_path) if store_path else DEFAULT_JOBS_PATH
+    budget = per_job_cpu_budget(n)
     if n <= 1:
         with JobStore(path) as store:
-            worker_loop(store)
+            worker_loop(store, cpu_budget=budget)
         return
     ctx = get_context()
     procs: list[Process] = []
 
-    def _one(p: str) -> None:
+    def _one(p: str, job_budget: int) -> None:
         with JobStore(p) as store:
-            worker_loop(store)
+            worker_loop(store, cpu_budget=job_budget)
 
     for i in range(n):
-        proc = ctx.Process(target=_one, args=(str(path),), name=f"scalper-worker-{i}")
+        proc = ctx.Process(target=_one, args=(str(path), budget), name=f"scalper-worker-{i}")
         proc.start()
         procs.append(proc)
         logger.info("started worker %s pid=%s", i, proc.pid)

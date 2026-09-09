@@ -18,3 +18,4 @@
 | ensemble | LINKUSDT | 2024-09-09 | 2026-09-09 | audit_cell/cscv |
 | ensemble | LTCUSDT | 2024-09-09 | 2026-09-09 | audit_cell/cscv |
 | ml_strategy | SOLUSDT | 2024-09-09 | 2026-09-09 | audit_cell/cscv |
+| regime_supervisor | SOLUSDT | 2023-09-10 | 2026-09-09 | audit_cell/cscv |

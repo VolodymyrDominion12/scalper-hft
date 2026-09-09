@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from scalper_hft.live.partition_writer import append_rows
 from scalper_hft.live.ws_urls import bookticker_url, depth5_url
 
 logger = logging.getLogger(__name__)
@@ -76,7 +77,7 @@ async def _record_symbol(
                             }
                         )
                         if len(rows) >= flush_every:
-                            _flush(rows, out_path)
+                            append_rows(out_path, rows)
                             written += len(rows)
                             rows = []
                             logger.info("bookTicker %s: %d записів", symbol, written)
@@ -87,7 +88,7 @@ async def _record_symbol(
     finally:
         # Ctrl+C/виключення: скидаємо буфер, щоб не втратити зібрані рядки
         if rows:
-            _flush(rows, out_path)
+            append_rows(out_path, rows)
             written += len(rows)
     logger.info("Рекординг завершено: %d записів → %s", written, out_path)
     return written
@@ -110,24 +111,8 @@ def _event_ts(data: dict) -> pd.Timestamp:
 
 
 def _flush(rows: list[dict], out_path: Path) -> None:
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-
-    df = pd.DataFrame(rows)
-    df = df.set_index("ts").sort_index()
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    if out_path.exists():
-        try:
-            existing = pd.read_parquet(out_path)
-            if "ts" in existing.columns:
-                existing = existing.set_index("ts")
-            existing.index = pd.to_datetime(existing.index)
-            df = pd.concat([existing, df])
-            df = df[~df.index.duplicated(keep="last")].sort_index()
-        except Exception:  # noqa: BLE001 — старий формат, перезапишемо
-            pass
-    table = pa.Table.from_pandas(df)
-    pq.write_table(table, out_path, compression="zstd")
+    """Deprecated: use ``append_rows`` (partitioned). Kept for tests importing _flush."""
+    append_rows(out_path, rows)
 
 
 def record_bookticker(symbol: str, minutes: int = 60, data_dir: Path | None = None) -> int:
@@ -190,7 +175,7 @@ async def _record_depth(
                             row[f"ask{i + 1}_qty"] = q
                         rows.append(row)
                         if len(rows) >= flush_every:
-                            _flush(rows, out_path)
+                            append_rows(out_path, rows)
                             written += len(rows)
                             rows = []
                             logger.info("depth5 %s: %d записів", symbol, written)
@@ -201,7 +186,7 @@ async def _record_depth(
     finally:
         # Ctrl+C: скидаємо буфер, щоб не втратити зібрані рядки
         if rows:
-            _flush(rows, out_path)
+            append_rows(out_path, rows)
             written += len(rows)
     logger.info("Depth-рекординг завершено: %d записів → %s", written, out_path)
     return written

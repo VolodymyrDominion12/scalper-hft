@@ -159,6 +159,16 @@ paper-replay реверсує і рахує daily-loss на mark-to-market. Те
 Paper Gate ≥8 тижнів на конфігурації LINK/BTC 1h maker + regime_scale(0.25)
 + vol-target sizing (`ENABLE_VOL_TARGET`). Live — тільки після Gate і явного запиту.
 
+### 5.6 — Health plan: integrity, perf, architecture, ops ✅
+
+| ID | Що | Статус |
+|---|---|---|
+| H-RI | `AuditMode` (`exploratory`/`final`) у `audit_cell`; final вимагає holdout+OOS burn+CSCV; `EXPLORATORY_PASS` не проходить live-гейт | ✅ код |
+| H-RI2 | `parameter_sensitivity` на research-slice; `ensure_trades_coverage` fail-fast для `needs_trades` | ✅ код |
+| H-PF | Job CPU budget → `resolve_sweep_workers`; preload cache symbol×TF у sweep ProcessPool | ✅ код |
+| H-ARCH | `scalper_hft/application/use_cases.py`; CLI `overfit` через `RunCellAudit` | ✅ код |
+| H-OPS | `live/metrics.py` (step_latency, ws_reconnects, recorder_queue_depth, JSON export) | ✅ код |
+
 ---
 
 ## Що категорично не робити

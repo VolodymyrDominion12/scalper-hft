@@ -194,6 +194,7 @@ class LiveTrader:
         # що давав ту саму модель (фіксований seed + ті самі перші 2000 барів),
         # але дублював логіку і ризикував розходженням при зміні політики.
         self._regime_detector: object | None = None
+        self._maker_prob_touch = 0.5
 
     @property
     def pending_orders(self) -> dict[str, PendingOrder]:
@@ -208,6 +209,59 @@ class LiveTrader:
         self._pending.dry_run = bool(self.settings.dry_run)
         self._pending.interval = self.interval
         self._pending.maker_fill_wait_bars = int(getattr(self.settings, "maker_fill_wait_bars", 1))
+
+    def _uses_maker_path(self) -> bool:
+        """Maker lifecycle (pending limit) для live і paper (dry_run)."""
+        return bool(getattr(self.settings, "maker_execution", False))
+
+    def _paper_maker_touch(self, side: str, limit: float, high: float, low: float, bar_idx: int) -> bool:
+        """OHLC-touch як у backtest ``_simulate_maker_fills`` (chase, prob_touch)."""
+        rng = np.random.default_rng(42)
+        if bar_idx > 0:
+            rng.random(bar_idx)
+        rand = float(rng.random())
+        prob = self._maker_prob_touch
+        if side == "buy":
+            return (low < limit) or (low == limit and rand < prob)
+        return (high > limit) or (high == limit and rand < prob)
+
+    def resolve_pending_orders(
+        self,
+        ts: pd.Timestamp,
+        high: float,
+        low: float,
+        chase_limit: float,
+        bar_idx: int,
+    ) -> list[str]:
+        """Paper maker: філ resting-ордерів за OHLC-touch (parity з backtest chase).
+
+        ``chase_limit`` = close попереднього бару; перевірка на поточному барі
+        (low/high vs limit), як у ``_simulate_maker_fills``.
+        """
+        if not (self.settings.dry_run and self._uses_maker_path()):
+            return []
+        self._sync_pending_state()
+        events: list[str] = []
+        wait_bars = max(int(self._pending.maker_fill_wait_bars), 1)
+        with self._pending_lock:
+            snapshot = list(self.pending_orders.items())
+        for coid, po in snapshot:
+            with self._pending_lock:
+                live = self.pending_orders.get(coid)
+                if live is None:
+                    continue
+                live.bars_waited += 1
+                limit_px = float(live.price)
+                if self._paper_maker_touch(live.side, limit_px, high, low, bar_idx):
+                    fill_px = limit_px
+                    self._pending._book_fill_delta(live, live.size, fill_px, ts)
+                    self.pending_orders.pop(coid, None)
+                    events.append(f"filled:{coid}")
+                    continue
+                if live.bars_waited >= wait_bars:
+                    self.pending_orders.pop(coid, None)
+                    events.append(f"timeout_cancel:{coid}")
+        return events
 
     _AUX_DATA_TTL_SEC = 300.0
 
@@ -438,9 +492,8 @@ class LiveTrader:
         if not allowed:
             logger.warning("Ризик-блок: %s", reason)
             return f"blocked:{reason}"
-        live_maker = (not self.settings.dry_run) and bool(getattr(self.settings, "maker_execution", False))
-        if not live_maker:
-            # Синхронний шлях (paper або market): миттєвий філ, як і раніше.
+        if not self._uses_maker_path():
+            # Синхронний шлях (paper taker або live market): миттєвий філ.
             if decision.action == "hold":
                 return "hold"
             if decision.action == "close":
@@ -539,6 +592,26 @@ class LiveTrader:
         fail-closed: невалідний ордер не летить на біржу.
         """
         if self.settings.dry_run:
+            if self.settings.maker_execution:
+                from scalper_hft.live.orders import next_client_order_id
+
+                coid = next_client_order_id("sh")
+                self._pending.register(
+                    coid,
+                    PendingOrder(
+                        client_order_id=coid,
+                        order_id=coid,
+                        symbol=self.symbol,
+                        side=side,
+                        size=size,
+                        price=price,
+                        reduce_only=reduce_only,
+                        kind=kind,
+                        pos_side=pos_side,
+                        placed_ts=pd.Timestamp.now(tz="UTC").tz_localize(None),
+                    ),
+                )
+                return True, "pending"
             return True, "filled"
         require_live_credentials(self.settings)
         # M5: нормалізація під фільтри біржі (ExchangeClient має sanitize_order;

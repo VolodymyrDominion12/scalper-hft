@@ -23,24 +23,30 @@ def cmd_overfit(args: argparse.Namespace) -> None:
 
         _enqueue_job("overfit", payload_from_overfit_cli(args))
         return
-    from scalper_hft.validation.cell_audit import audit_cell, cell_verdict
+    from scalper_hft.application import RunCellAudit, run_cell_audit
+    from scalper_hft.validation.cell_audit import AuditMode, cell_verdict
 
     print("═" * 60)
     print(f"AUDIT: стратегія {args.strategy}, {args.symbol} {args.interval}, {args.days} днів")
     print("═" * 60)
 
-    audit = audit_cell(
-        args.strategy,
-        args.symbol,
-        args.interval,
-        args.days,
-        train_bars=args.train,
-        test_bars=args.test,
-        with_cscv=True,
-        strategy_params=_apply_use_kalman(args, args.param_dict),
-        purge_bars=getattr(args, "purge_bars", None),
-        embargo_bars=getattr(args, "embargo_bars", None),
-        n_trials_floor=int(getattr(args, "trials", 0)) or None,
+    audit_mode: AuditMode = getattr(args, "audit_mode", "final") or "final"
+    audit = run_cell_audit(
+        RunCellAudit(
+            strategy=args.strategy,
+            symbol=args.symbol,
+            interval=args.interval,
+            days=args.days,
+            mode=audit_mode,
+            train_bars=args.train,
+            test_bars=args.test,
+            with_cscv=True,
+            explicit_holdout=bool(getattr(args, "explicit_holdout", False)),
+            strategy_params=_apply_use_kalman(args, args.param_dict),
+            purge_bars=getattr(args, "purge_bars", None),
+            embargo_bars=getattr(args, "embargo_bars", None),
+            n_trials_floor=int(getattr(args, "trials", 0)) or None,
+        )
     )
     if audit.status != "ok":
         fail("Аудит не вдався: %s", audit.error)
@@ -82,14 +88,15 @@ def cmd_overfit(args: argparse.Namespace) -> None:
         f"угод {audit.bt_n_trades} | PF {audit.bt_profit_factor:.2f} | win {audit.bt_win_rate:.0%}"
     )
 
-    label, reasons = cell_verdict(audit)
+    label, reasons = cell_verdict(audit, mode=audit_mode)
     print("\n" + "═" * 60)
     print(f"ВЕРДИКТ: {label}" + (f"\n  причини: {reasons}" if reasons else ""))
 
-    # Журнал вердиктів — hard-гейт для paper/live (live/audit_gate.py)
+    # Журнал вердиктів — hard-гейт для paper/live (live/audit_gate.py; лише PASS)
     from scalper_hft.validation.verdict_store import record_verdict
 
-    record_verdict(args.strategy, args.symbol, args.interval, label, reasons)
+    if label in {"PASS", "EXPLORATORY_PASS", "FAIL"}:
+        record_verdict(args.strategy, args.symbol, args.interval, label, reasons)
 
     # Авто pair-вердикт для pairs-стратегій (раніше — лише ручний запис).
     # Якщо стратегія multi-symbol (pairs_arb/sparse_basket/funding_arb) і задано
@@ -212,8 +219,8 @@ def cmd_ml(args: argparse.Namespace) -> None:
 
 def cmd_report(args: argparse.Namespace) -> None:
     """Markdown-звіт: бектест + WF + sensitivity + deflated Sharpe → docs/reports/."""
-    from scalper_hft.backtest.engine import run_backtest
     from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.backtest.router import run_strategy_backtest as run_backtest
     from scalper_hft.cli import _load_klines  # call-time (patchable)
     from scalper_hft.config import get_settings
     from scalper_hft.strategies import get_strategy
@@ -416,8 +423,8 @@ def cmd_experiments(args: argparse.Namespace) -> None:
 
 def cmd_cohort(args: argparse.Namespace) -> None:
     """Cohort analysis: деградація edge за когортами угод (Predictive Marketing)."""
-    from scalper_hft.backtest.engine import run_backtest
     from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.backtest.router import run_strategy_backtest as run_backtest
     from scalper_hft.cli import _load_klines  # call-time (patchable)
     from scalper_hft.config import get_settings
     from scalper_hft.strategies import get_strategy
@@ -443,8 +450,8 @@ def cmd_cohort(args: argparse.Namespace) -> None:
 
 def cmd_lift(args: argparse.Namespace) -> None:
     """Децильний lift-аналіз фіч (uplift-концепт, Predictive Marketing Ch.2/9)."""
-    from scalper_hft.backtest.engine import run_backtest
     from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.backtest.router import run_strategy_backtest as run_backtest
     from scalper_hft.cli import _load_klines  # call-time (patchable)
     from scalper_hft.config import get_settings
     from scalper_hft.features.indicators import add_standard_features
@@ -597,8 +604,8 @@ def cmd_cfi(args: argparse.Namespace) -> None:
 
 def cmd_stress(args: argparse.Namespace) -> None:
     """Стрес-тестування: crash / liquidity / vol_spike / funding_shock."""
-    from scalper_hft.backtest.engine import run_backtest
     from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.backtest.router import run_strategy_backtest as run_backtest
     from scalper_hft.cli import _load_klines  # call-time (patchable)
     from scalper_hft.config import get_settings
     from scalper_hft.strategies import get_strategy
@@ -667,8 +674,8 @@ def cmd_capacity(args: argparse.Namespace) -> None:
 
 def cmd_survival(args: argparse.Namespace) -> None:
     """Survival analysis: медіанний час утримання позиції (Kaplan–Meier)."""
-    from scalper_hft.backtest.engine import run_backtest
     from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.backtest.router import run_strategy_backtest as run_backtest
     from scalper_hft.cli import _load_klines  # call-time (patchable)
     from scalper_hft.config import get_settings
     from scalper_hft.strategies import get_strategy

@@ -108,3 +108,21 @@ def require_pair_audit_pass(
     ok, msg = audit_gate_check_pair(strategy, leg1, leg2, interval, max_age_days=max_age_days, path=path)
     if not ok:
         raise RuntimeError(f"Overfitting-гейт пари FAIL ({leg1}/{leg2}): {msg}")
+
+
+def require_live_audit_if_not_dry_run(
+    settings,
+    *,
+    directional: tuple[str, list[str], str] | None = None,
+    pair: tuple[str, str, str, str] | None = None,
+    path: Path | None = None,
+) -> None:
+    """Unconditional audit gate for any DRY_RUN=false entrypoint."""
+    if settings.dry_run:
+        return
+    if pair is not None:
+        require_pair_audit_pass(pair[0], pair[1], pair[2], pair[3], max_age_days=settings.audit_max_age_days, path=path)
+    elif directional is not None:
+        require_audit_pass(
+            directional[0], directional[1], directional[2], max_age_days=settings.audit_max_age_days, path=path
+        )

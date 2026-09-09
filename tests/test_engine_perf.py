@@ -242,3 +242,62 @@ def test_extract_run_trades_parity() -> None:
         )
         assert np.allclose(ref["side"], new["side"])
         assert np.allclose(ref["ret"], new["ret"], atol=1e-12)
+
+
+def _bars_df(n: int, start: str = "2025-01-01") -> pd.DataFrame:
+    idx = pd.date_range(start, periods=n, freq="1min")
+    close = pd.Series(range(n), index=idx, dtype=float) + 100.0
+    return pd.DataFrame(
+        {"open": close, "high": close + 0.5, "low": close - 0.5, "close": close, "volume": 1.0},
+        index=idx,
+    )
+
+
+def test_pairs_step_latency_smoke() -> None:
+    """Synthetic pairs engine steps over 1000 bars should finish quickly."""
+    from scalper_hft.live.account import PaperAccount
+    from scalper_hft.live.pairs_runner import PairsEngine
+    from scalper_hft.strategies.pairs_arb import PairsArb
+
+    n = 1000
+    idx = pd.date_range("2025-01-01", periods=n, freq="1h")
+    close_a = 100.0 + np.arange(n, dtype=float)
+    close_b = 50.0 + np.arange(n, dtype=float) * 0.1
+    acc = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
+    eng = PairsEngine(
+        "AAA",
+        "BBB",
+        PairsArb(lookback=20, regime_scale=False),
+        acc,
+        wait_bars=1,
+        is_maker=True,
+        coint_kill=False,
+    )
+    # warmup spread history so the timed loop avoids ADF/coint entry checks
+    for i in range(min(80, n)):
+        ts = idx[i]
+        eng.on_bar(ts, close_a[i] + 1, close_a[i] - 1, close_a[i], close_b[i] + 1, close_b[i] - 1, close_b[i], signal=0)
+
+    t0 = time.perf_counter()
+    for i, ts in enumerate(idx):
+        eng.on_bar(ts, close_a[i] + 1, close_a[i] - 1, close_a[i], close_b[i] + 1, close_b[i] - 1, close_b[i], signal=0)
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 2.0, f"pairs on_bar x{n}: {elapsed:.2f}s — too slow"
+
+
+def test_storage_atomic_write_smoke(tmp_path) -> None:
+    """save_klines twice then load succeeds (atomic parquet replace)."""
+    from scalper_hft.data.storage import load_klines, save_klines
+
+    path = tmp_path / "AAA_1m_klines.parquet"
+    df1 = _bars_df(60)
+    df2 = _bars_df(80, start="2025-01-02")
+    save_klines(path, df1)
+    save_klines(path, df2)
+    loaded = load_klines(path)
+    assert loaded is not None
+    assert len(loaded) == len(df2)
+    cols = ["open", "high", "low", "close", "volume"]
+    expected = df2[cols].astype(float)
+    assert list(loaded.columns) == cols
+    np.testing.assert_allclose(loaded.values, expected.values)

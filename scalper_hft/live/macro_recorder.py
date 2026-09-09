@@ -14,6 +14,7 @@ from pathlib import Path
 import pandas as pd
 
 from scalper_hft.data.client import ExchangeClient
+from scalper_hft.live.partition_writer import append_rows
 from scalper_hft.live.ws_urls import force_order_url
 
 logger = logging.getLogger(__name__)
@@ -28,26 +29,7 @@ except ImportError:  # pragma: no cover
 
 
 def _flush(rows: list[dict], out_path: Path) -> None:
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-
-    if not rows:
-        return
-    df = pd.DataFrame(rows)
-    df = df.set_index("ts").sort_index()
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    if out_path.exists():
-        try:
-            existing = pd.read_parquet(out_path)
-            if "ts" in existing.columns:
-                existing = existing.set_index("ts")
-            existing.index = pd.to_datetime(existing.index)
-            df = pd.concat([existing, df])
-            df = df[~df.index.duplicated(keep="last")].sort_index()
-        except Exception:  # noqa: BLE001
-            pass
-    table = pa.Table.from_pandas(df)
-    pq.write_table(table, out_path, compression="zstd")
+    append_rows(out_path, rows)
 
 
 async def _record_liquidations(symbol: str, out_path: Path, duration_sec: int, flush_every: int = 50) -> int:
@@ -126,8 +108,7 @@ async def _record_open_interest(symbol: str, out_path: Path, duration_sec: int, 
     try:
         while time.monotonic() - start < duration_sec:
             try:
-                # ccxt fetch_open_interest повертає dict з openInterest, symbol, datetime etc.
-                oi_data = client.exchange.fetch_open_interest(symbol)
+                oi_data = await asyncio.to_thread(client.exchange.fetch_open_interest, symbol)
                 ts = pd.Timestamp.now(tz="UTC").tz_localize(None)
                 if oi_data.get("timestamp"):
                     ts = pd.Timestamp(oi_data["timestamp"], unit="ms", tz="UTC").tz_localize(None)

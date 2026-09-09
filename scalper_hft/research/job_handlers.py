@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -110,7 +111,13 @@ def handle_sweep(
     intervals = list(payload.get("intervals") or [])
     days = int(payload.get("days") or 60)
     mode = str(payload.get("mode") or "backtest")
-    workers = int(payload.get("workers") or 1)
+    from scalper_hft.research.job_worker import JOB_CPU_BUDGET_ENV
+    from scalper_hft.validation.sweep import resolve_sweep_workers
+
+    requested_workers = int(payload.get("workers") or 1)
+    budget_raw = payload.get("max_workers") or os.environ.get(JOB_CPU_BUDGET_ENV)
+    max_workers = int(budget_raw) if budget_raw else None
+    workers = resolve_sweep_workers(requested_workers, max_workers=max_workers)
     resume = bool(payload.get("resume", True))
     enable_trace = bool(payload.get("enable_trace", False))
     include_slow = bool(payload.get("include_slow", False))
@@ -147,6 +154,7 @@ def handle_sweep(
             train_bars=train_bars,
             test_bars=test_bars,
             workers=workers,
+            max_workers=max_workers,
             include_slow=include_slow,
             store=store,
             resume=resume,
@@ -229,6 +237,7 @@ def handle_overfit(payload: dict[str, Any], job_dir: Path, **_: Any) -> None:
         symbol,
         interval,
         days,
+        mode="final",
         train_bars=train_bars,
         test_bars=test_bars,
         with_cscv=True,  # CSCV PBO для фінального вердикту комірки (1C)
@@ -242,7 +251,7 @@ def handle_overfit(payload: dict[str, Any], job_dir: Path, **_: Any) -> None:
     from scalper_hft.validation.cell_audit import cell_verdict
     from scalper_hft.validation.verdict_store import record_verdict
 
-    label, reasons = cell_verdict(audit)
+    label, reasons = cell_verdict(audit, mode="final")
     record_verdict(name, symbol, interval, label, reasons)
     logger.info(
         "overfit %s %s %s: oos=%.3f dsr=%s n_trades=%s",

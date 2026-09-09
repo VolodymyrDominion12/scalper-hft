@@ -760,7 +760,7 @@ class PairsLiveRunner(PairsPaperRunner):
         if self.client is None:
             raise RuntimeError("PairsLiveRunner потребує ExchangeClient (client)")
         if require_audit:
-            from scalper_hft.live.audit_gate import require_pair_audit_pass
+            from scalper_hft.live.audit_gate import require_live_audit_if_not_dry_run, require_pair_audit_pass
 
             require_pair_audit_pass(
                 self.strategy.name,
@@ -768,6 +768,11 @@ class PairsLiveRunner(PairsPaperRunner):
                 self.leg2,
                 self.interval,
                 max_age_days=settings.audit_max_age_days,
+                path=audit_path,
+            )
+            require_live_audit_if_not_dry_run(
+                settings,
+                pair=(self.strategy.name, self.leg1, self.leg2, self.interval),
                 path=audit_path,
             )
         self.control_path = Path(control_path) if control_path is not None else DEFAULT_CONTROL_PATH

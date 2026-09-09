@@ -10,6 +10,7 @@
 
 from scalper_hft.validation.capacity import capacity_curve, capacity_report, saturation_scale
 from scalper_hft.validation.cell_audit import (
+    AuditMode,
     CellAudit,
     audit_cell,
     cell_verdict,
@@ -45,6 +46,7 @@ from scalper_hft.validation.survival import (
 from scalper_hft.validation.walk_forward import WalkForwardResult, run_walk_forward
 
 __all__ = [
+    "AuditMode",
     "CellAudit",
     "audit_cell",
     "cell_verdict",

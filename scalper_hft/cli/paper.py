@@ -13,18 +13,21 @@ from scalper_hft.cli._common import (
 def _check_directional_audit_gate(args: argparse.Namespace) -> None:
     """Fail-closed directional overfitting-гейт для paper/paper-run.
 
-    Працює лише коли увімкнено `REQUIRE_AUDIT_PASS` (дефолт False — дослідницький
-    режим без блокування). При True — вимагає свіжий PASS з `overfit` для
-    (strategy, symbol, interval), інакше raise (старт заборонено). Pairs-стратегії
-    тут не проходять (вони мають окремий pair-гейт у pairs_runner).
+    DRY_RUN=false: безумовний гейт (require_live_audit_if_not_dry_run).
+    DRY_RUN=true: опційно при `REQUIRE_AUDIT_PASS` (дефолт False — дослідницький
+    режим без блокування). Pairs-стратегії тут не проходять (окремий pair-гейт).
     """
     import scalper_hft.config as _cfg
 
     settings = _cfg.get_settings()
+    from scalper_hft.live.audit_gate import require_audit_pass, require_live_audit_if_not_dry_run
+
+    directional = (args.strategy, [args.symbol], args.interval)
+    if not settings.dry_run:
+        require_live_audit_if_not_dry_run(settings, directional=directional)
+        return
     if not settings.require_audit_pass:
         return
-    from scalper_hft.live.audit_gate import require_audit_pass
-
     require_audit_pass(
         args.strategy,
         [args.symbol],

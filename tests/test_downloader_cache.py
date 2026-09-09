@@ -540,6 +540,91 @@ def test_set_shared_cooldown_writes_future_ts(tmp_path, monkeypatch) -> None:
     dl._wait_shared_cooldown()  # минуле — без sleep
 
 
+def _good_klines_df(n: int, start: str = "2024-01-01", freq: str = "1min") -> pd.DataFrame:
+    idx = pd.date_range(start, periods=n, freq=freq)
+    close = pd.Series(range(n), index=idx, dtype=float) + 100.0
+    return pd.DataFrame(
+        {"open": close, "high": close + 0.5, "low": close - 0.5, "close": close, "volume": 1.0},
+        index=idx,
+    )
+
+
+def _assert_valid_klines(df: pd.DataFrame | None) -> None:
+    if df is None:
+        return
+    for col in ("open", "high", "low", "close", "volume"):
+        assert col in df.columns
+    assert len(df) > 0
+    assert df.index.is_monotonic_increasing
+
+
+def test_parquet_reader_never_sees_partial_file(tmp_path) -> None:
+    """Concurrent writer + reader: old/new complete snapshots or None, never corrupt parquet."""
+    import threading
+    import time
+
+    from scalper_hft.data.storage import load_klines, save_klines
+
+    path = tmp_path / "BTCUSDT_1m_klines.parquet"
+    stop = threading.Event()
+    errors: list[str] = []
+
+    def writer() -> None:
+        for i in range(40):
+            df = _good_klines_df(120 + i, start=f"2024-01-{1 + (i % 28):02d}")
+            save_klines(path, df)
+            time.sleep(0.002)
+
+    def reader() -> None:
+        while not stop.is_set():
+            try:
+                df = load_klines(path)
+                _assert_valid_klines(df)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(str(exc))
+            time.sleep(0.001)
+
+    w = threading.Thread(target=writer)
+    r = threading.Thread(target=reader)
+    w.start()
+    r.start()
+    w.join(timeout=30)
+    stop.set()
+    r.join(timeout=5)
+    assert not errors, "reader saw corrupt parquet:\n" + "\n".join(errors[:5])
+    final = load_klines(path)
+    assert final is not None and len(final) >= 120
+
+
+def test_two_writers_last_wins_complete(tmp_path) -> None:
+    """Two writers with file lock: final parquet is valid and complete."""
+    import threading
+
+    from scalper_hft.data.storage import load_klines, save_klines
+
+    path = tmp_path / "ETHUSDT_1m_klines.parquet"
+    barrier = threading.Barrier(2)
+
+    def writer(tag: str, n: int) -> None:
+        barrier.wait(timeout=5)
+        for i in range(15):
+            df = _good_klines_df(n + i, start=f"2024-02-{1 + (i % 20):02d}")
+            df.attrs["tag"] = tag  # noqa: B003 — not persisted, only to vary frames
+            save_klines(path, df)
+
+    t1 = threading.Thread(target=writer, args=("a", 100))
+    t2 = threading.Thread(target=writer, args=("b", 200))
+    t1.start()
+    t2.start()
+    t1.join(timeout=30)
+    t2.join(timeout=30)
+
+    loaded = load_klines(path)
+    assert loaded is not None
+    _assert_valid_klines(loaded)
+    assert len(loaded) >= 100
+
+
 def test_with_retry_sets_shared_cooldown_on_429(tmp_path, monkeypatch) -> None:
     from scalper_hft.data import downloader as dl
 

@@ -132,6 +132,38 @@ def klines_from_store(
     return df
 
 
+def ensure_trades_coverage(symbol: str, days: int, *, margin_hours: float = 6.0) -> None:
+    """Fail-fast: кеш aggTrades має покривати запитаний період (needs_trades стратегії).
+
+    Перевіряє лише локальний кеш — без мережі. Якщо перший trade пізніше за
+    now−days або хвіст застарів — RuntimeError з підказкою про download/vision.
+    """
+    if days <= 0:
+        return
+    store = get_store()
+    cached = store.load_trades(symbol)
+    if cached is None or cached.empty:
+        raise RuntimeError(
+            f"aggTrades: у кеші немає даних для {symbol} — "
+            f"завантажте: `uv run python -m scalper_hft.cli download --symbol {symbol} --trades --days {days}`"
+            + (" або --vision для історії >2 діб" if days > 2 else "")
+        )
+    if not cached.index.is_monotonic_increasing:
+        cached = cached.sort_index()
+    now = pd.Timestamp.now(tz="UTC").tz_localize(None)
+    need_start = now - pd.Timedelta(days=days)
+    margin = pd.Timedelta(hours=margin_hours)
+    first = cached.index[0]
+    last = cached.index[-1]
+    if first > need_start + margin:
+        raise RuntimeError(
+            f"aggTrades {symbol}: кеш починається {first}, потрібно з {need_start.date()} "
+            f"({days} днів) — докачайте vision/REST"
+        )
+    if last < now - margin:
+        raise RuntimeError(f"aggTrades {symbol}: хвіст кешу {last} застарів (потрібно ≥ {now - margin}) — оновіть кеш")
+
+
 def warm_base_cache(
     symbols: list[str], days: int, base_interval: str = DEFAULT_BASE_INTERVAL
 ) -> dict[str, pd.DataFrame]:
@@ -172,4 +204,11 @@ def warm_base_cache(
     return out
 
 
-__all__ = ["ensure_klines", "klines_from_store", "warm_base_cache", "can_derive", "DEFAULT_BASE_INTERVAL"]
+__all__ = [
+    "ensure_klines",
+    "ensure_trades_coverage",
+    "klines_from_store",
+    "warm_base_cache",
+    "can_derive",
+    "DEFAULT_BASE_INTERVAL",
+]

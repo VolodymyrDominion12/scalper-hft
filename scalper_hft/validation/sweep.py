@@ -27,6 +27,7 @@ import json
 import logging
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from multiprocessing import cpu_count
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -39,6 +40,44 @@ if TYPE_CHECKING:
     from scalper_hft.overlay.policy import CellPolicy, OverlayBook
 
 logger = logging.getLogger(__name__)
+
+# ProcessPool-воркер: один parquet-read на пару symbol×interval (не на клітинку).
+_WORKER_DATA_CACHE: dict[tuple[str, str], tuple[pd.DataFrame, pd.DataFrame | None, pd.DataFrame | None]] = {}
+
+
+def resolve_sweep_workers(workers: int, *, max_workers: int | None = None) -> int:
+    """Обмежити паралелізм sweep: min(requested, cpu_count, job_budget)."""
+    if workers <= 0:
+        return 1
+    cap = cpu_count()
+    if max_workers is not None and max_workers > 0:
+        cap = min(cap, int(max_workers))
+    return max(1, min(int(workers), cap))
+
+
+def _preload_cell_data(
+    symbol: str,
+    interval: str,
+    days: int,
+    base_interval: str,
+    *,
+    needs_trades: bool,
+    needs_funding: bool,
+) -> tuple[pd.DataFrame, pd.DataFrame | None, pd.DataFrame | None]:
+    """Кеш symbol×interval у межах ProcessPool-воркера (один read parquet)."""
+    key = (symbol, interval)
+    cached = _WORKER_DATA_CACHE.get(key)
+    if cached is not None:
+        return cached
+    from scalper_hft.data.access import ensure_klines
+    from scalper_hft.data.store import get_store
+
+    klines = ensure_klines(symbol, interval, days, base_interval=base_interval, derive=True, readonly=True)
+    data_store = get_store()
+    trades = data_store.load_trades(symbol) if needs_trades else None
+    funding = data_store.load_funding(symbol) if needs_funding else None
+    _WORKER_DATA_CACHE[key] = (klines, trades, funding)
+    return klines, trades, funding
 
 
 # Двоногі стратегії (потребують пару/кошик символів) — у пер-символьному
@@ -209,16 +248,15 @@ def _build_cell_runner(
         if data_provider is not None:
             klines, trades, funding = data_provider(symbol, interval, days)
         else:
-            from scalper_hft.data.access import ensure_klines
-            from scalper_hft.data.store import get_store
-
-            # readonly: klines/aggTrades/funding уже прогріті в run_sweep —
-            # клітинки лише читають кеш. Інакше ProcessPool (workers>1)
-            # одночасно качає ті самі aggTrades і ловить 429 -1003 (6000 req/min).
-            klines = ensure_klines(symbol, interval, days, base_interval=base_interval, derive=True, readonly=True)
-            data_store = get_store()
-            trades = data_store.load_trades(symbol) if strategy.needs_trades else None
-            funding = data_store.load_funding(symbol) if strategy.needs_funding else None
+            # readonly + preload: один parquet-read на symbol×interval у воркері.
+            klines, trades, funding = _preload_cell_data(
+                symbol,
+                interval,
+                days,
+                base_interval,
+                needs_trades=strategy.needs_trades,
+                needs_funding=strategy.needs_funding,
+            )
         if klines is None or klines.empty:
             return SweepRow(
                 strategy=strategy.name, symbol=symbol, interval=interval, status="error", error="немає даних"
@@ -340,6 +378,7 @@ def run_sweep(
     train_bars: int | None = None,
     test_bars: int | None = None,
     workers: int = 1,
+    max_workers: int | None = None,
     include_slow: bool = False,
     data_provider: Callable[..., Any] | None = None,
     store: SweepStore | None = None,
@@ -448,12 +487,15 @@ def run_sweep(
         "overlay_book": overlay_book,
     }
 
+    pool_workers = resolve_sweep_workers(workers, max_workers=max_workers)
     rows: list[SweepRow] = []
-    if workers and workers > 1 and cells:
+    if pool_workers > 1 and cells:
         # ProcessPool — CPU-bound pandas; ThreadPool лише коли data_provider
         # не picklable / тести з інжектом даних.
         pool_cls = ThreadPoolExecutor if data_provider is not None else ProcessPoolExecutor
-        with pool_cls(max_workers=workers) as ex:
+        if pool_cls is ProcessPoolExecutor:
+            _WORKER_DATA_CACHE.clear()
+        with pool_cls(max_workers=pool_workers) as ex:
             futs = {ex.submit(execute_sweep_cell, c[0], c[1], c[2], **cell_kwargs): c for c in cells}
             for fut in as_completed(futs):
                 try:
@@ -634,6 +676,7 @@ __all__ = [
     "SweepRow",
     "SweepStore",
     "run_sweep",
+    "resolve_sweep_workers",
     "save_sweep_report",
     "sweep_winners_haircut",
     "haircut_roster",

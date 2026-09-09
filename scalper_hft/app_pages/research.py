@@ -62,7 +62,7 @@ with st.sidebar:
     rs_days = st.slider("Днів", 14, 1095, key="rs_days")
 
 
-section = st.segmented_control("Розділ", list(RESEARCH_SECTIONS), key="research_section", default=RESEARCH_SECTIONS[0])
+section = st.segmented_control("Розділ", list(RESEARCH_SECTIONS), key="research_section")
 if section is None:
     section = RESEARCH_SECTIONS[0]
 
@@ -92,8 +92,9 @@ if section == "Масовий пошук":
         col_left, col_right = st.columns([1, 3])
         with col_left:
             with st.container(border=True):
-                st.caption("Налаштування прогону")
-                sel_slow = st.toggle("Включити повільні (ML / ensemble)", value=False, key="sw_slow")
+                if "sw_slow" not in st.session_state:
+                    st.session_state["sw_slow"] = False
+                sel_slow = st.toggle("Включити повільні (ML / ensemble)", key="sw_slow")
                 all_strats = default_strategies(include_slow=sel_slow)
 
                 with st.container(horizontal=True):
@@ -113,9 +114,16 @@ if section == "Масовий пошук":
                         st.session_state["sw_ivs"] = list(DEFAULT_INTERVALS)
                         st.rerun()
 
-                sel_strats = st.multiselect("Стратегії", all_strats, default=all_strats[:5], key="sw_strats")
-                sel_symbols = st.multiselect("Символи", SYMBOLS, default=SYMBOLS[:3], key="sw_syms")
-                sel_ivs = st.multiselect("Таймфрейми", DEFAULT_INTERVALS, default=["5m", "15m", "1h"], key="sw_ivs")
+                if "sw_strats" not in st.session_state:
+                    st.session_state["sw_strats"] = all_strats[:5]
+                if "sw_syms" not in st.session_state:
+                    st.session_state["sw_syms"] = list(SYMBOLS[:3])
+                if "sw_ivs" not in st.session_state:
+                    st.session_state["sw_ivs"] = ["5m", "15m", "1h"]
+
+                sel_strats = st.multiselect("Стратегії", all_strats, key="sw_strats")
+                sel_symbols = st.multiselect("Символи", SYMBOLS, key="sw_syms")
+                sel_ivs = st.multiselect("Таймфрейми", DEFAULT_INTERVALS, key="sw_ivs")
                 sel_days = st.slider("Днів даних", 14, 1095, 60, key="sw_days")
 
                 with st.expander("⚙️ Розширені налаштування (режим, OOS)"):

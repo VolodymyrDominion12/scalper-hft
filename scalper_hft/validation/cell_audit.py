@@ -17,7 +17,8 @@ import pandas as pd
 
 from scalper_hft.validation.walk_forward import WalkForwardWindow
 
-VerdictLabel = Literal["PASS", "FAIL"]
+VerdictLabel = Literal["PASS", "EXPLORATORY_PASS", "FAIL"]
+AuditMode = Literal["exploratory", "final"]
 AuditStatus = Literal["ok", "error"]
 
 # Ті самі вікна, що у scripts/matrix_wf_sweeps.sh
@@ -230,8 +231,16 @@ class CellAudit:
         )
 
 
-def cell_verdict(audit: CellAudit | Mapping[str, Any]) -> tuple[VerdictLabel, str]:
-    """(PASS/FAIL, причини) за критеріями overfitting-audit."""
+def cell_verdict(
+    audit: CellAudit | Mapping[str, Any],
+    *,
+    mode: AuditMode = "exploratory",
+) -> tuple[VerdictLabel, str]:
+    """(PASS/EXPLORATORY_PASS/FAIL, причини) за критеріями overfitting-audit.
+
+    mode=exploratory: критерії пройдені → EXPLORATORY_PASS (не проходить live-гейт).
+    mode=final: критерії пройдені → PASS (live-eligible у verdict_store).
+    """
     row: Mapping[str, Any] = audit.to_summary_dict() if isinstance(audit, CellAudit) else audit
     interval = str(row.get("interval") or "")
     reasons: list[str] = []
@@ -270,7 +279,9 @@ def cell_verdict(audit: CellAudit | Mapping[str, Any]) -> tuple[VerdictLabel, st
         reasons.append(f"PBO={pbo:.2f}>{PBO_MAX}")
 
     if not reasons:
-        return "PASS", ""
+        if mode == "final":
+            return "PASS", ""
+        return "EXPLORATORY_PASS", ""
     return "FAIL", "; ".join(reasons)
 
 
@@ -280,9 +291,11 @@ def audit_cell(
     interval: str,
     days: int,
     *,
+    mode: AuditMode = "exploratory",
     train_bars: int | None = None,
     test_bars: int | None = None,
     with_cscv: bool = False,
+    explicit_holdout: bool = False,
     strategy_params: dict[str, Any] | None = None,
     purge_bars: int | None = None,
     embargo_bars: int | None = None,
@@ -290,6 +303,10 @@ def audit_cell(
 ) -> CellAudit:
     """Повний аудит комірки. Помилки даних/рахунку — status=error, без raise.
 
+    mode=exploratory (дефолт): дозволяє EXPLORATORY_PASS у verdict_store;
+    live-гейт приймає лише PASS.
+    mode=final: вимагає HOLDOUT_PCT>0 або explicit_holdout=True, OOS_ENFORCE_BURN,
+    повний CSCV PBO (with_cscv=True); лише PASS у verdict_store.
     with_cscv: додатково рахувати CSCV PBO (~CSCV_VARIANTS додаткових
     бектестів — дорого для матричних прогонів, вмикати для фінального
     вердикту комірки, напр. CLI `overfit`).
@@ -316,6 +333,25 @@ def audit_cell(
 
     try:
         settings = get_settings()
+        if mode == "final":
+            holdout_pct_cfg = float(getattr(settings, "enforce_holdout_pct", 0.0))
+            if holdout_pct_cfg <= 0 and not explicit_holdout:
+                return CellAudit(
+                    symbol=symbol,
+                    interval=interval,
+                    strategy=strategy_name,
+                    status="error",
+                    error="final mode: потрібен HOLDOUT_PCT>0 або explicit_holdout=True",
+                )
+            if not bool(getattr(settings, "enforce_oos_burn", False)):
+                return CellAudit(
+                    symbol=symbol,
+                    interval=interval,
+                    strategy=strategy_name,
+                    status="error",
+                    error="final mode: потрібен OOS_ENFORCE_BURN=true",
+                )
+            with_cscv = True
         cost = CostModel(
             maker_fee=settings.maker_fee,
             taker_fee=settings.taker_fee,
@@ -331,6 +367,10 @@ def audit_cell(
                 status="error",
                 error="немає даних",
             )
+        if strategy.needs_trades:
+            from scalper_hft.data.access import ensure_trades_coverage
+
+            ensure_trades_coverage(symbol, days)
         trades = download_agg_trades(symbol, days) if strategy.needs_trades else None
         funding = download_funding(symbol, days) if strategy.needs_funding else None
 

@@ -129,13 +129,14 @@ class BinanceUserDataStream:
         self.backoff = backoff or ExponentialBackoff()
         self._running = False
         self._last_keepalive_mono: float | None = None
+        self._listen_key_expired = False
 
     @property
     def ws_url(self) -> str:
         return private_user_stream_url(self.listen_key, testnet=self.testnet)
 
     def maybe_keepalive(self, now_mono: float | None = None) -> bool:
-        """PUT listenKey якщо минув інтервал. Повертає True, якщо викликано."""
+        """PUT listenKey якщо минув інтервал. Повертає True, якщо викликано (sync)."""
         now = time.monotonic() if now_mono is None else now_mono
         if self.keepalive is None:
             return False
@@ -144,46 +145,59 @@ class BinanceUserDataStream:
             return False
         if now - self._last_keepalive_mono < self.keepalive_interval_sec:
             return False
-
-        def _do_keepalive(k: str) -> None:
-            try:
-                if self.keepalive:
-                    self.keepalive(k)
-            except Exception as e:
-                logger.error("Помилка keepalive: %s", e)
-
         try:
-            loop = asyncio.get_running_loop()
-            loop.run_in_executor(None, _do_keepalive, self.listen_key)
-        except RuntimeError:
-            _do_keepalive(self.listen_key)
+            self.keepalive(self.listen_key)
+        except Exception as e:
+            logger.error("Помилка keepalive: %s", e)
+        self._last_keepalive_mono = now
+        return True
 
+    async def await_keepalive(self, now_mono: float | None = None) -> bool:
+        """Async keepalive — await REST PUT serially (no fire-and-forget)."""
+        now = time.monotonic() if now_mono is None else now_mono
+        if self.keepalive is None:
+            return False
+        if self._last_keepalive_mono is None:
+            self._last_keepalive_mono = now
+            return False
+        if now - self._last_keepalive_mono < self.keepalive_interval_sec:
+            return False
+        try:
+            await asyncio.to_thread(self.keepalive, self.listen_key)
+        except Exception as e:
+            logger.error("Помилка keepalive: %s", e)
         self._last_keepalive_mono = now
         return True
 
     def regenerate_listen_key(self) -> bool:
-        """Новий listenKey через інжектований REST-колбек. True якщо оновлено."""
+        """Новий listenKey через інжектований REST-колбек. True якщо оновлено (sync)."""
         if self.refresh_listen_key is None:
             return False
-
-        def _do_refresh() -> None:
-            try:
-                if self.refresh_listen_key:
-                    new_key = self.refresh_listen_key()
-                    if new_key:
-                        self.listen_key = str(new_key)
-                        self._last_keepalive_mono = None
-                        logger.info("listenKey регенеровано")
-            except Exception as e:
-                logger.error("Помилка refresh_listen_key: %s", e)
-
         try:
-            loop = asyncio.get_running_loop()
-            loop.run_in_executor(None, _do_refresh)
-        except RuntimeError:
-            _do_refresh()
+            new_key = self.refresh_listen_key()
+            if new_key:
+                self.listen_key = str(new_key)
+                self._last_keepalive_mono = None
+                logger.info("listenKey регенеровано")
+                return True
+        except Exception as e:
+            logger.error("Помилка refresh_listen_key: %s", e)
+        return False
 
-        return True
+    async def await_refresh_listen_key(self) -> bool:
+        """Async refresh — await new listenKey before reconnect."""
+        if self.refresh_listen_key is None:
+            return False
+        try:
+            new_key = await asyncio.to_thread(self.refresh_listen_key)
+            if new_key:
+                self.listen_key = str(new_key)
+                self._last_keepalive_mono = None
+                logger.info("listenKey регенеровано")
+                return True
+        except Exception as e:
+            logger.error("Помилка refresh_listen_key: %s", e)
+        return False
 
     def handle_raw_message(self, raw_msg: str | bytes | dict[str, Any]) -> OrderTradeEvent | None:
         """Обробляє сире повідомлення з вебсокета і викликає колбек."""
@@ -192,7 +206,7 @@ class BinanceUserDataStream:
             return None
         if is_listen_key_expired(data):
             logger.warning("listenKeyExpired — регенерація ключа")
-            self.regenerate_listen_key()
+            self._listen_key_expired = True
             return None
         event = parse_order_trade_update(data)
         if event and self.on_order_update:
@@ -217,13 +231,18 @@ class BinanceUserDataStream:
             try:
                 async with websockets.connect(self.ws_url, ping_interval=20) as ws:
                     logger.info("WebSocket User Data Stream успішно з'єднано")
+                    self._listen_key_expired = False
                     while self._running:
+                        if self._listen_key_expired:
+                            await self.await_refresh_listen_key()
+                            self._listen_key_expired = False
+                            break
                         try:
                             msg = await asyncio.wait_for(ws.recv(), timeout=30.0)
                             self.handle_raw_message(msg)
                             self.backoff.reset()
                         except TimeoutError:
-                            self.maybe_keepalive()
+                            await self.await_keepalive()
                             continue
             except asyncio.CancelledError:
                 break
@@ -235,7 +254,7 @@ class BinanceUserDataStream:
                     delay,
                     self.backoff.attempts,
                 )
-                self.regenerate_listen_key()
+                await self.await_refresh_listen_key()
                 await asyncio.sleep(delay)
 
     def stop(self) -> None:

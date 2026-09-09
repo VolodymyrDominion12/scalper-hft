@@ -15,6 +15,7 @@ __pycache__/
 data/*.parquet
 data/.lock_*
 data/.binance_rest_cooldown
+data/*.lock
 
 # paper-прогони
 results/

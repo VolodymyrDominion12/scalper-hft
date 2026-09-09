@@ -16,6 +16,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 from scalper_hft.live.account import PaperAccount
+from scalper_hft.live.pairs_engine import PendingOrder
 from scalper_hft.live.pairs_live import PairsLiveAdapter
 from scalper_hft.live.reconcile import KillSwitch
 from scalper_hft.strategies.pairs_arb import PairsArb
@@ -138,6 +139,28 @@ def _make_adapter(client: MockExchangeClient | None = None, legging: str = "chas
         coint_kill=False,
     )
     return adapter
+
+
+def test_sanitize_order_rejects_invalid_size() -> None:
+    """Ордер нижче min notional не летить на біржу (fail-closed sanitize)."""
+    import math
+
+    class _FilterClient(MockExchangeClient):
+        def sanitize_order(self, symbol, side, amount, price=None):
+            qty = math.floor(amount / 0.001) * 0.001
+            px = None
+            if price is not None:
+                px = math.floor(price / 0.1) * 0.1
+            if qty <= 0 or (px is not None and qty * px < 5.0):
+                return qty, px, "below min notional / zero qty"
+            return qty, px, None
+
+    client = _FilterClient()
+    adapter = _make_adapter(client)
+    ts = pd.Timestamp("2025-01-01")
+    tiny = PendingOrder("AAA", "AAA/BBB:AAA", "sell", "short", 0.0001, 100.0, False, ts)
+    assert adapter._place_one_leg(tiny) is None
+    assert len(client.created_calls) == 0
 
 
 def test_place_legs_on_quote() -> None:

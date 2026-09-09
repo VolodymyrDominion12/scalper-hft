@@ -85,8 +85,8 @@ def _load_df(symbol: str, interval: str, days: int):
 
 
 def _run_backtest(args: dict) -> dict:
-    from scalper_hft.backtest.engine import run_backtest
     from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.backtest.router import run_strategy_backtest as run_backtest
     from scalper_hft.config import get_settings
     from scalper_hft.strategies import get_strategy
 
@@ -126,8 +126,8 @@ def _run_backtest(args: dict) -> dict:
 
 def _run_analysis(kind: str, args: dict) -> dict:
     """cohort / stress / capacity аналіз з реальних даних."""
-    from scalper_hft.backtest.engine import run_backtest
     from scalper_hft.backtest.execution import CostModel
+    from scalper_hft.backtest.router import run_strategy_backtest as run_backtest
     from scalper_hft.config import get_settings
     from scalper_hft.strategies import get_strategy
 
@@ -174,11 +174,12 @@ def _paper_step(args: dict) -> dict:
     from scalper_hft.strategies import get_strategy
 
     settings = get_settings()
-    if not settings.dry_run:
-        raise RuntimeError("paper_step дозволений лише у DRY_RUN=true (paper)")
     symbol = str(args.get("symbol", "BTCUSDT"))
     interval = str(args.get("interval", "5m"))
-    strategy = get_strategy(str(args.get("strategy", "mean_reversion")), **dict(args.get("params", {})))
+    strategy_name = str(args.get("strategy", "mean_reversion"))
+    if not settings.dry_run:
+        raise RuntimeError("paper_step дозволений лише у DRY_RUN=true (paper)")
+    strategy = get_strategy(strategy_name, **dict(args.get("params", {})))
     df = download_klines(symbol, interval, days=int(args.get("days", 7)))
     if df is None or df.empty:
         raise ValueError(f"немає даних {symbol} {interval}")

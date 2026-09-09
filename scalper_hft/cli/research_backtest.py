@@ -280,7 +280,7 @@ def cmd_regime_backtest(args: argparse.Namespace) -> None:
         return
 
     # ── Бектест базових стратегій ────────────────────────────────────────
-    from scalper_hft.backtest.engine import run_backtest
+    from scalper_hft.backtest.router import run_strategy_backtest as run_backtest
 
     baseline_returns: dict[str, pd.Series] = {}
     for name in strat_names:

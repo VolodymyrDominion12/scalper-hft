@@ -26,8 +26,9 @@ def test_flush_writes_parquet(tmp_path: Path) -> None:
     ]
     out = tmp_path / "BTCUSDT_bookTicker.parquet"
     _flush(rows, out)
-    assert out.exists()
-    df = pd.read_parquet(out)
+    part = partition_path(out, pd.Timestamp("2025-01-01"))
+    assert part.exists()
+    df = pd.read_parquet(part)
     assert len(df) == 2
     assert "bid" in df.columns
 
@@ -37,7 +38,8 @@ def test_flush_appends_without_duplicates(tmp_path: Path) -> None:
     row = {"ts": pd.Timestamp("2025-01-01"), "bid": 50.0, "bid_qty": 1.0, "ask": 50.1, "ask_qty": 1.0}
     _flush([row], out)
     _flush([row], out)
-    df = pd.read_parquet(out)
+    part = partition_path(out, pd.Timestamp("2025-01-01"))
+    df = pd.read_parquet(part)
     assert len(df) == 1
 
 

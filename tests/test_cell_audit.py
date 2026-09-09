@@ -69,8 +69,14 @@ def test_min_trades_for_interval() -> None:
 
 
 def test_cell_verdict_pass() -> None:
-    label, why = cell_verdict(_ok())
+    label, why = cell_verdict(_ok(), mode="final")
     assert label == "PASS"
+    assert why == ""
+
+
+def test_cell_verdict_exploratory_pass() -> None:
+    label, why = cell_verdict(_ok(), mode="exploratory")
+    assert label == "EXPLORATORY_PASS"
     assert why == ""
 
 
@@ -86,13 +92,15 @@ def test_cell_verdict_pass() -> None:
     ],
 )
 def test_cell_verdict_fail_at_threshold(field: str, value: float) -> None:
-    label, why = cell_verdict(_ok(**{field: value}))
+    label, why = cell_verdict(_ok(**{field: value}), mode="final")
     assert label == "FAIL"
     assert why
 
 
 def test_cell_verdict_nan_and_missing() -> None:
-    label, why = cell_verdict(_ok(avg_oos_sharpe=None, dsr=float("nan"), smoothness=None, n_trades_oos=None))
+    label, why = cell_verdict(
+        _ok(avg_oos_sharpe=None, dsr=float("nan"), smoothness=None, n_trades_oos=None), mode="final"
+    )
     assert label == "FAIL"
     assert "avg_oos_sharpe=nan" in why
     assert "DSR=nan" in why
@@ -102,25 +110,25 @@ def test_cell_verdict_nan_and_missing() -> None:
 
 def test_cell_verdict_1m_requires_100_oos_trades() -> None:
     """Гейт на OOS-угоди: багато full-sample угод не рятує тонкий OOS."""
-    fail, why = cell_verdict(_ok(interval="1m", n_trades_oos=99, bt_n_trades=500))
+    fail, why = cell_verdict(_ok(interval="1m", n_trades_oos=99, bt_n_trades=500), mode="final")
     assert fail == "FAIL"
     assert "n_trades_oos=99<100" in why
-    passed, _ = cell_verdict(_ok(interval="1m", n_trades_oos=100))
+    passed, _ = cell_verdict(_ok(interval="1m", n_trades_oos=100), mode="final")
     assert passed == "PASS"
 
 
 def test_cell_verdict_pbo_checked_only_when_present() -> None:
     # pbo=None → CSCV не запускався → не гейтиться
-    passed, _ = cell_verdict(_ok(pbo=None))
+    passed, _ = cell_verdict(_ok(pbo=None), mode="final")
     assert passed == "PASS"
-    fail, why = cell_verdict(_ok(pbo=0.75))
+    fail, why = cell_verdict(_ok(pbo=0.75), mode="final")
     assert fail == "FAIL"
     assert "PBO=0.75" in why
 
 
 def test_cell_verdict_from_series() -> None:
     row = pd.Series(_ok().to_summary_dict())
-    assert cell_verdict(row) == ("PASS", "")
+    assert cell_verdict(row, mode="final") == ("PASS", "")
 
 
 def test_cell_audit_json_roundtrip() -> None:
@@ -134,7 +142,7 @@ def test_cell_audit_json_roundtrip() -> None:
     assert restored.avg_oos_sharpe == pytest.approx(0.50)
     assert restored.windows[0]["window_idx"] == 0
     assert restored.sens_param == "lookback"
-    assert cell_verdict(restored) == ("PASS", "")
+    assert cell_verdict(restored, mode="final") == ("PASS", "")
 
 
 def test_combo_prefill_nan_days() -> None:

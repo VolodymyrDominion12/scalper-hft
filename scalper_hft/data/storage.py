@@ -10,7 +10,12 @@
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import TypeVar
 
 import pandas as pd
 
@@ -18,6 +23,51 @@ logger = logging.getLogger(__name__)
 
 _KLINES_COLUMNS = ["open", "high", "low", "close", "volume"]
 _TRADES_COLUMNS = ["trade_id", "price", "amount", "side"]
+_T = TypeVar("_T")
+
+
+@contextmanager
+def cache_write_lock(path: Path) -> Iterator[None]:
+    """Serialize writers for one cache file across processes."""
+    lock_path = path.with_name(f".{path.name}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a", encoding="utf-8") as lock_file:
+        try:
+            import fcntl
+        except ImportError:  # pragma: no cover - Windows
+            yield
+            return
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _atomic_write(path: Path, writer: Callable[[Path], _T]) -> _T:
+    """Write beside the target and atomically replace it after fsync."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, raw_tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    os.close(fd)
+    tmp_path = Path(raw_tmp)
+    try:
+        result = writer(tmp_path)
+        with tmp_path.open("rb") as file_obj:
+            os.fsync(file_obj.fileno())
+        os.replace(tmp_path, path)
+        dir_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+        return result
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+def _atomic_parquet(path: Path, df: pd.DataFrame) -> None:
+    with cache_write_lock(path):
+        _atomic_write(path, lambda tmp: df.to_parquet(tmp, compression="zstd"))
 
 
 def _safe_load(path: Path) -> pd.DataFrame | None:
@@ -106,7 +156,7 @@ def save_klines(path: Path, df: pd.DataFrame, *, strict: bool = True) -> None:
         if strict and critical:
             raise ValueError(f"Відмова у збереженні битих барів {path.name}: {report.summary()}")
         logger.warning("Якість барів %s: %s", path.name, report.summary())
-    df[_KLINES_COLUMNS].astype(float).to_parquet(path, compression="zstd")
+    _atomic_parquet(path, df[_KLINES_COLUMNS].astype(float))
     logger.info("Збережено klines: %s (%d рядків)", path, len(df))
 
 
@@ -120,7 +170,7 @@ def save_trades(path: Path, df: pd.DataFrame, *, strict: bool = True) -> None:
             if strict and stream_is_critical(report):
                 raise ValueError(f"Відмова у збереженні битих aggTrades {path.name}: {report.summary()}")
             logger.warning("Якість aggTrades %s: %s", path.name, report.summary())
-    df[_TRADES_COLUMNS].to_parquet(path, compression="zstd")
+    _atomic_parquet(path, df[_TRADES_COLUMNS])
     logger.info("Збережено aggTrades: %s (%d рядків)", path, len(df))
 
 
@@ -134,7 +184,7 @@ def save_funding(path: Path, df: pd.DataFrame, *, strict: bool = True) -> None:
             if strict and stream_is_critical(report):
                 raise ValueError(f"Відмова у збереженні битого funding {path.name}: {report.summary()}")
             logger.warning("Якість funding %s: %s", path.name, report.summary())
-    df[["fundingRate"]].to_parquet(path, compression="zstd")
+    _atomic_parquet(path, df[["fundingRate"]])
     logger.info("Збережено funding: %s (%d рядків)", path, len(df))
 
 
@@ -154,7 +204,7 @@ def load_liquidations(path: Path) -> pd.DataFrame | None:
 
 def save_liquidations(path: Path, df: pd.DataFrame) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(path, compression="zstd")
+    _atomic_parquet(path, df)
     logger.info("Збережено liquidations: %s (%d рядків)", path, len(df))
 
 
@@ -164,5 +214,5 @@ def load_oi(path: Path) -> pd.DataFrame | None:
 
 def save_oi(path: Path, df: pd.DataFrame) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(path, compression="zstd")
+    _atomic_parquet(path, df)
     logger.info("Збережено open interest: %s (%d рядків)", path, len(df))

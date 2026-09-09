@@ -37,6 +37,18 @@ class SensitivityResult:
         )
 
 
+def _research_slice(df: pd.DataFrame) -> pd.DataFrame:
+    """Відрізати holdout-хвіст, якщо HOLDOUT_PCT>0 (лише research-частина)."""
+    from scalper_hft.config import get_settings
+    from scalper_hft.validation.holdout import split_research_holdout
+
+    holdout_pct = float(getattr(get_settings(), "enforce_holdout_pct", 0.0))
+    if holdout_pct <= 0:
+        return df
+    research, _holdout = split_research_holdout(df, holdout_pct)
+    return research if not research.empty else df
+
+
 def parameter_sensitivity(
     df: pd.DataFrame,
     strategy: Strategy,
@@ -47,11 +59,17 @@ def parameter_sensitivity(
     cost: CostModel | None = None,
     trades: pd.DataFrame | None = None,
     funding: pd.DataFrame | None = None,
+    *,
+    research_only: bool = True,
 ) -> SensitivityResult:
     """Прогін бектесту по сітці одного (або двох) параметрів.
 
+    research_only: якщо True (дефолт) — сітка лише на research-частині без
+    holdout-хвоста (коли HOLDOUT_PCT>0).
     smoothness: середня |Δ metric| між сусідніми значеннями, нормована.
     """
+    if research_only:
+        df = _research_slice(df)
     rows: list[dict] = []
     values = sorted(values)
     sec_values: list[float | None] = list(secondary_values) if secondary_values is not None else [None]

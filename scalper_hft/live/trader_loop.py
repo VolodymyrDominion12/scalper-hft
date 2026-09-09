@@ -59,6 +59,20 @@ class SilentAttritionKillSwitch:
         self.tripped = False
 
 
+def _resolve_maker_pending_for_bar(trader: LiveTrader, closed: pd.DataFrame) -> None:
+    """Paper maker: resolve resting orders against the last closed bar OHLC."""
+    if closed is None or closed.empty:
+        return
+    if not (trader.settings.dry_run and trader._uses_maker_path()):
+        return
+    bar_idx = len(closed) - 1
+    ts = closed.index[-1]
+    high = float(closed["high"].iloc[-1])
+    low = float(closed["low"].iloc[-1])
+    prev_close = float(closed["close"].iloc[-2]) if len(closed) >= 2 else float(closed["close"].iloc[-1])
+    trader.resolve_pending_orders(ts, high, low, prev_close, bar_idx)
+
+
 def execute_signal(
     trader: LiveTrader,
     signal: int,
@@ -70,6 +84,7 @@ def execute_signal(
     closed = closed_klines(df, trader.interval, now=now)
     if closed is None or closed.empty:
         return "hold:no_closed_bar"
+    _resolve_maker_pending_for_bar(trader, closed)
     trader.maybe_roll_day(now if now is not None else closed.index[-1])
     close = float(closed["close"].iloc[-1])
     ts = closed.index[-1]
@@ -135,6 +150,7 @@ def execute_signal(
                 )
 
     trader.last_signal = signal
+    _resolve_maker_pending_for_bar(trader, closed)
     return " | ".join(parts)
 
 
@@ -150,6 +166,9 @@ def run_trader_once(
     ctrl = control if control is not None else load_control(trader.control_path)
     if ctrl.pause:
         return "hold:paused"
+    closed = closed_klines(df, trader.interval, now=now)
+    if closed is not None:
+        _resolve_maker_pending_for_bar(trader, closed)
     trader.poll_pending_orders(now=now)
     reconcile_exchange_state(
         trader.account,
@@ -162,4 +181,7 @@ def run_trader_once(
     signal = trader.compute_signal(df, now=now)
     if ctrl.flatten:
         signal = 0
-    return execute_signal(trader, signal, df, now=now, block_new_entries=ctrl.no_new_entries)
+    action = execute_signal(trader, signal, df, now=now, block_new_entries=ctrl.no_new_entries)
+    if closed is not None:
+        _resolve_maker_pending_for_bar(trader, closed)
+    return action

@@ -171,12 +171,16 @@ def test_maybe_keepalive_fires_after_interval() -> None:
 
 
 def test_listen_key_expired_regenerates() -> None:
+    import asyncio
+
     stream = BinanceUserDataStream(
         listen_key="old",
         refresh_listen_key=lambda: "new_key",
     )
     event = stream.handle_raw_message({"e": "listenKeyExpired", "E": 1})
     assert event is None
+    assert stream._listen_key_expired is True
+    asyncio.run(stream.await_refresh_listen_key())
     assert stream.listen_key == "new_key"
 
 

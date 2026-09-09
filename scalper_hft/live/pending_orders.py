@@ -38,6 +38,7 @@ class PendingOrder:
     pos_side: str = ""
     placed_ts: pd.Timestamp | None = None
     booked_qty: float = 0.0
+    bars_waited: int = 0
 
     @property
     def remaining_qty(self) -> float:

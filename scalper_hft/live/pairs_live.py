@@ -231,16 +231,37 @@ class PairsLiveAdapter(PairsEngine):
             return
         self._intent_store.pop(self._intent_key(kind, symbol, side, placed_ts))
 
+    def _sanitize_leg(
+        self, symbol: str, side: str, size: float, price: float | None
+    ) -> tuple[float, float | None] | None:
+        """Нормалізація розміру/ціни під фільтри біржі. None = відхилено."""
+        sanitize = getattr(self.client, "sanitize_order", None)
+        if sanitize is None:
+            return size, price
+        try:
+            qty, px, err = sanitize(symbol, side, size, price)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("%s sanitize_order %s: %s", self.pid, symbol, exc)
+            return None
+        if err is not None:
+            logger.error("%s ордер відхилено фільтрами біржі: %s %s %s → %s", self.pid, side, symbol, size, err)
+            return None
+        return qty, px if px is not None else price
+
     def _place_one_leg(self, o: PendingOrder) -> LiveLegOrder | None:
         """Розмістити одну ногу; None при помилці (НЕ букуємо фейковий oid)."""
+        sanitized = self._sanitize_leg(o.symbol, o.side, o.size, o.limit_price)
+        if sanitized is None:
+            return None
+        size, limit_price = sanitized
         coid = self._coid_for("entry", o.symbol, o.side, o.placed_ts, "shp")
         try:
             resp = self.client.create_order(
                 o.symbol,
                 "limit",
                 o.side,
-                o.size,
-                price=o.limit_price,
+                size,
+                price=limit_price,
                 params={"reduceOnly": True} if o.reduce_only else {},
                 post_only=True,
                 client_order_id=coid,
@@ -256,9 +277,9 @@ class PairsLiveAdapter(PairsEngine):
             "%s розміщено %s %s %s @ %s coid=%s oid=%s",
             self.pid,
             o.side,
-            o.size,
+            size,
             o.symbol,
-            o.limit_price,
+            limit_price,
             coid,
             oid,
         )
@@ -267,8 +288,8 @@ class PairsLiveAdapter(PairsEngine):
             exchange_order_id=oid,
             symbol=o.symbol,
             side=o.side,
-            size=o.size,
-            limit_price=o.limit_price,
+            size=size,
+            limit_price=limit_price,
             reduce_only=o.reduce_only,
             pos_side=o.pos_side,
             placed_ts=o.placed_ts,
@@ -413,6 +434,10 @@ class PairsLiveAdapter(PairsEngine):
         """
         drift_cap = self.max_drift_bps / 10_000.0
         cap_price = mid * (1.0 + drift_cap) if lo.side == "buy" else mid * (1.0 - drift_cap)
+        sanitized = self._sanitize_leg(lo.symbol, lo.side, lo.size, cap_price)
+        if sanitized is None:
+            return False, 0.0
+        size, chase_price = sanitized
         params: dict[str, Any] = {"timeInForce": "IOC"}
         if lo.reduce_only:
             params["reduceOnly"] = True
@@ -421,8 +446,8 @@ class PairsLiveAdapter(PairsEngine):
                 lo.symbol,
                 "limit",
                 lo.side,
-                lo.size,
-                price=cap_price,
+                size,
+                price=chase_price,
                 params=params,
                 client_order_id=self._coid_for("chase", lo.symbol, lo.side, lo.placed_ts, "shc"),
             )
@@ -431,8 +456,8 @@ class PairsLiveAdapter(PairsEngine):
             return False, 0.0
         status = str((resp or {}).get("status") or "").lower()
         filled_qty = float((resp or {}).get("filled") or 0.0)
-        if status in ("filled", "closed") or (0 < lo.size * 0.999 <= filled_qty):
-            px = float((resp or {}).get("average") or cap_price)
+        if status in ("filled", "closed") or (0 < size * 0.999 <= filled_qty):
+            px = float((resp or {}).get("average") or chase_price)
             logger.info("%s chase %s виконано @ %s", self.pid, lo.symbol, px)
             return True, px
         logger.warning("%s chase %s не заповнений (status=%s filled=%s)", self.pid, lo.symbol, status, filled_qty)
@@ -445,12 +470,16 @@ class PairsLiveAdapter(PairsEngine):
         лишилась однонога позиція, торгувати далі небезпечно).
         """
         close_side = "sell" if lo.side == "buy" else "buy"
+        sanitized = self._sanitize_leg(lo.symbol, close_side, lo.size, None)
+        if sanitized is None:
+            raise KillSwitch(f"{self.pid}: unwind {lo.symbol} відхилено фільтрами біржі — однонога позиція!")
+        size, _ = sanitized
         try:
             resp = self.client.create_order(
                 lo.symbol,
                 "market",
                 close_side,
-                lo.size,
+                size,
                 params={"reduceOnly": True},
                 client_order_id=self._coid_for("unwind", lo.symbol, close_side, lo.placed_ts, "shu"),
             )

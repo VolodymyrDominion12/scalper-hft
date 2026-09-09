@@ -35,7 +35,7 @@ def capacity_curve(
     Returns:
         DataFrame: scale, total_return, sharpe, max_drawdown, impact_bps.
     """
-    from scalper_hft.backtest.engine import run_backtest
+    from scalper_hft.backtest.router import run_strategy_backtest as run_backtest
 
     cost = cost or CostModel()
     scales = scales or [1.0, 2.0, 5.0, 10.0, 20.0]
