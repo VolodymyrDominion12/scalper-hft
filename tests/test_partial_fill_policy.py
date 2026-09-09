@@ -93,7 +93,7 @@ def test_wait_policy_keeps_order_resting() -> None:
 def test_wait_policy_books_full_fill_later() -> None:
     """wait: повторний poll з повним філом → book решти, ордер закрито."""
     mgr, client = _manager("wait")
-    po = _register_partial(mgr)
+    _register_partial(mgr)
     mgr.poll()
     client.status["ex-c1"] = {"status": "closed", "filled": 1.0, "average": 100.0}
     events = mgr.poll()

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 
 def _klines(n: int = 200, start: str = "2025-01-01") -> pd.DataFrame:

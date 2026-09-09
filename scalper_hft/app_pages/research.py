@@ -10,7 +10,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from scalper_hft.app_pages._busy import busy
 from scalper_hft.app_pages._common import (
     BT_INTERVALS,
     RESEARCH_SECTIONS,
@@ -24,15 +23,11 @@ from scalper_hft.app_pages._common import (
     submit_research_job,
 )
 from scalper_hft.app_pages._results import (
-    list_combo_jobs,
-    open_combo_details,
-    render_backtest_job_picker,
     render_sweep_explorer,
 )
 from scalper_hft.config import get_settings
 from scalper_hft.research.job_artifacts import load_backtest_result, load_cell_audit
-from scalper_hft.research.jobs import DEFAULT_JOBS_PATH, JobStore, artifacts_dir
-from scalper_hft.research.results_table import trade_quality_blockers
+from scalper_hft.research.jobs import DEFAULT_JOBS_PATH, artifacts_dir
 from scalper_hft.research.sweep_store import SweepStore
 from scalper_hft.strategies import REGISTRY
 from scalper_hft.validation.cell_audit import cell_verdict, default_train_test
@@ -54,6 +49,7 @@ with st.sidebar:
     st.subheader("Спільні параметри")
     st.caption("Ці налаштування використовуються для Повного циклу та Порівняння.")
     from scalper_hft.data.exchange_registry import ExchangeRegistry
+
     exchanges = ExchangeRegistry.list_supported()
     settings = get_settings()
     idx = exchanges.index(settings.exchange) if settings.exchange in exchanges else 0
@@ -70,6 +66,7 @@ section = st.segmented_control("Розділ", list(RESEARCH_SECTIONS), key="res
 if section is None:
     section = RESEARCH_SECTIONS[0]
 
+
 def _job_banner(job: object, alive: bool) -> None:
     if not alive:
         st.warning("Воркер не запущений — `uv run python -m scalper_hft.cli job worker`")
@@ -83,12 +80,13 @@ def _job_banner(job: object, alive: bool) -> None:
     elif level == "warning":
         st.warning(msg)
 
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Масовий пошук (Sweep + Top)
 # ═══════════════════════════════════════════════════════════════════════════════
 if section == "Масовий пошук":
     tab_sweep, tab_top = st.tabs(["Sweep Matrix", "Топ комбінації"])
-    
+
     with tab_sweep:
         st.subheader("Sweep Matrix: стратегії × символи × таймфрейми")
         col_left, col_right = st.columns([1, 3])
@@ -97,7 +95,7 @@ if section == "Масовий пошук":
                 st.caption("Налаштування прогону")
                 sel_slow = st.toggle("Включити повільні (ML / ensemble)", value=False, key="sw_slow")
                 all_strats = default_strategies(include_slow=sel_slow)
-                
+
                 with st.container(horizontal=True):
                     if st.button("Рекомендований", icon=":material/recommend:", key="sw_preset_reco"):
                         st.session_state["sw_strats"] = list(all_strats)
@@ -109,14 +107,16 @@ if section == "Масовий пошук":
                         st.session_state["sw_syms"] = list(SYMBOLS)
                         st.session_state["sw_ivs"] = list(DEFAULT_INTERVALS)
                         st.rerun()
-                
+
                 sel_strats = st.multiselect("Стратегії", all_strats, default=all_strats[:5], key="sw_strats")
                 sel_symbols = st.multiselect("Символи", SYMBOLS, default=SYMBOLS[:3], key="sw_syms")
                 sel_ivs = st.multiselect("Таймфрейми", DEFAULT_INTERVALS, default=["5m", "15m", "1h"], key="sw_ivs")
                 sel_days = st.slider("Днів даних", 14, 730, 60, key="sw_days")
-                
+
                 with st.expander("⚙️ Розширені налаштування (режим, OOS)"):
-                    sel_mode = st.segmented_control("Режим", ["backtest", "walkforward"], key="sw_mode", default="backtest")
+                    sel_mode = st.segmented_control(
+                        "Режим", ["backtest", "walkforward"], key="sw_mode", default="backtest"
+                    )
                     if sel_mode is None:
                         sel_mode = "backtest"
                     sel_train: int | None = None
@@ -137,16 +137,17 @@ if section == "Масовий пошук":
                     sel_resume = st.toggle("Resume (не повторювати виконані)", value=True, key="sw_resume")
 
                 total_cells = len(sel_strats) * len(sel_symbols) * len(sel_ivs)
-                
+
                 run_sweep_btn = st.button(
                     f"Запустити sweep ({total_cells} клітинок)",
                     icon=":material/play_arrow:",
                     disabled=not (sel_strats and sel_symbols and sel_ivs),
                     key="sw_run_btn",
-                    width="stretch"
+                    width="stretch",
                 )
 
         with col_right:
+
             @st.cache_data(ttl=30, show_spinner="Читання sweep.db…")
             def _load_sweep_df() -> pd.DataFrame:
                 if not _SWEEP_DB.exists():
@@ -182,9 +183,17 @@ if section == "Масовий пошук":
             if df_all.empty:
                 st.info("Ще немає результатів sweep.")
             else:
-                ok_df = df_all[df_all.get("status", pd.Series("ok", index=df_all.index)) == "ok"] if "status" in df_all.columns else df_all
+                ok_df = (
+                    df_all[df_all.get("status", pd.Series("ok", index=df_all.index)) == "ok"]
+                    if "status" in df_all.columns
+                    else df_all
+                )
                 fc1, fc2, fc3 = st.columns(3)
-                metric = fc1.selectbox("Метрика heatmap", ["sharpe", "sortino", "calmar", "win_rate", "total_return", "max_dd"], key="sw_metric")
+                metric = fc1.selectbox(
+                    "Метрика heatmap",
+                    ["sharpe", "sortino", "calmar", "win_rate", "total_return", "max_dd"],
+                    key="sw_metric",
+                )
                 min_trades = fc2.number_input("Min угод", 0, 10000, 10, key="sw_min_trades")
                 filter_mode = fc3.selectbox("Режим фільтру", ["Всі", "backtest", "walkforward"], key="sw_fmode")
 
@@ -201,13 +210,19 @@ if section == "Масовий пошук":
                     pivot = view.pivot_table(index="strategy", columns="sym_iv", values=metric, aggfunc="mean")
                     pivot = pivot.sort_index()
                     colorscale = "RdYlGn" if metric not in ("max_dd",) else "RdYlGn_r"
-                    fig = px.imshow(pivot, color_continuous_scale=colorscale, aspect="auto", title=f"Sweep Heat-map: {metric}", labels={"color": metric})
+                    fig = px.imshow(
+                        pivot,
+                        color_continuous_scale=colorscale,
+                        aspect="auto",
+                        title=f"Sweep Heat-map: {metric}",
+                        labels={"color": metric},
+                    )
                     fig.update_layout(height=max(300, 50 * len(pivot)), font=dict(size=11))
                     st.plotly_chart(fig, width="stretch")
-                
+
                 st.subheader("Таблиця результатів")
                 render_sweep_explorer(df_all, key_prefix="sw_all")
-                
+
     with tab_top:
         st.subheader("Топ комбінації зі sweep")
         if df_all.empty:
@@ -218,12 +233,28 @@ if section == "Масовий пошук":
             bc_min_tr = bc2.number_input("Min угод", 0, 10000, 20, key="bc_mintr")
             bc_min_wr = bc3.number_input("Min win rate", 0.0, 1.0, 0.4, step=0.05, key="bc_minwr")
             bc_show_n = bc4.number_input("Показати топ N", 5, 200, 30, key="bc_n")
-            
-            for col in ["sharpe", "n_trades", "win_rate", "sortino", "calmar", "total_return", "max_dd", "profit_factor", "trades_per_day", "avg_oos_sharpe", "oos_positive_frac"]:
+
+            for col in [
+                "sharpe",
+                "n_trades",
+                "win_rate",
+                "sortino",
+                "calmar",
+                "total_return",
+                "max_dd",
+                "profit_factor",
+                "trades_per_day",
+                "avg_oos_sharpe",
+                "oos_positive_frac",
+            ]:
                 if col in df_all.columns:
                     df_all[col] = pd.to_numeric(df_all[col], errors="coerce")
-            
-            ok = df_all[df_all.get("status", pd.Series("ok", index=df_all.index)) == "ok"] if "status" in df_all.columns else df_all
+
+            ok = (
+                df_all[df_all.get("status", pd.Series("ok", index=df_all.index)) == "ok"]
+                if "status" in df_all.columns
+                else df_all
+            )
             filtered = ok.copy()
             if "sharpe" in filtered.columns:
                 filtered = filtered[filtered["sharpe"] >= bc_min_sh]
@@ -231,7 +262,7 @@ if section == "Масовий пошук":
                 filtered = filtered[filtered["n_trades"] >= bc_min_tr]
             if "win_rate" in filtered.columns:
                 filtered = filtered[filtered["win_rate"] >= bc_min_wr]
-            
+
             if filtered.empty:
                 st.warning("Немає комбінацій, що відповідають фільтрам")
             else:
@@ -244,24 +275,40 @@ if section == "Масовий пошук":
                     top = filtered.head(int(bc_show_n))
                 top_view = top.reset_index(drop=True)
                 render_sweep_explorer(top_view, key_prefix="sw_top")
-                
+
                 csv_bytes = top_view.to_csv(index=False).encode("utf-8")
-                st.download_button("Завантажити CSV", data=csv_bytes, file_name="sweep_top.csv", mime="text/csv", icon=":material/download:", key="bc_csv")
-                
+                st.download_button(
+                    "Завантажити CSV",
+                    data=csv_bytes,
+                    file_name="sweep_top.csv",
+                    mime="text/csv",
+                    icon=":material/download:",
+                    key="bc_csv",
+                )
+
                 st.subheader("Зведена статистика по стратегіях")
-                summary = filtered.groupby("strategy").agg(
-                    cells=("sharpe", "count"),
-                    mean_sharpe=("sharpe", "mean"),
-                    max_sharpe=("sharpe", "max"),
-                    mean_n_trades=("n_trades", "mean"),
-                    mean_win_rate=("win_rate", "mean"),
-                ).sort_values("mean_sharpe", ascending=False)
-                st.dataframe(summary.reset_index(), width="stretch", hide_index=True, column_config={
-                    "mean_sharpe": st.column_config.NumberColumn("Avg Sharpe", format="%.3f"),
-                    "max_sharpe": st.column_config.NumberColumn("Max Sharpe", format="%.3f"),
-                    "mean_win_rate": st.column_config.NumberColumn("Avg Win rate", format="%.0%"),
-                    "mean_n_trades": st.column_config.NumberColumn("Avg Trades", format="%.0f"),
-                })
+                summary = (
+                    filtered.groupby("strategy")
+                    .agg(
+                        cells=("sharpe", "count"),
+                        mean_sharpe=("sharpe", "mean"),
+                        max_sharpe=("sharpe", "max"),
+                        mean_n_trades=("n_trades", "mean"),
+                        mean_win_rate=("win_rate", "mean"),
+                    )
+                    .sort_values("mean_sharpe", ascending=False)
+                )
+                st.dataframe(
+                    summary.reset_index(),
+                    width="stretch",
+                    hide_index=True,
+                    column_config={
+                        "mean_sharpe": st.column_config.NumberColumn("Avg Sharpe", format="%.3f"),
+                        "max_sharpe": st.column_config.NumberColumn("Max Sharpe", format="%.3f"),
+                        "mean_win_rate": st.column_config.NumberColumn("Avg Win rate", format="%.0%"),
+                        "mean_n_trades": st.column_config.NumberColumn("Avg Trades", format="%.0f"),
+                    },
+                )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -270,27 +317,31 @@ if section == "Масовий пошук":
 elif section == "Повний цикл":
     st.subheader(f"Повний цикл: {rs_strat} | {rs_sym} | {rs_iv} | {rs_days}d")
     st.caption("Цей розділ об'єднує результати бектесту (з увімкненим трейсингом) та overfit-аудиту.")
-    
+
     with st.container(border=True):
         col1, col2 = st.columns([1, 1])
         with col1:
             if st.button("🚀 Запустити повний цикл дослідження", type="primary", width="stretch"):
                 bt_payload = single_backtest_payload(str(rs_strat), str(rs_sym), str(rs_iv), int(rs_days), trace=True)
                 submit_research_job("backtest", bt_payload)
-                
+
                 _dt, _dte = default_train_test(str(rs_iv))
-                of_payload = overfit_job_payload(str(rs_strat), str(rs_sym), str(rs_iv), int(rs_days), train_bars=int(_dt), test_bars=int(_dte))
+                of_payload = overfit_job_payload(
+                    str(rs_strat), str(rs_sym), str(rs_iv), int(rs_days), train_bars=int(_dt), test_bars=int(_dte)
+                )
                 submit_research_job("overfit", of_payload)
-                
+
                 st.rerun()
         with col2:
             st.page_link("app_pages/jobs.py", label="Черга задач", icon=":material/pending_actions:")
-            
+
     bt_payload = single_backtest_payload(str(rs_strat), str(rs_sym), str(rs_iv), int(rs_days), trace=True)
     bt_job, bt_alive = lookup_job("backtest", bt_payload)
-    
+
     _dt, _dte = default_train_test(str(rs_iv))
-    of_payload = overfit_job_payload(str(rs_strat), str(rs_sym), str(rs_iv), int(rs_days), train_bars=int(_dt), test_bars=int(_dte))
+    of_payload = overfit_job_payload(
+        str(rs_strat), str(rs_sym), str(rs_iv), int(rs_days), train_bars=int(_dt), test_bars=int(_dte)
+    )
     of_job, of_alive = lookup_job("overfit", of_payload)
 
     # Status indicators
@@ -301,14 +352,14 @@ elif section == "Повний цикл":
     with status_col2:
         st.markdown("**Overfit Audit Status**")
         _job_banner(of_job, of_alive)
-        
+
     bt_ready = bt_job is not None and bt_job.status == "succeeded"
     of_ready = of_job is not None and of_job.status == "succeeded"
-    
+
     if bt_ready or of_ready:
         st.divider()
         st.subheader("Результати аналізу")
-        
+
         # Load artifacts
         res_bt = None
         has_klines = False
@@ -317,18 +368,19 @@ elif section == "Повний цикл":
             try:
                 res_bt = load_backtest_result(artifacts_dir(DEFAULT_JOBS_PATH, bt_job.id))
                 from scalper_hft.data.access import klines_from_store
+
                 df_k = klines_from_store(str(rs_sym), str(rs_iv), int(rs_days))
                 has_klines = df_k is not None and not df_k.empty
             except Exception:
                 pass
-                
+
         audit = None
         if of_ready:
             try:
                 audit = load_cell_audit(artifacts_dir(DEFAULT_JOBS_PATH, of_job.id))
             except Exception:
                 pass
-        
+
         # Summary Header
         sum_c1, sum_c2, sum_c3, sum_c4, sum_c5 = st.columns(5)
         if audit is not None:
@@ -341,7 +393,7 @@ elif section == "Повний цикл":
             sum_c2.metric("OOS Sharpe", f"{audit.avg_oos_sharpe or 0:.3f}")
             sum_c3.metric("OOS+", f"{(audit.oos_pos_frac or 0):.0%}")
             sum_c4.metric("DSR", f"{audit.dsr if audit.dsr is not None else float('nan'):.3f}")
-        
+
         if res_bt is not None and res_bt.metrics is not None:
             m = res_bt.metrics
             if audit is None:
@@ -351,46 +403,73 @@ elif section == "Повний цикл":
                 sum_c4.metric("Угод/день", f"{m.trades_per_day:.2f}")
             else:
                 sum_c5.metric("Win rate (BT)", f"{m.win_rate:.0%}")
-                
+
         tab_perf, tab_rob, tab_ctx = st.tabs(["Performance", "Robustness (Audit)", "Context (Regimes/Filters)"])
-        
+
         with tab_perf:
             if res_bt is not None and res_bt.trades is not None and not res_bt.trades.empty:
                 trades = res_bt.trades
-                
+
                 perf_col1, perf_col2 = st.columns([1, 1])
                 with perf_col1:
                     if "ret" in trades.columns:
                         rets = trades["ret"].dropna()
-                        fig_hist = px.histogram(rets, nbins=50, title="Розподіл PnL угод", labels={"value": "PnL (відн.)", "count": "Кількість"}, color_discrete_sequence=["#3b82f6"])
+                        fig_hist = px.histogram(
+                            rets,
+                            nbins=50,
+                            title="Розподіл PnL угод",
+                            labels={"value": "PnL (відн.)", "count": "Кількість"},
+                            color_discrete_sequence=["#3b82f6"],
+                        )
                         fig_hist.add_vline(x=0, line_dash="dash", line_color="red", opacity=0.5)
-                        fig_hist.add_vline(x=float(rets.mean()), line_dash="dot", line_color="green", opacity=0.7, annotation_text=f"mean={rets.mean():.4%}")
+                        fig_hist.add_vline(
+                            x=float(rets.mean()),
+                            line_dash="dot",
+                            line_color="green",
+                            opacity=0.7,
+                            annotation_text=f"mean={rets.mean():.4%}",
+                        )
                         fig_hist.update_layout(height=350)
                         st.plotly_chart(fig_hist, width="stretch")
                 with perf_col2:
                     if "ret" in trades.columns:
                         cum_pnl = (1 + rets).cumprod()
-                        fig_cum = px.line(cum_pnl.values, title="Кумулятивний PnL угод", labels={"index": "# Угоди", "value": "Кумулятивний PnL"})
+                        fig_cum = px.line(
+                            cum_pnl.values,
+                            title="Кумулятивний PnL угод",
+                            labels={"index": "# Угоди", "value": "Кумулятивний PnL"},
+                        )
                         fig_cum.update_layout(height=350)
                         st.plotly_chart(fig_cum, width="stretch")
-                
+
                 st.subheader("MAE/MFE")
                 if has_klines:
                     from scalper_hft.research.session_analysis import mae_mfe_analysis
+
                     mae_df = mae_mfe_analysis(trades, df_k)
                     if not mae_df.empty:
-                        fig_mf = px.scatter(mae_df, x="mfe", y="mae", color="ret", color_continuous_scale="RdYlGn", hover_data=["entry_ts", "side", "ret", "efficiency"], title="MAE vs MFE (кожна угода — точка)")
+                        fig_mf = px.scatter(
+                            mae_df,
+                            x="mfe",
+                            y="mae",
+                            color="ret",
+                            color_continuous_scale="RdYlGn",
+                            hover_data=["entry_ts", "side", "ret", "efficiency"],
+                            title="MAE vs MFE (кожна угода — точка)",
+                        )
                         fig_mf.add_vline(x=0, line_dash="dash", line_color="gray", opacity=0.4)
                         fig_mf.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.4)
                         fig_mf.update_layout(height=420)
                         st.plotly_chart(fig_mf, width="stretch")
                         avg_eff = mae_df["efficiency"].dropna().mean()
-                        st.caption(f"Avg efficiency = {avg_eff:.1%} (частка MFE, що ми реально захопили). Якщо < 50% — виходимо занадто рано.")
+                        st.caption(
+                            f"Avg efficiency = {avg_eff:.1%} (частка MFE, що ми реально захопили). Якщо < 50% — виходимо занадто рано."
+                        )
                 else:
                     st.info("Немає klines для розрахунку MAE/MFE.")
             else:
                 st.info("Бектест не завершено або немає угод.")
-                
+
         with tab_rob:
             if audit is not None:
                 rob_c1, rob_c2 = st.columns(2)
@@ -401,7 +480,9 @@ elif section == "Повний цикл":
                         fig_wf = go.Figure()
                         fig_wf.add_trace(go.Bar(x=wf_df["window_idx"], y=wf_df["oos_sharpe"], name="OOS Sharpe"))
                         fig_wf.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
-                        fig_wf.update_layout(height=280, yaxis_title="OOS Sharpe", xaxis_title="Вікно", margin=dict(l=0, r=0, t=30, b=0))
+                        fig_wf.update_layout(
+                            height=280, yaxis_title="OOS Sharpe", xaxis_title="Вікно", margin=dict(l=0, r=0, t=30, b=0)
+                        )
                         st.plotly_chart(fig_wf, width="stretch")
                         with st.expander("Деталі вікон"):
                             st.dataframe(wf_df, width="stretch", hide_index=True)
@@ -410,28 +491,35 @@ elif section == "Повний цикл":
                         sens_df = pd.DataFrame(list(audit.sensitivity_grid))
                         st.markdown(f"**Sensitivity ({audit.sens_param})**")
                         if "metric" in sens_df.columns and audit.sens_param in sens_df.columns:
-                            fig_s = px.line(sens_df, x=audit.sens_param, y="metric", markers=True, title="Sharpe по сітці")
+                            fig_s = px.line(
+                                sens_df, x=audit.sens_param, y="metric", markers=True, title="Sharpe по сітці"
+                            )
                             fig_s.update_layout(height=280, margin=dict(l=0, r=0, t=30, b=0))
                             st.plotly_chart(fig_s, width="stretch")
                         with st.expander("Деталі Sensitivity"):
                             st.dataframe(sens_df, width="stretch", hide_index=True)
             else:
                 st.info("Аудит не завершено або немає даних.")
-                
+
         with tab_ctx:
             if res_bt is not None and res_bt.trades is not None and not res_bt.trades.empty:
                 trades = res_bt.trades
-                
+
                 # Regimes
                 st.subheader("Режими ринку")
                 if has_klines:
                     from scalper_hft.features.regimes import named_market_state
-                    from scalper_hft.research.session_analysis import named_regime_breakdown, regime_breakdown, structure_breakdown
+                    from scalper_hft.research.session_analysis import (
+                        named_regime_breakdown,
+                        regime_breakdown,
+                        structure_breakdown,
+                    )
+
                     state = named_market_state(df_k["close"])
                     vol = regime_breakdown(trades, state["vol"])
                     struct = structure_breakdown(trades, state["structure"])
                     named = named_regime_breakdown(trades, state)
-                    
+
                     reg_c1, reg_c2, reg_c3 = st.columns(3)
                     with reg_c1:
                         if not vol.empty:
@@ -445,16 +533,26 @@ elif section == "Повний цикл":
                         if not named.empty:
                             st.markdown("**Складений стан**")
                             st.dataframe(named.reset_index(), width="stretch", hide_index=True)
-                
+
                 # Sessions
-                from scalper_hft.research.session_analysis import hourly_heatmap_data, session_breakdown
+                from scalper_hft.research.session_analysis import hourly_heatmap_data
+
                 st.subheader("Сесії (UTC)")
                 hm = hourly_heatmap_data(trades)
                 if not hm.empty:
-                    fig_hm = px.imshow(hm.values, x=list(hm.columns), y=list(hm.index), color_continuous_scale="RdYlGn", zmin=0, zmax=1, title="Win rate: день тижня × година UTC", labels={"color": "Win rate"})
+                    fig_hm = px.imshow(
+                        hm.values,
+                        x=list(hm.columns),
+                        y=list(hm.index),
+                        color_continuous_scale="RdYlGn",
+                        zmin=0,
+                        zmax=1,
+                        title="Win rate: день тижня × година UTC",
+                        labels={"color": "Win rate"},
+                    )
                     fig_hm.update_layout(height=300)
                     st.plotly_chart(fig_hm, width="stretch")
-                
+
                 # Filter Trace
                 st.subheader("Filter Attribution")
                 trace = res_bt.trace
@@ -462,20 +560,34 @@ elif section == "Повний цикл":
                     st.info(f"Стратегія **{rs_strat}** не підтримує детальний трейсинг (або trace=False).")
                 else:
                     from scalper_hft.research.filter_trace import filter_attribution, filter_pnl_impact
+
                     n_raw = len(trace)
                     n_blocked = trace.n_blocked()
                     n_passed = trace.n_passed()
                     m1, m2, m3 = st.columns(3)
                     m1.metric("Raw сигналів", n_raw)
                     m2.metric("Пройшли фільтри", n_passed, delta=f"{n_passed / n_raw:.0%}" if n_raw else "")
-                    m3.metric("Заблоковано", n_blocked, delta=f"-{n_blocked / n_raw:.0%}" if n_raw else "", delta_color="inverse")
-                    
+                    m3.metric(
+                        "Заблоковано",
+                        n_blocked,
+                        delta=f"-{n_blocked / n_raw:.0%}" if n_raw else "",
+                        delta_color="inverse",
+                    )
+
                     attr_df = filter_attribution(trace)
                     if not attr_df.empty:
-                        fig_attr = px.bar(attr_df, x="filter_name", y="n_blocked", title="Скільки сигналів заблокував кожен фільтр", text="n_blocked", color="pct_of_all_signals", color_continuous_scale="Oranges")
+                        fig_attr = px.bar(
+                            attr_df,
+                            x="filter_name",
+                            y="n_blocked",
+                            title="Скільки сигналів заблокував кожен фільтр",
+                            text="n_blocked",
+                            color="pct_of_all_signals",
+                            color_continuous_scale="Oranges",
+                        )
                         fig_attr.update_layout(xaxis_title="", yaxis_title="Кількість сигналів", height=350)
                         st.plotly_chart(fig_attr, width="stretch")
-                        
+
                         st.caption("Shadow PnL — що було б без фільтру")
                         fa_horizon = st.slider("Shadow-горизонт (барів)", 1, 20, 5, key="fa_horizon_fc")
                         if has_klines:
@@ -526,10 +638,10 @@ elif section == "Порівняння equity":
             curves[label] = res.equity
         except Exception:
             pending.append(f"{label}: помилка артефактів")
-            
+
     if pending:
         st.caption("Очікуємо: " + " · ".join(pending))
-        
+
     if not curves:
         st.info("Додайте криві.")
     else:
@@ -539,9 +651,11 @@ elif section == "Порівняння equity":
                 continue
             norm = equity / equity.iloc[0]
             fig_eq.add_trace(go.Scatter(x=norm.index, y=norm.values, mode="lines", name=label))
-        fig_eq.update_layout(title="Нормалізовані Equity", xaxis_title="", yaxis_title="Нормалізована вартість", height=400)
+        fig_eq.update_layout(
+            title="Нормалізовані Equity", xaxis_title="", yaxis_title="Нормалізована вартість", height=400
+        )
         st.plotly_chart(fig_eq, width="stretch")
-        
+
         st.subheader("Rolling Sharpe (30-денне вікно)")
         fig_rs = go.Figure()
         for label, equity in curves.items():

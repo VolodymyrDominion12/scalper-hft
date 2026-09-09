@@ -17,3 +17,4 @@
 | ensemble | ETHUSDT | 2024-09-09 | 2026-09-09 | audit_cell/cscv |
 | ensemble | LINKUSDT | 2024-09-09 | 2026-09-09 | audit_cell/cscv |
 | ensemble | LTCUSDT | 2024-09-09 | 2026-09-09 | audit_cell/cscv |
+| ml_strategy | SOLUSDT | 2024-09-09 | 2026-09-09 | audit_cell/cscv |
