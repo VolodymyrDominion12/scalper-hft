@@ -59,6 +59,25 @@ class SilentAttritionKillSwitch:
         self.tripped = False
 
 
+def _normalize_pending_parts(trader: LiveTrader, parts: list[str]) -> list[str]:
+    """Paper maker: pending-статуси → фактичні після OHLC-resolve."""
+    pos = trader.account.positions.get(trader.symbol)
+    out: list[str] = []
+    for part in parts:
+        if part == "close_pending" and pos is None:
+            out.append("closed")
+        elif "close_pending" in part and pos is None:
+            out.append(part.replace("close_pending", "closed"))
+        elif part.startswith("open_pending:") and pos is not None:
+            side = pos.side
+            size = pos.size
+            price = pos.entry_price
+            out.append(f"opened {side} {size:.6f} @ {price}")
+        else:
+            out.append(part)
+    return out
+
+
 def _resolve_maker_pending_for_bar(trader: LiveTrader, closed: pd.DataFrame) -> None:
     """Paper maker: resolve resting orders against the last closed bar OHLC."""
     if closed is None or closed.empty:
@@ -106,10 +125,12 @@ def execute_signal(
         if have != 0:
             parts.append(trader.execute(TradeDecision("close", trader.symbol, 0.0, "dd_breaker:flatten"), close, ts))
             trader.ladder = None
+            _resolve_maker_pending_for_bar(trader, closed)
             parts.append("dd_breaker:flatten")
         else:
             parts.append("dd_breaker:halt")
         trader.last_signal = signal
+        parts = _normalize_pending_parts(trader, parts)
         return " | ".join(parts)
 
     ladder_exit = 0.0
@@ -135,6 +156,8 @@ def execute_signal(
         if have != 0:
             parts.append(trader.execute(TradeDecision("close", trader.symbol, 0.0, "реверс"), close, ts))
             trader.ladder = None
+            _resolve_maker_pending_for_bar(trader, closed)
+            parts = _normalize_pending_parts(trader, parts)
         if block_new_entries:
             parts.append("blocked:no_new_entries")
         elif trader.hmm_blocked(closed):
@@ -151,6 +174,7 @@ def execute_signal(
 
     trader.last_signal = signal
     _resolve_maker_pending_for_bar(trader, closed)
+    parts = _normalize_pending_parts(trader, parts)
     return " | ".join(parts)
 
 

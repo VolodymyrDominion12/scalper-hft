@@ -4,6 +4,8 @@ from scalper_hft.application.use_cases import (
     RunBacktest,
     RunCellAudit,
     RunPairsPaper,
+    delete_research_jobs,
+    prune_research_jobs,
     run_backtest,
     run_cell_audit,
     run_pairs_paper,
@@ -13,7 +15,10 @@ __all__ = [
     "RunBacktest",
     "RunCellAudit",
     "RunPairsPaper",
+    "delete_research_jobs",
+    "prune_research_jobs",
     "run_backtest",
     "run_cell_audit",
     "run_pairs_paper",
 ]
+

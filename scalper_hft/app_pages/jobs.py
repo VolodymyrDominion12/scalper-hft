@@ -58,6 +58,35 @@ def _jobs_panel() -> None:
         worker_on = js.worker_is_alive()
     if not worker_on:
         st.caption("воркер мовчить (немає heartbeat)")
+    with st.expander("Очищення диска (артефакти задач)", icon=":material/cleaning_services:"):
+        st.caption("Видаляє завершені або скасовані задачі та їхні важкі папки на диску (`results/jobs/`).")
+        col1, col2, col3 = st.columns([2, 2, 3], vertical_alignment="bottom")
+        with col1:
+            prune_days = st.number_input(
+                "Вік задач (днів)",
+                min_value=0,
+                max_value=365,
+                value=0,
+                step=1,
+                help="0 — видалити всі завершені/помилкові задачі незалежно від дати створення",
+                key="prune_days_input",
+            )
+        with col2:
+            prune_status = st.selectbox(
+                "Статус",
+                ["all", "succeeded", "failed", "cancelled"],
+                index=0,
+                key="prune_status_select",
+            )
+        with col3:
+            if st.button("Очистити артефакти", icon=":material/delete_forever:", key="btn_prune_jobs"):
+                with JobStore(DEFAULT_JOBS_PATH) as js:
+                    stats = js.prune_jobs(days=int(prune_days), status=prune_status)
+                st.success(
+                    f"Видалено {stats.pruned_jobs} задач ({stats.deleted_dirs} папок). Звільнено {stats.freed_mb:.2f} MB"
+                )
+                st.rerun()
+
     if not rows:
         st.info("Черга порожня.")
         return
@@ -200,6 +229,17 @@ def _jobs_panel() -> None:
             for key, value in updates.items():
                 st.session_state[key] = value
             st.switch_page(page)
+        if st.button(
+            "Видалити",
+            icon=":material/delete:",
+            key="job_delete",
+            disabled=job.status == "running",
+            help="Видалити задачу та її папку артефактів з диска",
+        ):
+            with JobStore(DEFAULT_JOBS_PATH) as js:
+                js.delete_jobs([job.id])
+            st.toast(f"Задачу #{job.id} та її дані видалено", icon="🗑️")
+            st.rerun()
     with JobStore(DEFAULT_JOBS_PATH) as js:
         log = js.tail_log(job.id, n=120)
     if log:

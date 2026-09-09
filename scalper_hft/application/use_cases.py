@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from scalper_hft.backtest.engine import BacktestResult
 from scalper_hft.backtest.event_engine import EventBacktestResult
 from scalper_hft.validation.cell_audit import AuditMode, CellAudit
+
+if TYPE_CHECKING:
+    from scalper_hft.research.jobs import PruneStats
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,3 +130,25 @@ def run_pairs_paper(req: RunPairsPaper):
         audit_path=req.audit_path,
         control_path=req.control_path,
     )
+
+
+def delete_research_jobs(job_ids: Sequence[int], store_path: Path | str | None = None) -> int:
+    """Видалити завершені/помилкові задачі разом із їхніми артефактами (папками) на диску."""
+    from scalper_hft.research.jobs import JobStore
+
+    with JobStore(store_path) as js:
+        return js.delete_jobs(job_ids)
+
+
+def prune_research_jobs(
+    days: int = 14,
+    status: str = "all",
+    keep_records: bool = False,
+    store_path: Path | str | None = None,
+) -> PruneStats:
+    """Очистити застарілі артефакти задач на диску та з бази."""
+    from scalper_hft.research.jobs import JobStore
+
+    with JobStore(store_path) as js:
+        return js.prune_jobs(days=days, status=status, keep_records=keep_records)
+

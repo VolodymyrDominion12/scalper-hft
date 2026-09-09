@@ -77,7 +77,7 @@ install: ## Встановити базові залежності та паке
 	uv sync
 
 install-all: ## Встановити всі екстра-залежності (dashboard, optim, ml, live, dev)
-	uv pip install -e ".[optim,ml,dashboard,live,dev]"
+	uv sync --all-extras
 
 sync: ## Синхронізувати оточення через uv sync --all-extras
 	uv sync --all-extras

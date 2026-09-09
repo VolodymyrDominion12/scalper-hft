@@ -13,3 +13,14 @@ WF_POS_FRAC_MIN = 0.55
 PBO_MAX = 0.50
 # Рідкі maker-входи: нижче 20 угод на вікні аудиту — мала вибірка.
 MIN_TRADES = 20
+
+
+def evaluate_pair_wf_gate(pos_frac: float, n_windows: int) -> tuple[str, list[str]]:
+    """WF-частка позитивних OOS-вікон → PASS/FAIL для pair-вердикта."""
+    reasons: list[str] = []
+    if n_windows == 0:
+        reasons.append("WF вікон=0")
+    elif pos_frac < WF_POS_FRAC_MIN:
+        reasons.append(f"WF positive={pos_frac:.0%}<{WF_POS_FRAC_MIN:.0%}")
+    label = "PASS" if not reasons else "FAIL"
+    return label, reasons

@@ -110,6 +110,42 @@ class TestPairAuditGate:
         with pytest.raises(RuntimeError, match="протух"):
             require_pair_audit_pass("pairs_arb", "LINKUSDT", "BTCUSDT", "1h", path=verdicts_path)
 
+    def test_pairs_live_runner_requires_pair_audit(self, verdicts_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """PairsLiveRunner з require_audit=True — fail-closed без pair-PASS."""
+        from scalper_hft.config import Settings
+        from scalper_hft.live.pairs_runner import PairsLiveRunner
+
+        class _Client:
+            def fetch_positions(self) -> list:
+                return []
+
+            def cancel_all_orders(self, _sym: str) -> None:
+                return None
+
+        monkeypatch.setattr(
+            "scalper_hft.live.pairs_runner.get_settings",
+            lambda: Settings(binance_api_key="k", binance_api_secret="s", dry_run=False),
+        )
+        with pytest.raises(RuntimeError, match="гейт пари"):
+            PairsLiveRunner(
+                "AAA",
+                "BBB",
+                client=_Client(),
+                restore=False,
+                require_audit=True,
+                audit_path=verdicts_path,
+            )
+        record_pair_verdict("pairs_arb", "AAA", "BBB", "1h", "PASS", path=verdicts_path)
+        runner = PairsLiveRunner(
+            "AAA",
+            "BBB",
+            client=_Client(),
+            restore=False,
+            require_audit=True,
+            audit_path=verdicts_path,
+        )
+        assert runner.leg1 == "AAA"
+
 
 def _good_bars(n: int = 10) -> pd.DataFrame:
     idx = pd.date_range("2024-01-01", periods=n, freq="1min")

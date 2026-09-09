@@ -20,7 +20,7 @@ jobs:
           python-version: "3.12"
 
       - name: Встановити залежності
-        run: uv sync --extra dev --extra optim --extra ml
+        run: uv sync --all-extras
 
       - name: Ruff
         run: uv run ruff check scalper_hft tests

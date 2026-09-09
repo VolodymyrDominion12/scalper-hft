@@ -353,6 +353,11 @@ def cmd_job(args: argparse.Namespace) -> None:
             print(f"  Каталогів артефактів видалено: {stats.deleted_dirs} (з них orphaned: {stats.orphaned_dirs})")
             print(f"  Звільнено дискового простору: {stats.freed_mb:.2f} MB ({stats.freed_bytes:,} bytes)")
             return
+        if action in {"delete", "rm"}:
+            job_ids = [int(i) for i in args.ids]
+            count = store.delete_jobs(job_ids)
+            print(f"Видалено задач з бази та очищено папок артефактів з диска: {count}")
+            return
         job_id = int(args.id)
         entry = store.get(job_id)
         if entry is None:

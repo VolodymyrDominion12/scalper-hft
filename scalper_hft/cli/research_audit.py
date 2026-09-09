@@ -121,7 +121,7 @@ def _maybe_record_pair_verdict(args: argparse.Namespace) -> None:
     from scalper_hft.backtest.pairs import run_pairs_walk_forward
     from scalper_hft.cli import _load_klines
     from scalper_hft.data.downloader import download_funding
-    from scalper_hft.validation.pairs_gate import WF_POS_FRAC_MIN
+    from scalper_hft.validation.pairs_gate import evaluate_pair_wf_gate
     from scalper_hft.validation.verdict_store import record_pair_verdict
 
     df1 = _load_klines(
@@ -150,13 +150,8 @@ def _maybe_record_pair_verdict(args: argparse.Namespace) -> None:
 
     pos_frac = float(wf["positive_windows"])
     n_windows = int(wf["n_windows"])
-    reasons: list[str] = []
-    if n_windows == 0:
-        reasons.append("WF вікон=0")
-    elif pos_frac < WF_POS_FRAC_MIN:
-        reasons.append(f"WF positive={pos_frac:.0%}<{WF_POS_FRAC_MIN:.0%}")
     # PBO — опційно (дорого); залишимо як майбутнє розширення (CSCV на pairs)
-    label = "PASS" if not reasons else "FAIL"
+    label, reasons = evaluate_pair_wf_gate(pos_frac, n_windows)
     print(
         "\n[PAIR-вердикт] "
         + f"{leg1}/{leg2} {args.interval}: {label}"

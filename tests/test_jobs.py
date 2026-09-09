@@ -428,3 +428,53 @@ def test_delete_jobs_terminal_and_running_protection(tmp_path: Path) -> None:
 
     store.close()
 
+
+def test_cli_job_delete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    from scalper_hft.cli import main
+    from scalper_hft.research.jobs import artifacts_dir
+
+    db_path = tmp_path / "jobs.sqlite"
+    monkeypatch.setattr("scalper_hft.research.jobs.DEFAULT_JOBS_PATH", db_path)
+
+    store = _store(tmp_path)
+    j1 = store.submit("backtest", {"p": 1})
+    j2 = store.submit("backtest", {"p": 2})
+    art1 = artifacts_dir(store.path, j1.id)
+    art1.mkdir(parents=True)
+    (art1 / "job.log").write_text("done", encoding="utf-8")
+    store.finish(j1.id, "succeeded")
+    store.finish(j2.id, "succeeded")
+    store.close()
+
+    # CLI job delete
+    main(["job", "delete", str(j1.id), str(j2.id)])
+    out = capsys.readouterr().out
+    assert "Видалено задач" in out
+    assert not art1.exists()
+
+    with _store(tmp_path) as verify_store:
+        assert verify_store.get(j1.id) is None
+        assert verify_store.get(j2.id) is None
+
+
+def test_application_job_use_cases(tmp_path: Path) -> None:
+    from scalper_hft.application import delete_research_jobs, prune_research_jobs
+    from scalper_hft.research.jobs import artifacts_dir
+
+    store = _store(tmp_path)
+    j1 = store.submit("backtest", {"p": 1})
+    art1 = artifacts_dir(store.path, j1.id)
+    art1.mkdir(parents=True)
+    (art1 / "trades.parquet").write_bytes(b"data")
+    store.finish(j1.id, "succeeded")
+    store.close()
+
+    db_path = tmp_path / "jobs.sqlite"
+    count = delete_research_jobs([j1.id], store_path=db_path)
+    assert count == 1
+    assert not art1.exists()
+
+    stats = prune_research_jobs(days=0, store_path=db_path)
+    assert stats.pruned_jobs == 0
+
+

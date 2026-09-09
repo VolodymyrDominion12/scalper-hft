@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 from scalper_hft.live.bookticker_recorder import _event_ts, _flush
+from scalper_hft.live.partition_writer import partition_path
 
 
 def test_event_ts_prefers_exchange_time() -> None:

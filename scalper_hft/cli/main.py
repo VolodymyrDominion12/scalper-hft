@@ -506,6 +506,12 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Показати, що буде видалено, без фактичного видалення",
     )
+    jd = job_sub.add_parser(
+        "delete",
+        aliases=["rm"],
+        help="Видалити завершені/скасовані задачі та їхні папки артефактів з диска за ID",
+    )
+    jd.add_argument("ids", type=int, nargs="+", help="Один або кілька ID задач для видалення")
     job_p.set_defaults(func=_cli_pkg.cmd_job)
 
     p = sub.add_parser(

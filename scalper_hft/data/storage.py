@@ -15,7 +15,6 @@ import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TypeVar
 
 import pandas as pd
 
@@ -23,7 +22,6 @@ logger = logging.getLogger(__name__)
 
 _KLINES_COLUMNS = ["open", "high", "low", "close", "volume"]
 _TRADES_COLUMNS = ["trade_id", "price", "amount", "side"]
-_T = TypeVar("_T")
 
 
 @contextmanager
@@ -44,7 +42,7 @@ def cache_write_lock(path: Path) -> Iterator[None]:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
-def _atomic_write(path: Path, writer: Callable[[Path], _T]) -> _T:
+def _atomic_write[T](path: Path, writer: Callable[[Path], T]) -> T:
     """Write beside the target and atomically replace it after fsync."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, raw_tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)

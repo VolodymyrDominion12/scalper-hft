@@ -15,7 +15,7 @@ fi
 git fetch --tags --force
 git checkout "$TAG"
 if command -v uv >/dev/null 2>&1; then
-  uv sync --frozen
+  uv sync --frozen --all-extras
 fi
 
 systemctl --user restart scalper-paper-pairs
