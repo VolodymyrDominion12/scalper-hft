@@ -59,7 +59,7 @@ with st.sidebar:
     rs_iv = st.pills("Таймфрейм", BT_INTERVALS, default=BT_INTERVALS[min(1, len(BT_INTERVALS) - 1)], key="rs_interval")
     if rs_iv is None:
         rs_iv = BT_INTERVALS[1]
-    rs_days = st.slider("Днів", 14, 730, key="rs_days")
+    rs_days = st.slider("Днів", 14, 1095, key="rs_days")
 
 
 section = st.segmented_control("Розділ", list(RESEARCH_SECTIONS), key="research_section", default=RESEARCH_SECTIONS[0])
@@ -98,12 +98,17 @@ if section == "Масовий пошук":
 
                 with st.container(horizontal=True):
                     if st.button("Рекомендований", icon=":material/recommend:", key="sw_preset_reco"):
-                        st.session_state["sw_strats"] = list(all_strats)
+                        # Швидкий старт: усі швидкі стратегії × 3 символи × 15m/1h
+                        st.session_state["sw_slow"] = False
+                        st.session_state["sw_strats"] = list(default_strategies(include_slow=False))
                         st.session_state["sw_syms"] = list(SYMBOLS[:3])
                         st.session_state["sw_ivs"] = ["15m", "1h"]
                         st.rerun()
                     if st.button("Усі × усі × усі", icon=":material/select_all:", key="sw_preset_all"):
-                        st.session_state["sw_strats"] = list(all_strats)
+                        # Повний універсум single-symbol стратегій, включно з повільними
+                        # (ml_strategy / ensemble): тумблер нижче вмикається автоматично.
+                        st.session_state["sw_slow"] = True
+                        st.session_state["sw_strats"] = list(default_strategies(include_slow=True))
                         st.session_state["sw_syms"] = list(SYMBOLS)
                         st.session_state["sw_ivs"] = list(DEFAULT_INTERVALS)
                         st.rerun()
@@ -111,7 +116,7 @@ if section == "Масовий пошук":
                 sel_strats = st.multiselect("Стратегії", all_strats, default=all_strats[:5], key="sw_strats")
                 sel_symbols = st.multiselect("Символи", SYMBOLS, default=SYMBOLS[:3], key="sw_syms")
                 sel_ivs = st.multiselect("Таймфрейми", DEFAULT_INTERVALS, default=["5m", "15m", "1h"], key="sw_ivs")
-                sel_days = st.slider("Днів даних", 14, 730, 60, key="sw_days")
+                sel_days = st.slider("Днів даних", 14, 1095, 60, key="sw_days")
 
                 with st.expander("⚙️ Розширені налаштування (режим, OOS)"):
                     sel_mode = st.segmented_control(
@@ -600,6 +605,103 @@ elif section == "Повний цикл":
                                     st.metric("Shadow avg PnL", f"{row['shadow_mean_ret']:+.4%}")
             else:
                 st.info("Бектест не завершено або немає угод.")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Аудит комірки — walk-forward + DSR + sensitivity + CSCV для однієї комбінації
+# (сюди ведуть кнопки «Аудит» у таблицях sweep/Research Hub і overfit-задачі)
+# ═══════════════════════════════════════════════════════════════════════════════
+elif section == "Аудит комірки":
+    st.subheader(f"Аудит комірки: {rs_strat} | {rs_sym} | {rs_iv} | {rs_days}d")
+    st.caption(
+        "Walk-forward + Deflated Sharpe + sensitivity + CSCV/PBO. **PASS** лише якщо всі "
+        "пороги overfitting-audit виконано. Рахунок іде через чергу задач (kind=overfit) — "
+        "сторінку не блокує."
+    )
+    _dt_au, _dte_au = default_train_test(str(rs_iv))
+    # Синхронізувати train/test з таймфреймом при зміні комбінації — інакше
+    # залишаться вікна попереднього інтервалу, і аудит піде з чужими барами.
+    if st.session_state.get("au_iv") != rs_iv:
+        st.session_state["au_train"] = int(_dt_au)
+        st.session_state["au_test"] = int(_dte_au)
+        st.session_state["au_iv"] = str(rs_iv)
+    with st.expander("⚙️ Вікна walk-forward (дефолт — по таймфрейму)"):
+        au_c1, au_c2 = st.columns(2)
+        au_train = int(au_c1.number_input("Train барів", 50, 50_000, key="au_train"))
+        au_test = int(au_c2.number_input("Test барів (OOS)", 20, 20_000, key="au_test"))
+    au_payload = overfit_job_payload(
+        str(rs_strat),
+        str(rs_sym),
+        str(rs_iv),
+        int(rs_days),
+        train_bars=au_train,
+        test_bars=au_test,
+    )
+    with st.container(horizontal=True):
+        if st.button("Поставити аудит у чергу", icon=":material/fact_check:", type="primary", key="au_run"):
+            submit_research_job("overfit", au_payload)
+            st.rerun()
+        st.page_link("app_pages/jobs.py", label="Черга задач", icon=":material/pending_actions:")
+    au_job, au_alive = lookup_job("overfit", au_payload)
+    _job_banner(au_job, au_alive)
+    if au_job is None or au_job.status != "succeeded":
+        st.info(
+            "Після виконання тут з'являться вердикт PASS/FAIL, OOS Sharpe, OOS+, DSR, "
+            "smoothness, PBO і вікна walk-forward. Статус задачі — на сторінці «Задачі»."
+        )
+    else:
+        try:
+            audit = load_cell_audit(artifacts_dir(DEFAULT_JOBS_PATH, au_job.id))
+        except (FileNotFoundError, KeyError, ValueError):
+            st.warning("Артефакти аудиту ще не записані.")
+        else:
+            verdict, why = cell_verdict(audit)
+            h1, h2 = st.columns([1, 4], vertical_alignment="center")
+            with h1:
+                if verdict == "PASS":
+                    st.badge("PASS", icon=":material/verified:", color="green")
+                else:
+                    st.badge("FAIL", icon=":material/cancel:", color="red")
+            with h2:
+                if why:
+                    st.caption(f"Не пройдено критеріїв: {why}")
+                else:
+                    st.caption("Усі критерії overfitting-audit виконано.")
+            m1, m2, m3, m4, m5, m6 = st.columns(6)
+            m1.metric("OOS Sharpe", f"{audit.avg_oos_sharpe or 0:.3f}", border=True)
+            m2.metric("OOS+", f"{(audit.oos_pos_frac or 0):.0%}", border=True)
+            m3.metric("DSR", f"{audit.dsr if audit.dsr is not None else float('nan'):.3f}", border=True)
+            m4.metric(
+                "Smoothness", f"{audit.smoothness if audit.smoothness is not None else float('nan'):.2f}", border=True
+            )
+            m5.metric("PBO", f"{audit.pbo if audit.pbo is not None else float('nan'):.2f}", border=True)
+            m6.metric("Угод OOS", f"{audit.n_trades_oos or 0}", border=True)
+            if audit.windows:
+                wf_df = pd.DataFrame(list(audit.windows))
+                st.subheader("Walk-forward вікна")
+                fig_wf = go.Figure()
+                fig_wf.add_trace(go.Bar(x=wf_df["window_idx"], y=wf_df["oos_sharpe"], name="OOS Sharpe"))
+                fig_wf.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+                fig_wf.update_layout(
+                    height=280, yaxis_title="OOS Sharpe", xaxis_title="Вікно", margin=dict(l=0, r=0, t=30, b=0)
+                )
+                st.plotly_chart(fig_wf, width="stretch")
+                with st.expander("Деталі вікон"):
+                    st.dataframe(wf_df, width="stretch", hide_index=True)
+            if audit.sensitivity_grid and audit.sens_param:
+                sens_df = pd.DataFrame(list(audit.sensitivity_grid))
+                st.subheader(f"Sensitivity ({audit.sens_param})")
+                if "metric" in sens_df.columns and audit.sens_param in sens_df.columns:
+                    fig_s = px.line(
+                        sens_df,
+                        x=audit.sens_param,
+                        y="metric",
+                        markers=True,
+                        title="Sharpe по сітці параметра",
+                    )
+                    fig_s.update_layout(height=280, margin=dict(l=0, r=0, t=30, b=0))
+                    st.plotly_chart(fig_s, width="stretch")
+                with st.expander("Деталі sensitivity"):
+                    st.dataframe(sens_df, width="stretch", hide_index=True)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Порівняння Equity

@@ -34,6 +34,92 @@ from scalper_hft.validation.cell_audit import default_train_test
 _TABLE_PREFIXES = ("sw_all", "sw_top", "hub", "tq_jobs")
 
 
+@st.cache_data(ttl=10, show_spinner=False)
+def _audit_cell_state() -> dict[tuple[str, str, str], str]:
+    """(strategy, symbol, interval) -> стан найсвіжішого аудиту комірки.
+
+    Джерела: черга overfit-задач (queued/running/failed/succeeded) і журнал
+    вердиктів (PASS/FAIL — лише для succeeded). 10-секундний TTL: таблиці
+    Research Hub / sweep не читають SQLite на кожен rerun.
+    """
+    state: dict[tuple[str, str, str], str] = {}
+    try:
+        with JobStore(DEFAULT_JOBS_PATH) as js:
+            jobs = js.list_jobs(kind="overfit", limit=1000)
+    except Exception:
+        jobs = []
+    for j in jobs:  # created_at DESC → перший збіг = найсвіжіша задача
+        p = j.params or {}
+        key = (str(p.get("strategy") or ""), str(p.get("symbol") or ""), str(p.get("interval") or ""))
+        if not all(key) or key in state:
+            continue
+        state[key] = j.status
+    if state:
+        try:
+            from scalper_hft.validation.verdict_store import load_verdicts
+
+            for v in reversed(load_verdicts()):  # найсвіжіший вердикт першим
+                key = (str(v.get("strategy") or ""), str(v.get("symbol") or ""), str(v.get("interval") or ""))
+                if not all(key) or state.get(key) != "succeeded":
+                    continue
+                state[key] = "PASS" if v.get("label") == "PASS" else "FAIL"
+        except Exception:
+            pass
+    return state
+
+
+_AUDIT_LABEL_SHORT = {
+    "PASS": "✓ PASS",
+    "FAIL": "✗ FAIL",
+    "queued": "⏳ queued",
+    "running": "▶ running",
+    "failed": "✗ failed",
+    "cancelled": "—",
+}
+
+
+def audit_cell_label(state: dict[tuple[str, str, str], str], row: Mapping[str, Any]) -> str:
+    """Короткий підпис стану аудиту комірки для колонки таблиці."""
+    key = (str(row.get("strategy") or ""), str(row.get("symbol") or ""), str(row.get("interval") or ""))
+    status = state.get(key)
+    if status is None:
+        return "—"
+    return _AUDIT_LABEL_SHORT.get(status, status)
+
+
+def enqueue_cell_audits(rows: list[Mapping[str, Any]], *, skip_active: bool = True) -> tuple[int, int]:
+    """Поставити overfit-аудит для списку комірок; (запущено, пропущено).
+
+    Той самий fingerprint не дублює queued/running/succeeded; failed
+    пере-ставиться автоматично (JobStore.submit).
+    """
+    state = _audit_cell_state()
+    launched = 0
+    skipped = 0
+    for row in rows:
+        combo = combo_prefill(row)
+        if not (combo.get("strategy") and combo.get("symbol") and combo.get("interval")):
+            continue
+        if skip_active and audit_cell_label(state, row) not in {"—", "✗ failed"}:
+            skipped += 1
+            continue
+        train_b, test_b = default_train_test(str(combo["interval"]))
+        payload = overfit_job_payload(
+            str(combo["strategy"]),
+            str(combo["symbol"]),
+            str(combo["interval"]),
+            int(combo["days"]),
+            train_bars=train_b,
+            test_bars=test_b,
+        )
+        job, _alive = submit_research_job("overfit", payload)
+        if job.status == "queued":
+            launched += 1
+        else:
+            skipped += 1
+    return launched, skipped
+
+
 def _hint_config(hint: ColumnHint) -> object:
     if hint.kind == "text":
         return st.column_config.TextColumn(hint.label, help=hint.help, pinned=hint.pinned or None)
@@ -205,8 +291,13 @@ def render_sweep_explorer(
     min_sharpe: float | None = None,
     min_win_rate: float | None = None,
     default_mode: str = "Усі",
+    with_audit: bool = True,
 ) -> pd.DataFrame:
-    """Фільтри + сортування + підказки колонок + клік «Деталі» / «Аудит»."""
+    """Фільтри + сортування + підказки колонок + клік «Деталі» / «Аудит».
+
+    with_audit=True: додає колонку «Аудит» (стан комірки в черзі/вердикт) і
+    дозволяє вибрати рядки → «Запустити аудит N комірок» (batch overfit у чергу).
+    """
     if key_prefix not in _TABLE_PREFIXES:
         raise ValueError(f"unknown results table prefix: {key_prefix}")
     st.session_state["_results_active_prefix"] = key_prefix
@@ -215,7 +306,8 @@ def render_sweep_explorer(
     else:
         st.caption(
             "Наведіть на назву колонки — підказка. Клік по заголовку сортує. "
-            "**Деталі** відкриває бектест зі свічками й угодами (sweep зберігає лише метрики)."
+            "**Деталі** відкриває бектест зі свічками й угодами (sweep зберігає лише метрики). "
+            "**Аудит** ставить walk-forward+DSR аудит комірки в чергу."
         )
 
     strategies = sorted(df["strategy"].dropna().astype(str).unique()) if "strategy" in df.columns else []
@@ -273,14 +365,72 @@ def render_sweep_explorer(
     shown = view[cols].copy()
     modes = shown["mode"].astype(str).tolist() if "mode" in shown.columns else [None] * len(shown)
     shown["open"] = open_action_cells(modes)
+    if with_audit:
+        audit_state = _audit_cell_state()
+        shown = shown.copy()
+        shown["audit"] = [audit_cell_label(audit_state, row) for _, row in view.iterrows()]
     payloads = [row.to_dict() for _, row in view.iterrows()]
     st.session_state[f"{key_prefix}_row_payloads"] = payloads
-    st.dataframe(
-        shown,
-        width="stretch",
-        hide_index=True,
-        column_config=sweep_column_config(include_open=True, action_key=f"{key_prefix}_open_btn"),
-        key=f"{key_prefix}_grid",
-    )
-    st.caption(f"Показано **{len(shown)}** з {len(df)} рядків.")
+    column_cfg = sweep_column_config(include_open=True, action_key=f"{key_prefix}_open_btn")
+    if with_audit and "audit" in shown.columns:
+        column_cfg["audit"] = st.column_config.TextColumn(
+            "Аудит",
+            help=(
+                "Стан аудиту комірки: ✓/✗ PASS/FAIL — останній вердикт; ⏳/▶ queued/running — "
+                "задача в черзі; ✗ failed — аудит упав; — аудиту ще не було."
+            ),
+            width="small",
+        )
+    if with_audit:
+        selection = st.dataframe(
+            shown,
+            width="stretch",
+            hide_index=True,
+            column_config=column_cfg,
+            key=f"{key_prefix}_grid",
+            on_select="rerun",
+            selection_mode="multi-row",
+        )
+        st.caption(f"Показано **{len(shown)}** з {len(df)} рядків.")
+        sel_rows = list(selection.selection.rows) if selection is not None and selection.selection else []
+        if sel_rows:
+            with st.container(border=True):
+                st.markdown(f"**Аудит комірок у чергу: вибрано {len(sel_rows)}**")
+                _preview = [
+                    f"{payloads[int(i)].get('strategy', '?')} · {payloads[int(i)].get('symbol', '?')} · "
+                    f"{payloads[int(i)].get('interval', '?')} ({payloads[int(i)].get('days', '?')}d)"
+                    for i in sel_rows
+                    if 0 <= int(i) < len(payloads)
+                ]
+                if _preview:
+                    shown_preview = "; ".join(_preview[:5]) + (" …" if len(_preview) > 5 else "")
+                    st.caption(f"Вибрано: {shown_preview}")
+                skip_active = st.toggle(
+                    "Пропустити клітинки, що вже мають вердикт або задачу в черзі",
+                    value=True,
+                    key=f"{key_prefix}_audit_skip",
+                )
+                if st.button(
+                    f"Поставити аудит ({len(sel_rows)} комірок) у чергу",
+                    icon=":material/fact_check:",
+                    type="primary",
+                    key=f"{key_prefix}_audit_btn",
+                ):
+                    rows = [payloads[int(i)] for i in sel_rows if 0 <= int(i) < len(payloads)]
+                    launched, skipped = enqueue_cell_audits(rows, skip_active=bool(skip_active))
+                    st.success(
+                        f"Overfit-аудит поставлено в чергу: **{launched}** комірок"
+                        + (f", пропущено: **{skipped}**" if skipped else "")
+                        + ". Прогрес — на сторінці «Задачі»."
+                    )
+                    st.page_link("app_pages/jobs.py", label="Черга задач", icon=":material/pending_actions:")
+    else:
+        st.dataframe(
+            shown,
+            width="stretch",
+            hide_index=True,
+            column_config=column_cfg,
+            key=f"{key_prefix}_grid",
+        )
+        st.caption(f"Показано **{len(shown)}** з {len(df)} рядків.")
     return view

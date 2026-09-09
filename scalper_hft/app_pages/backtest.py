@@ -84,7 +84,7 @@ if is_pairs:
 else:
     symbol = st.sidebar.selectbox("Символ", SYMBOLS, key="bt_symbol")
     interval = st.sidebar.selectbox("Таймфрейм", BT_INTERVALS, index=1, key="bt_interval_single")
-days = st.sidebar.slider("Глибина даних, днів", 7, 730, 90 if is_pairs else 30, key="bt_days")
+days = st.sidebar.slider("Глибина даних, днів", 7, 1095, 90 if is_pairs else 30, key="bt_days")
 run_bt = st.sidebar.button("Запустити бектест", icon=":material/play_arrow:")
 run_rerun = st.sidebar.button("Перезапустити задачу", icon=":material/replay:")
 run_capacity = st.sidebar.button("Capacity (черга)", icon=":material/speed:")

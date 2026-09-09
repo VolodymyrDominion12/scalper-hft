@@ -31,6 +31,7 @@ RESEARCH_SECTION = "research_section_prefill"
 RESEARCH_SECTIONS: tuple[str, ...] = (
     "Масовий пошук",
     "Повний цикл",
+    "Аудит комірки",
     "Порівняння equity",
 )
 JOB_STATUSES: tuple[str, ...] = ("queued", "running", "succeeded", "failed", "cancelled")
