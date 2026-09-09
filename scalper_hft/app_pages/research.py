@@ -92,30 +92,43 @@ if section == "Масовий пошук":
         col_left, col_right = st.columns([1, 3])
         with col_left:
             with st.container(border=True):
+                def _apply_preset_reco() -> None:
+                    st.session_state["sw_slow"] = False
+                    st.session_state["sw_strats"] = list(default_strategies(include_slow=False))
+                    st.session_state["sw_syms"] = list(SYMBOLS[:3])
+                    st.session_state["sw_ivs"] = ["15m", "1h"]
+
+                def _apply_preset_all() -> None:
+                    st.session_state["sw_slow"] = True
+                    st.session_state["sw_strats"] = list(default_strategies(include_slow=True))
+                    st.session_state["sw_syms"] = list(SYMBOLS)
+                    st.session_state["sw_ivs"] = list(DEFAULT_INTERVALS)
+
                 if "sw_slow" not in st.session_state:
                     st.session_state["sw_slow"] = False
                 sel_slow = st.toggle("Включити повільні (ML / ensemble)", key="sw_slow")
                 all_strats = default_strategies(include_slow=sel_slow)
 
                 with st.container(horizontal=True):
-                    if st.button("Рекомендований", icon=":material/recommend:", key="sw_preset_reco"):
-                        # Швидкий старт: усі швидкі стратегії × 3 символи × 15m/1h
-                        st.session_state["sw_slow"] = False
-                        st.session_state["sw_strats"] = list(default_strategies(include_slow=False))
-                        st.session_state["sw_syms"] = list(SYMBOLS[:3])
-                        st.session_state["sw_ivs"] = ["15m", "1h"]
-                        st.rerun()
-                    if st.button("Усі × усі × усі", icon=":material/select_all:", key="sw_preset_all"):
-                        # Повний універсум single-symbol стратегій, включно з повільними
-                        # (ml_strategy / ensemble): тумблер нижче вмикається автоматично.
-                        st.session_state["sw_slow"] = True
-                        st.session_state["sw_strats"] = list(default_strategies(include_slow=True))
-                        st.session_state["sw_syms"] = list(SYMBOLS)
-                        st.session_state["sw_ivs"] = list(DEFAULT_INTERVALS)
-                        st.rerun()
+                    st.button(
+                        "Рекомендований",
+                        icon=":material/recommend:",
+                        key="sw_preset_reco",
+                        on_click=_apply_preset_reco,
+                    )
+                    st.button(
+                        "Усі × усі × усі",
+                        icon=":material/select_all:",
+                        key="sw_preset_all",
+                        on_click=_apply_preset_all,
+                    )
 
                 if "sw_strats" not in st.session_state:
                     st.session_state["sw_strats"] = all_strats[:5]
+                else:
+                    st.session_state["sw_strats"] = [
+                        s for s in st.session_state["sw_strats"] if s in all_strats
+                    ]
                 if "sw_syms" not in st.session_state:
                     st.session_state["sw_syms"] = list(SYMBOLS[:3])
                 if "sw_ivs" not in st.session_state:
