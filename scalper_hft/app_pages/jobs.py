@@ -62,12 +62,20 @@ def _jobs_panel() -> None:
         st.info("Черга порожня.")
         return
 
+    # Стейт dataframe-віджета (jobs_table) можна змінювати ЛИШЕ до його
+    # створення в поточному прогоні. Тому «вибрати всі» / «зняти виділення»
+    # (у т.ч. після групових дій) кладуть прапорець jobs_table_preset,
+    # а застосовуємо його тут — перед st.dataframe нижче.
+    jobs_preset = st.session_state.pop("jobs_table_preset", None)
+    if jobs_preset is not None:
+        st.session_state["jobs_table"] = {"selection": {"rows": list(jobs_preset), "columns": []}}
+
     with st.container(horizontal=True, vertical_alignment="center"):
         if st.button("Вибрати всі", icon=":material/select_all:", key="btn_sel_all"):
-            st.session_state["jobs_table"] = {"selection": {"rows": list(range(len(rows))), "columns": []}}
+            st.session_state["jobs_table_preset"] = list(range(len(rows)))
             st.rerun()
         if st.button("Зняти виділення", icon=":material/deselect:", key="btn_clear_sel"):
-            st.session_state["jobs_table"] = {"selection": {"rows": [], "columns": []}}
+            st.session_state["jobs_table_preset"] = []
             st.rerun()
         st.caption(f"Усього задач: {len(rows)}")
 
@@ -121,7 +129,7 @@ def _jobs_panel() -> None:
                         for j in cancellable:
                             js.request_cancel(j.id)
                     st.toast(f"Скасовано задач: {len(cancellable)}", icon="🚫")
-                    st.session_state["jobs_table"] = {"selection": {"rows": [], "columns": []}}
+                    st.session_state["jobs_table_preset"] = []
                     st.rerun()
 
                 if st.button(
@@ -133,7 +141,7 @@ def _jobs_panel() -> None:
                         for j in selected_jobs:
                             js.submit(j.kind, j.params, force=True)
                     st.toast(f"Перезапущено задач: {len(selected_jobs)}", icon="🔄")
-                    st.session_state["jobs_table"] = {"selection": {"rows": [], "columns": []}}
+                    st.session_state["jobs_table_preset"] = []
                     st.rerun()
 
                 if st.button(
@@ -145,11 +153,11 @@ def _jobs_panel() -> None:
                     with JobStore(DEFAULT_JOBS_PATH) as js:
                         count = js.delete_jobs([j.id for j in deletable])
                     st.toast(f"Видалено задач: {count}", icon="🗑️")
-                    st.session_state["jobs_table"] = {"selection": {"rows": [], "columns": []}}
+                    st.session_state["jobs_table_preset"] = []
                     st.rerun()
 
                 if st.button("Зняти виділення", icon=":material/close:", key="bulk_deselect"):
-                    st.session_state["jobs_table"] = {"selection": {"rows": [], "columns": []}}
+                    st.session_state["jobs_table_preset"] = []
                     st.rerun()
 
     ids = [j.id for j in rows]

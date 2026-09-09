@@ -135,7 +135,7 @@ paper-replay реверсує і рахує daily-loss на mark-to-market. Те
 |---|---|---|
 | R1 | `ENABLE_VOL_TARGET` → `PairsEngine` (масштаб ноціоналу `clip(target/realized σ спреду, 0, 1)`). Прапорець читається в `PairsPaperRunner` / `PairsPortfolioRunner` / `PairsLiveRunner`. ERC (`erc_vol_target_sizes`) лишається модулем: у `VALIDATED_PAIRS` одна пара | ✅ код |
 | R2 | `max_leverage` cap + опційний vol-target у `run_backtest`; `run_strategy_backtest` підставляє `MAX_LEVERAGE` / `VOL_TARGET_ANN` з settings (CLI/jobs/WF/sweep) | ✅ код |
-| R3 | Partial-fill політика `cancel\|wait` (`PARTIAL_FILL_POLICY`); IntentStore ключ містить бар/ts | ✅ код |
+| R3 | Partial-fill політика cancel/wait (`PARTIAL_FILL_POLICY`); IntentStore ключ містить бар/ts | ✅ код |
 | R4 | Capability contract: `needs_trades`/`needs_funding` → `MissingDataError` замість тихої деградації. `requires = {basket, l2, multi_symbol}` — ще відкрито (`sparse_basket` без кошика, `cross_momentum` на 1 символі) | ⏳ trades/funding ✅; basket/l2 🔜 |
 
 ### 5.3 — Мультифакторна режимна система
@@ -153,7 +153,7 @@ paper-replay реверсує і рахує daily-loss на mark-to-market. Те
 ### 5.5 — Live gate (без змін)
 
 Paper Gate ≥8 тижнів на конфігурації LINK/BTC 1h maker + regime_scale(0.25)
-+ vol-target sizing (після 5.2). Live — тільки після Gate і явного запиту.
++ vol-target sizing (`ENABLE_VOL_TARGET`). Live — тільки після Gate і явного запиту.
 
 ---
 
