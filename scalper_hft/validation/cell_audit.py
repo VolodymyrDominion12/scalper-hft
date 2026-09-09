@@ -45,6 +45,10 @@ SMOOTHNESS_MIN = 0.30
 PBO_MAX = 0.5
 DSR_BACKTESTS_PER_COMBO = 50
 CSCV_VARIANTS = 20  # варіантів параметрів для PBO у audit_cell (with_cscv=True)
+# AFML Ch.7/11: ненульовий purge/embargo за замовчуванням — 1% OOS-вікна
+# (мін. 1 бар). 0 лишає аудит «AFML-shaped, але не AFML-strict»: позиції,
+# що перетинають межу train/test, змішують IS і OOS метрики.
+DEFAULT_PURGE_EMBARGO_FRAC = 0.01
 
 _SUMMARY_KEYS = (
     "symbol",
@@ -101,6 +105,16 @@ def resolve_wf_windows(
 def min_trades_for(interval: str) -> int:
     """Мінімум угод для статистичної значущості на цьому ТФ."""
     return MIN_TRADES.get(interval, DEFAULT_MIN_TRADES)
+
+
+def default_purge_embargo(test_bars: int) -> tuple[int, int]:
+    """AFML-дефолт purge/embargo для audit_cell: max(1, 1% OOS-вікна).
+
+    Явний 0 у audit_cell вимикає прогін/ембарго (зворотна сумісність для
+    відтворення старих прогонів); None = узяти цей дефолт.
+    """
+    pe = max(1, int(round(test_bars * DEFAULT_PURGE_EMBARGO_FRAC)))
+    return pe, pe
 
 
 def _window_to_dict(w: WalkForwardWindow) -> dict[str, float | int]:
@@ -269,8 +283,8 @@ def audit_cell(
     test_bars: int | None = None,
     with_cscv: bool = False,
     strategy_params: dict[str, Any] | None = None,
-    purge_bars: int = 0,
-    embargo_bars: int = 0,
+    purge_bars: int | None = None,
+    embargo_bars: int | None = None,
     n_trials_floor: int | None = None,
 ) -> CellAudit:
     """Повний аудит комірки. Помилки даних/рахунку — status=error, без raise.
@@ -280,7 +294,9 @@ def audit_cell(
     вердикту комірки, напр. CLI `overfit`).
     strategy_params: параметри конструктора стратегії (напр. use_kalman).
     purge_bars/embargo_bars: прогін/ембарго між train/test та між OOS-вікнами
-        (AFML Ch.7/11) — щоб лейбли/позиції не змішували IS і OOS. 0 = вимкнено.
+        (AFML Ch.7/11) — щоб лейбли/позиції не змішували IS і OOS.
+        None = дефолт max(1, 1% test-вікна) (default_purge_embargo);
+        явний 0 = вимкнено (лише для відтворення старих прогонів).
     n_trials_floor: мінімальна оцінка числа спроб для DSR (1D). Якщо задано,
         бере max(n_trials_floor, чесна оцінка з журналу/combos) — щоб явна
         вказівка дослідника (--trials) не занижувала DSR-корекцію.
@@ -363,6 +379,11 @@ def audit_cell(
             train = int(train_bars)
         if test_bars is not None:
             test = int(test_bars)
+
+        # AFML-дисципліна за замовчуванням: None → ненульовий purge/embargo
+        d_purge, d_embargo = default_purge_embargo(test)
+        purge_bars = d_purge if purge_bars is None else int(purge_bars)
+        embargo_bars = d_embargo if embargo_bars is None else int(embargo_bars)
 
         wf = run_walk_forward(
             df,
@@ -470,7 +491,7 @@ def audit_cell(
                     funding=funding,
                     position_pct=settings.position_pct,
                 )
-                pbo = float(pbo_cscv(vr, n_blocks=8).pbo)
+                pbo = float(pbo_cscv(vr, n_blocks=8, purge_bars=purge_bars, embargo_bars=embargo_bars).pbo)
             except Exception:  # noqa: BLE001
                 pbo = None
 

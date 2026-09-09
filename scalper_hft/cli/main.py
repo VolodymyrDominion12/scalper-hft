@@ -142,6 +142,18 @@ def main(argv: list[str] | None = None) -> None:
     add_common(p)
     p.add_argument("--train", type=int, default=2000)
     p.add_argument("--test", type=int, default=500)
+    p.add_argument(
+        "--purge-bars",
+        type=int,
+        default=None,
+        help="AFML прогін train→test (барів). За замовч. max(1, 1%% test-вікна); 0 = вимкнути",
+    )
+    p.add_argument(
+        "--embargo-bars",
+        type=int,
+        default=None,
+        help="AFML ембарго між OOS-вікнами (барів). За замовч. max(1, 1%% test-вікна); 0 = вимкнути",
+    )
     p.add_argument("--trials", type=int, default=50, help="Оцінка кількості спроб для DSR")
     p.add_argument("--use-kalman", action="store_true", help="PairsArb: динамічний Kalman hedge ratio")
     p.add_argument("--leg1", default=None, help="Pairs-стратегії: перша нога (для авто pair-вердикту)")
@@ -154,6 +166,18 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--variants", type=int, default=30, help="Кількість випадкових варіантів параметрів")
     p.add_argument("--blocks", type=int, default=8, help="Кількість блоків для розбиття")
     p.add_argument("--max-combos", type=int, default=200, help="Обмеження комбінацій")
+    p.add_argument(
+        "--purge-bars",
+        type=int,
+        default=None,
+        help="AFML purge навколо test-блоків. За замовч. max(1, 1%% ряду); 0 = вимкнути",
+    )
+    p.add_argument(
+        "--embargo-bars",
+        type=int,
+        default=None,
+        help="AFML embargo після test-блоків. За замовч. max(1, 1%% ряду); 0 = вимкнути",
+    )
     p.set_defaults(func=_cli_pkg.cmd_cscv)
 
     p = sub.add_parser(

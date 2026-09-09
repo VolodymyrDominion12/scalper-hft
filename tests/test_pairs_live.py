@@ -129,7 +129,7 @@ def _make_adapter(client: MockExchangeClient | None = None, legging: str = "chas
     adapter = PairsLiveAdapter(
         "AAA",
         "BBB",
-        PairsArb(lookback=20),
+        PairsArb(lookback=20, regime_scale=False),
         acc,
         client=client,
         wait_bars=1,
@@ -375,7 +375,15 @@ def test_taker_rejected_on_init() -> None:
     client = MockExchangeClient()
     acc = PaperAccount(10_000.0, taker_fee=0.0005, maker_fee=0.0002)
     with pytest.raises(ValueError, match="лише maker"):
-        PairsLiveAdapter("AAA", "BBB", PairsArb(lookback=20), acc, client=client, is_maker=False, coint_kill=False)
+        PairsLiveAdapter(
+            "AAA",
+            "BBB",
+            PairsArb(lookback=20, regime_scale=False),
+            acc,
+            client=client,
+            is_maker=False,
+            coint_kill=False,
+        )
 
 
 def test_idempotent_client_order_ids() -> None:

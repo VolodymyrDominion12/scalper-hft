@@ -38,6 +38,8 @@ def cmd_overfit(args: argparse.Namespace) -> None:
         test_bars=args.test,
         with_cscv=True,
         strategy_params=_apply_use_kalman(args, args.param_dict),
+        purge_bars=getattr(args, "purge_bars", None),
+        embargo_bars=getattr(args, "embargo_bars", None),
         n_trials_floor=int(getattr(args, "trials", 0)) or None,
     )
     if audit.status != "ok":
@@ -245,10 +247,13 @@ def cmd_report(args: argparse.Namespace) -> None:
         trades=trades,
         funding=funding,
         position_pct=settings.position_pct,
+        collect_oos_returns=True,
     )
-    ret = res.equity.pct_change().dropna()
+    # DSR на конкатенованих OOS-дохідностях walk-forward (як у audit_cell):
+    # full-sample equity забруднена IS-вікнами і системно завищує DSR.
+    oos_ret = wf.oos_returns.dropna() if wf.oos_returns is not None else pd.Series(dtype=float)
     n_trials = estimate_n_trials(_param_combinations(strategy), args.trials or 1)
-    dsr = deflated_sharpe_ratio(ret.values, n_trials=n_trials)
+    dsr = deflated_sharpe_ratio(oos_ret.values, n_trials=n_trials) if len(oos_ret) >= 2 else 0.0
 
     sens_md = ""
     if strategy.param_space:
@@ -305,9 +310,10 @@ def cmd_report(args: argparse.Namespace) -> None:
 {wf.summary()}
 ```
 
-## Deflated Sharpe
+## Deflated Sharpe (на OOS-дохідностях WF, не full-sample)
 
-- raw Sharpe: {res.metrics.sharpe:.3f}
+- raw Sharpe (full-sample, IS-забруднений): {res.metrics.sharpe:.3f}
+- OOS спостережень: {len(oos_ret)}
 - trials: {n_trials}
 - **DSR: {dsr:.3f}** {"✅ edge значущий" if dsr > 0.95 else "⚠ edge не підтверджено"}
 {sens_md}{quintile_md}{decay_md}
@@ -360,8 +366,22 @@ def cmd_cscv(args: argparse.Namespace) -> None:
         funding=funding,
         position_pct=settings.position_pct,
     )
-    res = pbo_cscv(returns, n_blocks=args.blocks, threshold=0.0, max_combos=args.max_combos)
+    # AFML-дисципліна за замовчуванням: purge/embargo = 1% довжини ряду
+    # (мін. 1 бар); явний 0 через --purge-bars/--embargo-bars вимикає.
+    n_bars = int(returns.shape[1])
+    auto_pe = max(1, n_bars // 100)
+    purge_bars = auto_pe if getattr(args, "purge_bars", None) is None else int(args.purge_bars)
+    embargo_bars = auto_pe if getattr(args, "embargo_bars", None) is None else int(args.embargo_bars)
+    res = pbo_cscv(
+        returns,
+        n_blocks=args.blocks,
+        threshold=0.0,
+        max_combos=args.max_combos,
+        purge_bars=purge_bars,
+        embargo_bars=embargo_bars,
+    )
     print("\n" + res.summary())
+    print(f"(purge={purge_bars}, embargo={embargo_bars} барів навколо test-блоків)")
 
 
 def cmd_experiments(args: argparse.Namespace) -> None:

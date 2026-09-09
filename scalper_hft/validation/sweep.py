@@ -491,6 +491,52 @@ def run_sweep(
     return result_df
 
 
+def sweep_winners_haircut(df: pd.DataFrame) -> pd.DataFrame:
+    """Переможці per interval з Bailey–López de Prado selection haircut.
+
+    Вибір найкращої клітинки серед N кандидатів = максимізація по N, що
+    завищує очікуваний Sharpe на sqrt(V[SR])·z(N) (portfolio-level multiple
+    testing). Для кожного інтервалу повертає спостережуваний Sharpe переможця,
+    haircut SR0 (очікуваний максимум N iid кандидатів) і зістрижений
+    (deflated) Sharpe. `survives=False` → переможець не відрізняється від
+    випадкового максимуму — не просувати його далі без додаткових доказів.
+
+    Метрика: avg_oos_sharpe (walkforward), інакше sharpe (backtest-режим).
+    """
+    from scalper_hft.validation.deflated_sharpe import selection_haircut
+
+    rows: list[dict[str, Any]] = []
+    if df.empty or "status" not in df.columns:
+        return pd.DataFrame(rows)
+    ok = df[df["status"] == "ok"]
+    for iv, grp in ok.groupby("interval"):
+        metric = "avg_oos_sharpe"
+        if metric not in grp.columns or grp[metric].notna().sum() < 2:
+            metric = "sharpe"
+        if metric not in grp.columns:
+            continue
+        cand = grp.dropna(subset=[metric])
+        if cand.empty:
+            continue
+        sharpes = cand[metric].astype(float).tolist()
+        best_idx, sr0, deflated = selection_haircut(sharpes, n_trials=len(cand))
+        best = cand.iloc[best_idx]
+        rows.append(
+            {
+                "interval": iv,
+                "metric": metric,
+                "winner_strategy": best["strategy"],
+                "winner_symbol": best["symbol"],
+                "winner_sharpe": float(best[metric]),
+                "selection_sr0": float(sr0),
+                "deflated_sharpe": float(deflated),
+                "survives_haircut": bool(deflated > 0.0),
+                "n_candidates": int(len(cand)),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def save_sweep_report(df: pd.DataFrame, out_csv: str | None = None, out_md: str | None = None) -> None:
     """Зберегти результати sweep у CSV і короткий markdown-звіт."""
     from pathlib import Path
@@ -505,6 +551,21 @@ def save_sweep_report(df: pd.DataFrame, out_csv: str | None = None, out_md: str 
         md = ["# Sweep: стратегії × символи × таймфрейми", ""]
         md.append(f"- клітинок: {len(df)} (ok: {len(ok)}, помилок: {(df['status'] != 'ok').sum()})")
         md.append("")
+        winners = sweep_winners_haircut(df)
+        if not winners.empty:
+            md.append("## Переможці per interval (Bailey–LdP selection haircut)")
+            md.append("")
+            md.append(
+                "> `deflated` = Sharpe переможця − очікуваний максимум N випадкових кандидатів; "
+                "`survives=False` → «найкращий» не відрізняється від випадкового максимуму."
+            )
+            md.append("")
+            wv = winners.copy()
+            for c in ["winner_sharpe", "selection_sr0", "deflated_sharpe"]:
+                wv[c] = wv[c].map(lambda v: f"{v:+.3f}")
+            wv["survives_haircut"] = wv["survives_haircut"].map(lambda v: "✅" if v else "⚠")
+            md.append(wv.to_markdown(index=False))
+            md.append("")
         for iv in sorted(df["interval"].unique(), key=lambda x: (len(x), x)):
             sub = ok[ok["interval"] == iv]
             if sub.empty:
@@ -543,6 +604,7 @@ __all__ = [
     "SweepStore",
     "run_sweep",
     "save_sweep_report",
+    "sweep_winners_haircut",
     "default_strategies",
     "DEFAULT_INTERVALS",
     "execute_sweep_cell",

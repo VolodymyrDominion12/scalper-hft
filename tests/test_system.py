@@ -459,7 +459,7 @@ def test_pairs_accounting():
     f1 = pd.DataFrame({"fundingRate": [0.0005]}, index=[idx[100], idx[250], idx[400]])
     f2 = pd.DataFrame({"fundingRate": [0.0005]}, index=[idx[100], idx[250], idx[400]])
     # ratio=log(leg1/leg2) зростає → z стає високим → pos=+1 (шорт leg1/лонг leg2) → втрачає
-    s = PairsArb(entry_z=1.5, exit_z=0.1, lookback=60)
+    s = PairsArb(entry_z=1.5, exit_z=0.1, lookback=60, regime_scale=False)
     res = run_pairs_backtest(leg1, leg2, s, f1, f2, position_pct=1.0, cost=CostModel(0, 0, 0))
     # спред-втрата: ratio зріс ≈ log(100.998/100) ≈ 0.01 → шорт leg1 втрачає ≈ 1%
     # funding: leg1 short отримує +0.0005×3; leg2 long платить -0.0005×3 → нетто 0
@@ -486,8 +486,8 @@ def test_pairs_portfolio_combines():
         "C": make(50.0, 0.0005),
     }
     configs = [
-        {"leg1": "A", "leg2": "B", "strategy": PairsArb(entry_z=1.5, exit_z=0.1, lookback=60)},
-        {"leg1": "C", "leg2": "B", "strategy": PairsArb(entry_z=1.5, exit_z=0.1, lookback=60)},
+        {"leg1": "A", "leg2": "B", "strategy": PairsArb(entry_z=1.5, exit_z=0.1, lookback=60, regime_scale=False)},
+        {"leg1": "C", "leg2": "B", "strategy": PairsArb(entry_z=1.5, exit_z=0.1, lookback=60, regime_scale=False)},
     ]
     res = run_pairs_portfolio(data, configs, weights=[0.5, 0.5], position_pct=1.0, cost=CostModel(0, 0, 0))
     assert len(res.pair_equities) == 2

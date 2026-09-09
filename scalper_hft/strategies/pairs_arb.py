@@ -18,6 +18,12 @@
     hmm_vol_gate    : bool = False — відключає входи у HMM-стані max-волатильності
                       (state 2 при n_states=3). М'якше за hmm_reversion: лише
                       найгірший стан блокується.
+    regime_scale    : bool = True — масштабує експозицію входу за режимом leg2
+                      (high-vol/trend → ×factor). Дефолт увімкнено з версії 1.3:
+                      iter6/6b (CSCV PBO=0.000, Calmar пік при factor=0.25,
+                      maxDD ≈ вдвічі менший на всіх парах, див.
+                      docs/reports/iter6_regime_scale.md) і VALIDATED_PAIRS
+                      у live/pairs_runner.py використовують саме цю конфігурацію.
 """
 
 from __future__ import annotations
@@ -50,8 +56,8 @@ class PairsArb(Strategy):
         kalman_q: float = 1e-5,
         kalman_r: float = 1e-3,
         dynamic_half_life: bool = False,
-        regime_scale: bool = False,
-        regime_scale_factor: float = 0.5,
+        regime_scale: bool = True,
+        regime_scale_factor: float = 0.25,
     ) -> None:
         super().__init__(
             entry_z=entry_z,
@@ -133,8 +139,8 @@ class PairsArb(Strategy):
             sig = self._apply_hmm_vol_gate(sig, df)
 
         # ── Regime-scale: масштабуємо силу сигналу за режимом leg2 ──
-        if bool(self.get("regime_scale", False)):
-            factor = float(self.get("regime_scale_factor", 0.5))
+        if bool(self.get("regime_scale", True)):
+            factor = float(self.get("regime_scale_factor", 0.25))
             sig = self._apply_regime_scale(sig, df, factor=factor)
 
         return sig

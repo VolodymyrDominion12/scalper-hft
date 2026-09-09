@@ -112,7 +112,7 @@ def test_pairs_arb_betas_reset_on_early_return() -> None:
     leg2 = pd.Series(50 + np.cumsum(np.random.default_rng(2).normal(0, 0.1, n)), index=idx)
     good = pd.DataFrame({"leg1": leg1, "leg2": leg2})
 
-    strat = PairsArb()
+    strat = PairsArb(regime_scale=False)
     strat.generate_signals(good)
     assert strat.betas is not None
 

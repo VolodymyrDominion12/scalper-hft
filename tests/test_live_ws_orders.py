@@ -324,7 +324,7 @@ def test_trader_user_stream_lifecycle() -> None:
 
 def test_pairs_engine_ws_fill_chase() -> None:
     account = PaperAccount(initial_capital=10_000.0)
-    engine = PairsEngine("XRPUSDT", "BTCUSDT", PairsArb(), account, is_maker=True)
+    engine = PairsEngine("XRPUSDT", "BTCUSDT", PairsArb(regime_scale=False), account, is_maker=True)
 
     now = pd.Timestamp.now(tz="UTC").tz_localize(None)
     o1 = PairsPendingOrder(
@@ -377,7 +377,7 @@ def test_pairs_engine_ws_fill_chase() -> None:
 
 def test_pairs_engine_ws_fill_strict_both() -> None:
     account = PaperAccount(initial_capital=10_000.0)
-    engine = PairsEngine("XRPUSDT", "BTCUSDT", PairsArb(), account, is_maker=True)
+    engine = PairsEngine("XRPUSDT", "BTCUSDT", PairsArb(regime_scale=False), account, is_maker=True)
     engine.legging_mode = "strict_both"
 
     now = pd.Timestamp.now(tz="UTC").tz_localize(None)

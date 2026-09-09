@@ -53,7 +53,7 @@ def _engine(max_dd: float = 0.10):
     eng = PairsEngine(
         "AAA",
         "BBB",
-        PairsArb(lookback=20),
+        PairsArb(lookback=20, regime_scale=False),
         acc,
         wait_bars=1,
         is_maker=True,

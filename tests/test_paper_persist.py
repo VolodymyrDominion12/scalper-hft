@@ -61,12 +61,12 @@ def test_store_runtime_roundtrip(tmp_path: Path) -> None:
 
 def test_engine_pending_survives_snapshot() -> None:
     acc = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
-    eng = PairsEngine("AAA", "BBB", PairsArb(lookback=20), acc, wait_bars=1, is_maker=True)
+    eng = PairsEngine("AAA", "BBB", PairsArb(lookback=20, regime_scale=False), acc, wait_bars=1, is_maker=True)
     ts0 = pd.Timestamp("2025-01-01 00:00")
     assert "quoted" in eng.on_bar(ts0, 101, 99, 100, 51, 49, 50, signal=1)
     snap = eng.to_snapshot()
     acc2 = PaperAccount.from_snapshot(acc.to_snapshot())
-    eng2 = PairsEngine("AAA", "BBB", PairsArb(lookback=20), acc2, wait_bars=1, is_maker=True)
+    eng2 = PairsEngine("AAA", "BBB", PairsArb(lookback=20, regime_scale=False), acc2, wait_bars=1, is_maker=True)
     eng2.apply_snapshot(snap)
     assert eng2.pending is not None
     assert eng2.last_bar_ts == ts0
@@ -101,7 +101,7 @@ def test_control_invalid_json_pauses(tmp_path: Path) -> None:
 
 def test_no_new_entries_blocks_entry_not_exit() -> None:
     acc = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
-    eng = PairsEngine("AAA", "BBB", PairsArb(lookback=20), acc, wait_bars=1)
+    eng = PairsEngine("AAA", "BBB", PairsArb(lookback=20, regime_scale=False), acc, wait_bars=1)
     eng.control_block_entries = True
     ts = pd.Timestamp("2025-03-01")
     msg = eng.on_bar(ts, 101, 99, 100, 51, 49, 50, signal=1)

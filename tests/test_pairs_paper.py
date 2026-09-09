@@ -51,7 +51,7 @@ def test_pair_size_pct_portfolio_cap():
 
 def test_engine_fills_both_legs_or_none():
     acc = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
-    eng = PairsEngine("AAA", "BBB", PairsArb(lookback=20), acc, wait_bars=1, is_maker=True)
+    eng = PairsEngine("AAA", "BBB", PairsArb(lookback=20, regime_scale=False), acc, wait_bars=1, is_maker=True)
     ts0 = pd.Timestamp("2025-01-01 00:00")
     ts1 = pd.Timestamp("2025-01-01 01:00")
     # сигнал +1 → quote на close 100/50
@@ -73,9 +73,13 @@ def test_engine_fills_both_legs_or_none():
 def test_engine_fractional_signal_scales_notional():
     """regime_scale: дробовий сигнал 0.5 → butціонал входу вдвічі менший за сигнал 1.0."""
     acc_full = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
-    eng_full = PairsEngine("AAA", "BBB", PairsArb(lookback=20), acc_full, wait_bars=1, is_maker=True)
+    eng_full = PairsEngine(
+        "AAA", "BBB", PairsArb(lookback=20, regime_scale=False), acc_full, wait_bars=1, is_maker=True
+    )
     acc_half = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
-    eng_half = PairsEngine("AAA", "BBB", PairsArb(lookback=20), acc_half, wait_bars=1, is_maker=True)
+    eng_half = PairsEngine(
+        "AAA", "BBB", PairsArb(lookback=20, regime_scale=False), acc_half, wait_bars=1, is_maker=True
+    )
     ts0 = pd.Timestamp("2025-01-01 00:00")
     ts1 = pd.Timestamp("2025-01-01 01:00")
     # quote з повним та половинним сигналом
@@ -97,9 +101,9 @@ def test_engine_fractional_signal_scales_notional():
 def test_engine_integer_signal_backward_compat():
     """Цілий сигнал 1 (int) → той самий butціонал, що й 1.0 (float) — backward compat."""
     acc_i = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
-    eng_i = PairsEngine("AAA", "BBB", PairsArb(lookback=20), acc_i, wait_bars=1, is_maker=True)
+    eng_i = PairsEngine("AAA", "BBB", PairsArb(lookback=20, regime_scale=False), acc_i, wait_bars=1, is_maker=True)
     acc_f = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
-    eng_f = PairsEngine("AAA", "BBB", PairsArb(lookback=20), acc_f, wait_bars=1, is_maker=True)
+    eng_f = PairsEngine("AAA", "BBB", PairsArb(lookback=20, regime_scale=False), acc_f, wait_bars=1, is_maker=True)
     ts0 = pd.Timestamp("2025-01-01 00:00")
     ts1 = pd.Timestamp("2025-01-01 01:00")
     eng_i.on_bar(ts0, 101, 99, 100, 51, 49, 50, signal=1)  # int
@@ -113,7 +117,7 @@ def test_engine_integer_signal_backward_compat():
 
 def test_engine_unfilled_when_gap_against():
     acc = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
-    eng = PairsEngine("AAA", "BBB", PairsArb(lookback=20), acc, wait_bars=1, is_maker=True)
+    eng = PairsEngine("AAA", "BBB", PairsArb(lookback=20, regime_scale=False), acc, wait_bars=1, is_maker=True)
     ts0 = pd.Timestamp("2025-01-01 00:00")
     ts1 = pd.Timestamp("2025-01-01 01:00")
     eng.on_bar(ts0, 101, 99, 100, 51, 49, 50, signal=1)
@@ -127,7 +131,7 @@ def test_engine_unfilled_when_gap_against():
 
 def test_losing_months_block_new_opens():
     acc = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
-    eng = PairsEngine("AAA", "BBB", PairsArb(lookback=20), acc, wait_bars=1)
+    eng = PairsEngine("AAA", "BBB", PairsArb(lookback=20, regime_scale=False), acc, wait_bars=1)
     eng.losing_months = 2
     ts = pd.Timestamp("2025-03-01")
     msg = eng.on_bar(ts, 101, 99, 100, 51, 49, 50, signal=1)
@@ -163,7 +167,7 @@ def test_replay_mean_reversion_opens_two_legs():
         "BTCUSDT",
         df1,
         df2,
-        strategy=PairsArb(entry_z=1.5, exit_z=0.2, lookback=24),
+        strategy=PairsArb(entry_z=1.5, exit_z=0.2, lookback=24, regime_scale=False),
         account=acc,
         wait_bars=1,
         is_maker=True,
@@ -179,7 +183,7 @@ def test_replay_mean_reversion_opens_two_legs():
 
 def test_portfolio_block_entries_blocks_open() -> None:
     acc = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
-    eng = PairsEngine("AAA", "BBB", PairsArb(lookback=20), acc, wait_bars=1, coint_kill=False)
+    eng = PairsEngine("AAA", "BBB", PairsArb(lookback=20, regime_scale=False), acc, wait_bars=1, coint_kill=False)
     eng.portfolio_block_entries = True
     ts = pd.Timestamp("2025-03-01")
     msg = eng.on_bar(ts, 101, 99, 100, 51, 49, 50, signal=1)
@@ -189,7 +193,7 @@ def test_portfolio_block_entries_blocks_open() -> None:
 
 def test_markout_logged_on_next_bar() -> None:
     acc = PaperAccount(10_000.0, taker_fee=0.0, maker_fee=0.0)
-    eng = PairsEngine("AAA", "BBB", PairsArb(lookback=20), acc, wait_bars=1, coint_kill=False)
+    eng = PairsEngine("AAA", "BBB", PairsArb(lookback=20, regime_scale=False), acc, wait_bars=1, coint_kill=False)
     ts0 = pd.Timestamp("2025-01-01 00:00")
     ts1 = pd.Timestamp("2025-01-01 01:00")
     ts2 = pd.Timestamp("2025-01-01 02:00")
@@ -218,7 +222,7 @@ def test_portfolio_should_halt_on_daily_loss() -> None:
 
 def test_pairs_engine_cancel_pending():
     acc = PaperAccount(10_000.0)
-    eng = PairsEngine("AAA", "BBB", PairsArb(lookback=20), acc, wait_bars=1, coint_kill=False)
+    eng = PairsEngine("AAA", "BBB", PairsArb(lookback=20, regime_scale=False), acc, wait_bars=1, coint_kill=False)
     ts0 = pd.Timestamp("2025-01-01 00:00")
     eng.on_bar(ts0, 101, 99, 100, 51, 49, 50, signal=1)
     assert eng.pending is not None

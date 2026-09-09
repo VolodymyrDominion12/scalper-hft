@@ -319,8 +319,8 @@ class TestErc:
 
         data = {"A": _make_klines(300, seed=1), "B": _make_klines(300, seed=2), "C": _make_klines(300, seed=3)}
         cfg = [
-            {"leg1": "A", "leg2": "B", "strategy": PairsArb(entry_z=2.0, exit_z=0.3, lookback=60)},
-            {"leg1": "B", "leg2": "C", "strategy": PairsArb(entry_z=2.0, exit_z=0.3, lookback=60)},
+            {"leg1": "A", "leg2": "B", "strategy": PairsArb(entry_z=2.0, exit_z=0.3, lookback=60, regime_scale=False)},
+            {"leg1": "B", "leg2": "C", "strategy": PairsArb(entry_z=2.0, exit_z=0.3, lookback=60, regime_scale=False)},
         ]
         res = run_pairs_portfolio(data, cfg, position_pct=0.1, cost=CostModel(), method="erc", turnover_rate=0.0005)
         assert res.metrics is not None
