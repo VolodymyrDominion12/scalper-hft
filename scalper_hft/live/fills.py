@@ -20,7 +20,7 @@ import numpy as np
 class FillDecision:
     filled: bool
     fill_price: float
-    reason: str  # filled | unfilled_no_touch | timeout | pending
+    reason: str  # filled | unfilled_no_touch | unfilled_prob | unfilled_partial | timeout | pending
 
 
 def post_only_touched(side: str, limit_price: float, high: float, low: float) -> bool:

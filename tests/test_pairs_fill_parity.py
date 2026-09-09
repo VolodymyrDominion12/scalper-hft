@@ -113,7 +113,7 @@ def test_pairs_engine_backtest_fill_decisions_match() -> None:
     def _noop_fills(*args: object, **kwargs: object) -> None:
         return None
 
-    eng._apply_fills = _noop_fills
+    setattr(eng, "_apply_fills", _noop_fills)
 
     target = (signals.astype(float).shift(1).fillna(0.0).clip(-1, 1) * position_pct).to_numpy()
     actual = np.zeros(len(common))

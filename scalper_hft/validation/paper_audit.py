@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from scalper_hft.config import get_settings
 from scalper_hft.live.store import PaperStore
 from scalper_hft.validation.forensics import ForensicsReport, analyze_trades, trades_from_paper_frames
 
@@ -32,10 +33,12 @@ class PaperAudit:
         bt = "—" if self.bt_return is None else f"{self.bt_return:+.2%}"
         dd = "—" if self.dd_gate_ok is None else ("ok" if self.dd_gate_ok else "FAIL")
         fill = "—" if self.fill_gap is None else f"{self.fill_gap:+.1%}"
+
+        seed = get_settings().maker_fill_seed
         return (
             f"Paper audit: bars={self.n_bars} paper={self.paper_return:+.2%} bt={bt}\n"
             f"  tracking-error={te} maxDD paper={self.paper_max_dd:.2%} gate={dd}\n"
-            f"  fill-rate paper={self.paper_fill_rate:.0%} gap={fill}\n"
+            f"  fill-rate paper={self.paper_fill_rate:.0%} gap={fill} MAKER_FILL_SEED={seed}\n"
             f"  {self.forensics.summary()}"
         )
 
