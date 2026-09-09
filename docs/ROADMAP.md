@@ -129,12 +129,14 @@ paper-replay реверсує і рахує daily-loss на mark-to-market. Те
 | V3 | `sweep_winners_haircut()` + секція у `save_sweep_report`: переможець per interval з Bailey–LdP selection haircut (`survives=False` → випадковий максимум) | ✅ код |
 | V4 | `pairs_arb` v1.3: дефолт = валідована конфігурація iter6b (`regime_scale=True`, `factor=0.25`; CSCV PBO=0.000); spec YAML синхронізовано; engine-тести ізольовані явним `regime_scale=False` | ✅ код |
 
-### 5.2 — Живий ризик-шар (наступний цикл)
+### 5.2 — Живий ризик-шар (код цього циклу) ✅
 
-1. Підключити `portfolio/sizing.py:erc_vol_target_sizes` / `risk_budget` у paper-runner — прапорець `enable_vol_target` у `pairs_runner.py` зараз читається, але ніколи не використовується.
-2. `max_leverage` cap у векторному бектест-рушії (задокументовано, не реалізовано) + опційний vol-target sizing у `run_backtest`.
-3. Partial-fill політика конфігурованою (`cancel|wait|requote`, зараз — завжди cancel залишку); ключ IntentStore додати bar/ts (колізії паралельних інтентів).
-4. Capability contract стратегій: `requires = {"basket", "l2", "multi_symbol"}` → fail-fast замість тихої деградації (`sparse_basket` без кошика → односерійний z-score; `cross_momentum` на 1 символі → TS-моментум).
+| ID | Що | Статус |
+|---|---|---|
+| R1 | `ENABLE_VOL_TARGET` → `PairsEngine` (масштаб ноціоналу `clip(target/realized σ спреду, 0, 1)`). Прапорець читається в `PairsPaperRunner` / `PairsPortfolioRunner` / `PairsLiveRunner`. ERC (`erc_vol_target_sizes`) лишається модулем: у `VALIDATED_PAIRS` одна пара | ✅ код |
+| R2 | `max_leverage` cap + опційний vol-target у `run_backtest`; `run_strategy_backtest` підставляє `MAX_LEVERAGE` / `VOL_TARGET_ANN` з settings (CLI/jobs/WF/sweep) | ✅ код |
+| R3 | Partial-fill політика `cancel\|wait` (`PARTIAL_FILL_POLICY`); IntentStore ключ містить бар/ts | ✅ код |
+| R4 | Capability contract: `needs_trades`/`needs_funding` → `MissingDataError` замість тихої деградації. `requires = {basket, l2, multi_symbol}` — ще відкрито (`sparse_basket` без кошика, `cross_momentum` на 1 символі) | ⏳ trades/funding ✅; basket/l2 🔜 |
 
 ### 5.3 — Мультифакторна режимна система
 
@@ -177,5 +179,5 @@ Paper Gate ≥8 тижнів на конфігурації LINK/BTC 1h maker + r
 | 3 | ML meta-labeling, CFI, micro-price, sparse basket, stress/cohort валідація | ✅ Реалізовано в коді |
 | 4 | L2 Tardis дані, черга лімітних ордерів, live під реальний капітал | 🔜 Наступний етап |
 | 5.1 | AFML purge/embargo дефолти; DSR на OOS у report; haircut у sweep; pairs_arb v1.3 дефолти | ✅ Код цього циклу |
-| 5.2 | risk_budget/ERC sizing у live-циклі; max_leverage у рушії; partial-fill політика | 🔜 Наступний цикл |
+| 5.2 | vol-target у paper-циклі; max_leverage у рушії/роутері; partial-fill cancel\|wait | ✅ Код цього циклу (basket/l2 contract — 5.2 R4) |
 | 5.3 | preferred_regimes з regime_map; supervisor на haircut-рострі; ML CPCV | 🔜 |

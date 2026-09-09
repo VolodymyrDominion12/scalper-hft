@@ -74,7 +74,8 @@ uv run python -m scalper_hft.cli job worker --jobs 2
 
 ## Сторінки
 
-Навігація зліва: Моніторинг, Бектест, Дослідження, Research Hub, Задачі, Довідка.
+Навігація зліва: Моніторинг, Live / WebSocket, Multi-Exchange, Бектест,
+Дослідження, Research Hub, Задачі, Довідка.
 
 ### Моніторинг
 

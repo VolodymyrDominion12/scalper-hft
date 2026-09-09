@@ -78,13 +78,17 @@ def test_job_open_target_routes() -> None:
     )
     assert page.endswith("research.py")
     assert upd[RESEARCH_SECTION] == "Аудит комірки"
+    assert upd[RESEARCH_SECTION] in RESEARCH_SECTIONS
     page_bt, upd_bt = job_open_target(
         "pairs", {"strategy": "pairs_arb", "leg1": "XRPUSDT", "leg2": "BTCUSDT", "interval": "1h", "days": 90}
     )
     assert page_bt.endswith("backtest.py")
     assert upd_bt[RESEARCH_BT_PREFILL]["pair"] == "XRPUSDT/BTCUSDT"
     page_sw, upd_sw = job_open_target("sweep", {"strategies": ["a"], "symbols": ["BTCUSDT"], "intervals": ["1h"]})
-    assert upd_sw[RESEARCH_SECTION] == "Sweep matrix"
+    # Розділ перейменовано «Sweep matrix» → «Масовий пошук»: target має бути
+    # валідним у RESEARCH_SECTIONS, інакше «Відкрити результат» веде нікуди.
+    assert upd_sw[RESEARCH_SECTION] == "Масовий пошук"
+    assert upd_sw[RESEARCH_SECTION] in RESEARCH_SECTIONS
     assert page_sw.endswith("research.py")
 
 
@@ -311,3 +315,71 @@ def test_apply_research_prefill_max_days_730() -> None:
         {"strategy": "mean_reversion", "symbol": "BTCUSDT", "interval": "1h", "days": 730},
     )
     assert rs_state["rs_days"] == 730
+
+
+def test_jobs_bulk_actions_logic(tmp_path: Path) -> None:
+    store = JobStore(tmp_path / "jobs.sqlite")
+    j1 = store.submit("backtest", {"p": 1})  # queued
+    j2 = store.submit("backtest", {"p": 2})  # will be running
+    store._conn.execute("UPDATE jobs SET status='running' WHERE id=?", (j2.id,))
+    j3 = store.submit("backtest", {"p": 3})  # will be succeeded
+    store._conn.execute("UPDATE jobs SET status='running' WHERE id=?", (j3.id,))
+    store.finish(j3.id, "succeeded")
+    j4 = store.submit("backtest", {"p": 4})  # queued
+
+    all_jobs = store.list_jobs(limit=10)
+    assert len(all_jobs) == 4
+
+    # Select j1, j2, j3
+    selected = [j for j in all_jobs if j.id in {j1.id, j2.id, j3.id}]
+    cancellable = [j for j in selected if j.status in {"queued", "running"}]
+    deletable = [j for j in selected if j.status != "running"]
+
+    # Check partition
+    assert {j.id for j in cancellable} == {j1.id, j2.id}
+    assert {j.id for j in deletable} == {j1.id, j3.id}
+
+    # Bulk cancel
+    for j in cancellable:
+        store.request_cancel(j.id)
+
+    # j1 should now be cancelled, j2 should have cancel_requested=1
+    upd1 = store.get(j1.id)
+    upd2 = store.get(j2.id)
+    assert upd1 is not None and upd1.status == "cancelled"
+    assert upd2 is not None and upd2.cancel_requested is True
+
+    # Bulk rerun on j1
+    re_j1 = store.submit(j1.kind, j1.params, force=True)
+    assert re_j1.status == "queued"
+
+    # Bulk delete terminal jobs (j3)
+    deleted_count = store.delete_jobs([j3.id, j2.id])  # j2 is running, must not be deleted
+    assert deleted_count == 1
+    assert store.get(j3.id) is None
+    assert store.get(j2.id) is not None
+
+    store.close()
+
+
+def test_jobs_page_apptest_selection() -> None:
+    from streamlit.testing.v1 import AppTest
+
+    script_path = Path(__file__).resolve().parent.parent / "scalper_hft" / "app_pages" / "jobs.py"
+    at = AppTest.from_file(str(script_path)).run()
+    assert not at.exception
+    # Should contain selection buttons
+    button_labels = [b.label for b in at.button]
+    assert "Вибрати всі" in button_labels
+    assert "Зняти виділення" in button_labels
+
+    # Simulate selecting 2 rows
+    at.session_state["jobs_table"] = {"selection": {"rows": [0, 1], "columns": []}}
+    at.run()
+    assert not at.exception
+    active_buttons = [b.label for b in at.button]
+    assert any("Скасувати вибрані" in lbl for lbl in active_buttons)
+    assert any("Перезапустити вибрані" in lbl for lbl in active_buttons)
+    assert any("Видалити вибрані" in lbl for lbl in active_buttons)
+
+

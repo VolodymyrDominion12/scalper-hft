@@ -1,11 +1,10 @@
-"""Портфельне позиціонування: ERC + vol-targeting для live (Phase 2D).
+"""Портфельне позиціонування: ERC + vol-targeting (Phase 2D / 5.2).
 
-Regime-scaled sizing через risk/portfolio layer: ERC-ваги (рівний внесок у
-ризик) × vol-target scale (цільова портфельна волатильність) прив'язані до
-supervisor ваг. Замість фіксованого position_pct — розмір залежить від
-впевненості (regime) та волатильності.
-
-Використовується live/pairs_runner при enable_vol_target=True.
+`erc_vol_target_sizes` — ERC-ваги × vol-target для N стратегій/символів
+(supervisor / майбутній мультипарний портфель). Paper pairs зараз має одну
+валідовану пару, тому live-цикл використовує per-pair spread vol-target у
+`PairsEngine` (не ERC). Прапорець `ENABLE_VOL_TARGET` резолвиться через
+`resolve_vol_target_ann` і передається в рушій як річна ціль σ спреду.
 """
 
 from __future__ import annotations
@@ -82,4 +81,22 @@ def regime_scaled_size(
     return float(base_size) * mult
 
 
-__all__ = ["erc_vol_target_sizes", "regime_scaled_size"]
+def resolve_vol_target_ann(
+    explicit: float | None,
+    *,
+    enabled: bool,
+    target: float,
+) -> float | None:
+    """Резолв річної цілі vol-target для рушія.
+
+    Явний `explicit` (включно з 0.0) завжди перемагає. Інакше: якщо
+    `enabled` — `target`, якщо ні — None (фіксований size_pct / position_pct).
+    """
+    if explicit is not None:
+        return float(explicit)
+    if not enabled:
+        return None
+    return float(target)
+
+
+__all__ = ["erc_vol_target_sizes", "regime_scaled_size", "resolve_vol_target_ann"]

@@ -10,7 +10,7 @@ from scalper_hft.features.cross_section import (
     cross_section_zscore,
 )
 from scalper_hft.ml.factor_stack import factor_stack
-from scalper_hft.portfolio.sizing import erc_vol_target_sizes, regime_scaled_size
+from scalper_hft.portfolio.sizing import erc_vol_target_sizes, regime_scaled_size, resolve_vol_target_ann
 
 
 def _prices(n: int = 200, k: int = 5, seed: int = 0) -> pd.DataFrame:
@@ -88,3 +88,13 @@ def test_regime_scaled_size() -> None:
     # max_scale clip
     s2 = regime_scaled_size(1.0, 1.0, vol_scale=2.0, max_scale=1.5)
     assert s2 == 1.5
+
+
+def test_resolve_vol_target_ann_explicit_wins() -> None:
+    assert resolve_vol_target_ann(0.08, enabled=False, target=0.10) == 0.08
+    assert resolve_vol_target_ann(0.0, enabled=True, target=0.10) == 0.0
+
+
+def test_resolve_vol_target_ann_flag_gate() -> None:
+    assert resolve_vol_target_ann(None, enabled=False, target=0.10) is None
+    assert resolve_vol_target_ann(None, enabled=True, target=0.10) == 0.10

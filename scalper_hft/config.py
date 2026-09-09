@@ -110,9 +110,10 @@ class Settings:
     liquidation_proximity_buffer: float = field(
         default_factory=lambda: _env_float("LIQUIDATION_PROXIMITY_BUFFER", 0.10)
     )
-    # Vol-targeting у live/pairs_runner (2D): ERC + vol-target sizing замість
-    # фіксованого position_pct. Дефолт False (зворотна сумісність); вмикати для
-    # regime-scaled sizing прив'язаного до supervisor ваг.
+    # Vol-targeting у paper/live pairs і (опційно) у векторному бектесті:
+    # ноціонал × clip(VOL_TARGET_ANN / realized σ, 0, 1). Дефолт False —
+    # фіксований PAIR_NOTIONAL_PCT / POSITION_PCT. ERC-ваги — окремо, коли
+    # у VALIDATED_PAIRS більше однієї пари.
     enable_vol_target: bool = field(default_factory=lambda: _env_bool("ENABLE_VOL_TARGET", False))
     vol_target_ann: float = field(default_factory=lambda: _env_float("VOL_TARGET_ANN", 0.10))
     max_losing_months: int = field(default_factory=lambda: _env_int("MAX_LOSING_MONTHS", 2))

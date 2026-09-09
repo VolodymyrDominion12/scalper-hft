@@ -76,6 +76,9 @@ class PairsLiveAdapter(PairsEngine):
         max_drift_bps: float = 10.0,
         coint_kill: bool = True,
         intent_store: IntentStore | None = None,
+        vol_target_ann: float | None = None,
+        vol_lookback: int = 168,
+        bars_per_year: float = 8760.0,
     ) -> None:
         super().__init__(
             leg1,
@@ -89,6 +92,9 @@ class PairsLiveAdapter(PairsEngine):
             legging_mode=legging_mode,
             max_drift_bps=max_drift_bps,
             coint_kill=coint_kill,
+            vol_target_ann=vol_target_ann,
+            vol_lookback=vol_lookback,
+            bars_per_year=bars_per_year,
         )
         if not is_maker:
             raise ValueError("PairsLiveAdapter: лише maker (post_only) на вході; taker заборонено")

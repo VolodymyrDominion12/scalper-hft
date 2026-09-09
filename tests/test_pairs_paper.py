@@ -333,3 +333,73 @@ def test_paper_loop_cleanup_on_stop():
     )
     assert len(on_stop_called) == 1
     assert "step_action" in res.actions
+
+
+def test_paper_runner_vol_target_off_by_default() -> None:
+    """ENABLE_VOL_TARGET=false → PairsEngine без vol_target (фіксований size)."""
+    import dataclasses
+
+    from scalper_hft.config import get_settings, set_settings
+    from scalper_hft.live.pairs_runner import PairsPaperRunner
+
+    orig = get_settings()
+    set_settings(dataclasses.replace(orig, enable_vol_target=False, dry_run=True))
+    try:
+        runner = PairsPaperRunner("AAA", "BBB", require_audit=False)
+        assert runner.engine.vol_target_ann is None
+        assert runner.engine._vol_size_mult == 1.0
+    finally:
+        set_settings(orig)
+
+
+def test_paper_runner_wires_enable_vol_target() -> None:
+    """ENABLE_VOL_TARGET=true → одиночний paper-runner передає ціль у PairsEngine."""
+    import dataclasses
+
+    from scalper_hft.config import get_settings, set_settings
+    from scalper_hft.live.pairs_runner import PairsPaperRunner
+
+    orig = get_settings()
+    set_settings(dataclasses.replace(orig, enable_vol_target=True, vol_target_ann=0.12, dry_run=True))
+    try:
+        runner = PairsPaperRunner("AAA", "BBB", require_audit=False)
+        assert runner.enable_vol_target is True
+        assert runner.engine.vol_target_ann == 0.12
+    finally:
+        set_settings(orig)
+
+
+def test_paper_runner_explicit_vol_target_overrides_flag() -> None:
+    """Явна ціль перемагає вимкнений прапорець (тести / ручний override)."""
+    import dataclasses
+
+    from scalper_hft.config import get_settings, set_settings
+    from scalper_hft.live.pairs_runner import PairsPaperRunner
+
+    orig = get_settings()
+    set_settings(dataclasses.replace(orig, enable_vol_target=False, dry_run=True))
+    try:
+        runner = PairsPaperRunner("AAA", "BBB", require_audit=False, vol_target_ann=0.08)
+        assert runner.engine.vol_target_ann == 0.08
+    finally:
+        set_settings(orig)
+
+
+def test_portfolio_runner_wires_enable_vol_target() -> None:
+    """Портфельний runner прокидає vol_target_ann у кожну ногу."""
+    import dataclasses
+
+    from scalper_hft.config import get_settings, set_settings
+    from scalper_hft.live.pairs_runner import PairsPortfolioRunner
+
+    orig = get_settings()
+    set_settings(dataclasses.replace(orig, enable_vol_target=True, vol_target_ann=0.15, dry_run=True))
+    try:
+        port = PairsPortfolioRunner(
+            configs=[{"leg1": "AAA", "leg2": "BBB", "lookback": 20}],
+            require_audit=False,
+        )
+        assert port.enable_vol_target is True
+        assert all(r.engine.vol_target_ann == 0.15 for r in port.runners)
+    finally:
+        set_settings(orig)

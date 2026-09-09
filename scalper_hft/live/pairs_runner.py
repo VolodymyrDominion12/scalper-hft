@@ -41,6 +41,7 @@ from scalper_hft.live.store import PaperStore
 from scalper_hft.live.sync_engine import SyncEngine
 from scalper_hft.live.trader import closed_klines
 from scalper_hft.live.ws_user_stream import OrderTradeEvent
+from scalper_hft.portfolio.sizing import resolve_vol_target_ann
 from scalper_hft.strategies.base import Strategy
 from scalper_hft.strategies.pairs_arb import PairsArb
 
@@ -373,6 +374,13 @@ class PairsPaperRunner:
         from scalper_hft.live.trader_bars import interval_seconds
 
         bars_per_year = 365.0 * 86400.0 / interval_seconds(self.interval)
+        # Phase 5.2: ENABLE_VOL_TARGET з settings, якщо caller не передав явну ціль.
+        self.enable_vol_target = bool(settings.enable_vol_target)
+        vol_target_ann = resolve_vol_target_ann(
+            vol_target_ann,
+            enabled=self.enable_vol_target,
+            target=float(settings.vol_target_ann),
+        )
         self.engine = PairsEngine(
             leg1,
             leg2,
@@ -542,10 +550,14 @@ class PairsPortfolioRunner:
             initial_capital=10_000.0, taker_fee=settings.taker_fee, maker_fee=settings.maker_fee
         )
         n = len(self.configs)
-        # Phase 5.2: vol-target sizing реально застосовується у PairsEngine
+        # Phase 5.2: vol-target sizing у PairsEngine
         # (масштаб ноціоналу входу = clip(target/realized σ спреду, 0, 1)).
-        self.enable_vol_target = bool(getattr(settings, "enable_vol_target", False))
-        vol_target_ann = float(settings.vol_target_ann) if self.enable_vol_target else None
+        self.enable_vol_target = bool(settings.enable_vol_target)
+        vol_target_ann = resolve_vol_target_ann(
+            None,
+            enabled=self.enable_vol_target,
+            target=float(settings.vol_target_ann),
+        )
         self.runners: list[PairsPaperRunner] = []
         for cfg in self.configs:
             strat = PairsArb(
@@ -767,6 +779,15 @@ class PairsLiveRunner(PairsPaperRunner):
         self.account = account or PaperAccount(
             initial_capital=10_000.0, taker_fee=settings.taker_fee, maker_fee=settings.maker_fee
         )
+        from scalper_hft.live.trader_bars import interval_seconds
+
+        bars_per_year = 365.0 * 86400.0 / interval_seconds(self.interval)
+        self.enable_vol_target = bool(settings.enable_vol_target)
+        vol_target_ann = resolve_vol_target_ann(
+            None,
+            enabled=self.enable_vol_target,
+            target=float(settings.vol_target_ann),
+        )
         self.engine = PairsLiveAdapter(
             leg1,
             leg2,
@@ -778,6 +799,8 @@ class PairsLiveRunner(PairsPaperRunner):
             is_maker=True,
             legging_mode="chase",
             intent_store=IntentStore(),
+            vol_target_ann=vol_target_ann,
+            bars_per_year=bars_per_year,
         )
         self.sync_engine = _make_sync_engine(
             store,

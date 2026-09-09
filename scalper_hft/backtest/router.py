@@ -22,6 +22,7 @@ from scalper_hft.backtest.engine import BacktestResult, run_backtest
 from scalper_hft.backtest.event_engine import EventBacktestResult, run_event_backtest
 from scalper_hft.backtest.execution import CostModel
 from scalper_hft.backtest.micro_price import QueuePositionModel
+from scalper_hft.portfolio.sizing import resolve_vol_target_ann
 from scalper_hft.strategies.base import Strategy
 
 if TYPE_CHECKING:
@@ -29,6 +30,32 @@ if TYPE_CHECKING:
 
 # Стратегії, чиє виконання моделює ЛИШЕ подієвий рушій (пасивний MM).
 EVENT_STRATEGIES = frozenset({"market_maker"})
+
+
+def _settings_risk(
+    max_leverage: float | None,
+    vol_target_ann: float | None,
+    apply_settings_risk: bool,
+) -> tuple[float | None, float | None]:
+    """Підставити max_leverage / vol-target з Settings, якщо caller не задав.
+
+    apply_settings_risk=False — зворотна сумісність юніт-тестів (без кліпу).
+    Явний max_leverage/vol_target_ann завжди перемагає.
+    """
+    if not apply_settings_risk:
+        return max_leverage, vol_target_ann
+    from scalper_hft.config import get_settings
+
+    settings = get_settings()
+    if max_leverage is None:
+        max_leverage = float(settings.max_leverage)
+    if vol_target_ann is None:
+        vol_target_ann = resolve_vol_target_ann(
+            None,
+            enabled=bool(settings.enable_vol_target),
+            target=float(settings.vol_target_ann),
+        )
+    return max_leverage, vol_target_ann
 
 
 def run_strategy_backtest(
@@ -48,7 +75,12 @@ def run_strategy_backtest(
     spread_bps: float = 2.0,
     intrabar_exits: bool = False,
     signals=None,
+    max_leverage: float | None = None,
+    vol_target_ann: float | None = None,
+    vol_lookback: int = 168,
+    apply_settings_risk: bool = True,
 ) -> BacktestResult | EventBacktestResult:
+    max_leverage, vol_target_ann = _settings_risk(max_leverage, vol_target_ann, apply_settings_risk)
     name = getattr(strategy, "name", "")
     if name in EVENT_STRATEGIES:
         # Overlay: MM на OHLC невалідний — disabled клітинка лишається нулем
@@ -67,6 +99,9 @@ def run_strategy_backtest(
                 overlay=overlay,
                 interval=interval,
                 signals=signals,
+                max_leverage=max_leverage,
+                vol_target_ann=vol_target_ann,
+                vol_lookback=vol_lookback,
             )
         # Параметри стратегії → параметри рушія (раніше лишались дефолти,
         # тож sweep/Optuna по market_maker повертали константу).
@@ -96,4 +131,7 @@ def run_strategy_backtest(
         spread_bps=spread_bps,
         intrabar_exits=intrabar_exits,
         signals=signals,
+        max_leverage=max_leverage,
+        vol_target_ann=vol_target_ann,
+        vol_lookback=vol_lookback,
     )

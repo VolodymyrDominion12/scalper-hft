@@ -15,6 +15,7 @@ import pytest
 from scalper_hft.backtest.engine import _simulate_maker_fills, run_backtest
 from scalper_hft.backtest.execution import CostModel
 from scalper_hft.backtest.micro_price import QueuePositionModel
+from scalper_hft.backtest.router import run_strategy_backtest
 from scalper_hft.strategies.base import Strategy
 
 
@@ -104,6 +105,50 @@ def test_vol_target_no_lookahead() -> None:
         df_mut, _AlwaysLong(), position_pct=1.0, vol_target_ann=0.10, vol_lookback=100, interval="1h"
     )
     pd.testing.assert_series_equal(res.positions.iloc[:300], res_mut.positions.iloc[:300])
+
+
+def test_router_applies_max_leverage_from_settings() -> None:
+    """run_strategy_backtest за замовчуванням кліпає |позицію| settings.max_leverage."""
+    import dataclasses
+
+    from scalper_hft.config import get_settings, set_settings
+
+    df = _make_df(n=60)
+    orig = get_settings()
+    set_settings(dataclasses.replace(orig, max_leverage=0.05, enable_vol_target=False))
+    try:
+        res = run_strategy_backtest(df, _AlwaysLong(), position_pct=1.0, interval="1m")
+        assert res.positions.abs().max() <= 0.05 + 1e-12
+        uncapped = run_strategy_backtest(df, _AlwaysLong(), position_pct=1.0, interval="1m", apply_settings_risk=False)
+        assert uncapped.positions.abs().max() > 0.9
+    finally:
+        set_settings(orig)
+
+
+def test_router_vol_target_from_settings_when_enabled() -> None:
+    """ENABLE_VOL_TARGET=true → роутер масштабує позицію (без lookahead)."""
+    import dataclasses
+
+    from scalper_hft.config import get_settings, set_settings
+
+    n = 400
+    idx = pd.date_range("2024-01-01", periods=n, freq="1h")
+    rng = np.random.default_rng(11)
+    rets = np.concatenate([rng.normal(0, 0.0005, n // 2), rng.normal(0, 0.02, n // 2)])
+    c = 100.0 * np.exp(np.cumsum(rets))
+    df = pd.DataFrame({"open": c, "close": c, "high": c * 1.001, "low": c * 0.999, "volume": 1000.0}, index=idx)
+
+    orig = get_settings()
+    set_settings(dataclasses.replace(orig, enable_vol_target=True, vol_target_ann=0.10, max_leverage=3.0))
+    try:
+        res = run_strategy_backtest(df, _AlwaysLong(), position_pct=1.0, interval="1h", vol_lookback=100)
+        pos_calm = res.positions.iloc[150:190].abs().mean()
+        pos_storm = res.positions.iloc[-50:].abs().mean()
+        assert pos_storm < pos_calm * 0.5
+        off = run_strategy_backtest(df, _AlwaysLong(), position_pct=1.0, interval="1h", apply_settings_risk=False)
+        assert off.positions.iloc[-50:].abs().mean() > pos_storm
+    finally:
+        set_settings(orig)
 
 
 class _LongWithLevels(Strategy):
