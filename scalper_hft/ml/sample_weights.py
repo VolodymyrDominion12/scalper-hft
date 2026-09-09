@@ -89,13 +89,12 @@ def seq_bootstrap(
         # вибираємо лейбл з найвищою унікальністю (менш корельований з вже вибраними)
         total = float(avg_u.sum())
         if total <= 0 or not np.isfinite(total):
-            choices = np.asarray(ind_m.columns)
-            phi.append(int(gen.choice(choices)))
+            phi.append(ind_m.columns[int(gen.integers(0, ind_m.shape[1]))])
             continue
         prob = avg_u / total
-        choices = np.asarray(prob.index)
-        p = prob.to_numpy(dtype=float)
-        phi.append(int(gen.choice(choices, p=p)))
+        p = np.asarray(prob.to_numpy(dtype=float), dtype=float)
+        pick = int(gen.choice(np.arange(len(p)), p=p))
+        phi.append(prob.index[pick])
     return phi
 
 
