@@ -143,7 +143,7 @@ def build_regime_strategy_map(
     Політика:
         - high-vol regime (label закінчується на |high) → flat (усі ваги 0),
           якщо ``high_vol_flat``.
-        - stable regime (low/normal vol) з однозначним лідером (gap ≥
+        - stable regime (low/normal vol) з однозначним лідером (відносний відрив ≥
           ``best_prior_min_gap`` над другим) → best_prior: одна стратегія, вага 1.
         - інакше → soft: ваги ∝ max(sharpe - hard_off, 0), нормовані; якщо всі
           нижче порогу → flat.

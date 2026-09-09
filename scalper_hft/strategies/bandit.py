@@ -55,10 +55,12 @@ class Exp3Bandit:
             return int(rng.choice(self.n_arms, p=p))
         return int(self._rng.choice(self.n_arms, p=p))
 
-    def update(self, arm: int, reward: float) -> None:
+    def update(self, arm: int, reward: float, turnover_cost: float = 0.0) -> None:
         """Оновлення ваг після отримання винагороди.
 
         reward: скаляр у діапазоні [-1.0, 1.0] (напр. барний PnL після комісій).
+        turnover_cost (2C): вартість зміни позиції (|Δsignal| × cost_per_unit).
+            Віднімається від reward — net-PnL-свідоме навчання. 0 = як раніше.
         """
         if arm < 0 or arm >= self.n_arms:
             raise ValueError(f"Невалідний індекс руки: {arm}")
@@ -66,8 +68,10 @@ class Exp3Bandit:
         p = self.probabilities()
         p_arm = max(p[arm], 1e-6)
 
+        # Net reward: брутто PnL мінус turnover-вартість (2C).
+        net_reward = float(reward) - float(turnover_cost)
         # Зсув винагороди у [0, 1] для гарантії додатності
-        shifted_reward = (np.clip(reward, -1.0, 1.0) + 1.0) / 2.0
+        shifted_reward = (np.clip(net_reward, -1.0, 1.0) + 1.0) / 2.0
         est_reward = shifted_reward / p_arm
 
         # Оновлення ваги
@@ -83,6 +87,8 @@ class Exp3Bandit:
             {
                 "arm": float(arm),
                 "reward": float(reward),
+                "net_reward": float(net_reward),
+                "turnover_cost": float(turnover_cost),
                 "p_arm": float(p_arm),
             }
         )

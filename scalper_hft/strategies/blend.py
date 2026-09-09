@@ -28,6 +28,8 @@ def hedge_weights(
     returns: np.ndarray | pd.DataFrame,
     eta: float | None = None,
     loss_clip: float = 0.99,
+    turnover_penalty: float = 0.0,
+    signals: np.ndarray | pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Ваги експертів у часі за алгоритмом Hedge (без lookahead).
 
@@ -37,6 +39,10 @@ def hedge_weights(
         eta: параметр швидкості навчання. None → адаптивний
             η = √((8/q′)·ln N), q′ = відносна квадратична варіація loss.
         loss_clip: обрізання loss = −ln(1+r) (захист від r ≤ −1).
+        turnover_penalty (2C): штраф за оборот стратегії. Якщо задано `signals`
+            (T × N), до loss додається turnover_penalty × |Δsignal| — стратегії,
+            що часто торгують, отримують більший loss. Net-PnL-свідоме навчання.
+        signals: (T × N) матриця сигналів експертів для turnover-штрафу.
 
     Returns:
         DataFrame (T × N) ваг p_{i,t} (рядки сумуються до 1).
@@ -52,6 +58,13 @@ def hedge_weights(
 
     # loss = −ln(1 + r) з обрізанням
     loss = -np.log(np.clip(1.0 + r, 1.0 - loss_clip, None))
+
+    # Turnover penalty (2C): штраф за |Δsignal| — net-PnL-свідоме навчання.
+    if turnover_penalty > 0 and signals is not None:
+        sig = np.asarray(signals, dtype=float)
+        if sig.shape == r.shape:
+            d_sig = np.abs(np.diff(sig, axis=0, prepend=sig[:1]))
+            loss = loss + turnover_penalty * d_sig
 
     if eta is None:
         # адаптивне η з відносної квадратичної варіації loss
@@ -107,6 +120,7 @@ def hedge_blend_signals(
     signal_matrix: pd.DataFrame,
     close: pd.Series,
     eta: float | None = None,
+    turnover_penalty: float = 0.0,
 ) -> pd.Series:
     """Комбінований сигнал з Hedge-ваг для бектесту.
 
@@ -118,13 +132,15 @@ def hedge_blend_signals(
         signal_matrix: DataFrame (T × N) сигналів суб-стратегій у [-1, 1].
         close: Series цін закриття, індексована як signal_matrix.
         eta: параметр Hedge (None = адаптивний).
+        turnover_penalty (2C): штраф за оборот стратегії у Hedge-loss. >0 →
+            стратегії, що часто фліпають сигнал, отримують меншу вагу (net-PnL).
 
     Returns:
         Series комбінованого сигналу у [-1, 1] (кліпнуто).
     """
     ret = close.pct_change().fillna(0.0)
     r = signal_matrix.shift(1).fillna(0.0).mul(ret, axis=0)
-    w = hedge_weights(r, eta=eta)
+    w = hedge_weights(r, eta=eta, turnover_penalty=turnover_penalty, signals=signal_matrix)
     combined = (signal_matrix * w).sum(axis=1)
     return combined.clip(-1.0, 1.0)
 

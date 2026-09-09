@@ -65,7 +65,7 @@ def test_build_regime_strategy_map_soft_blend_when_close() -> None:
     rng = np.random.default_rng(2)
     ret = pd.DataFrame({"A": 0.001 + rng.normal(0, 0.0005, 300), "B": 0.001 + rng.normal(0, 0.0005, 300)}, index=idx)
     m = compute_regime_perf_matrix(ret, regime, min_bars=20)
-    rmap = build_regime_strategy_map(m, hard_off_sharpe=0.0, best_prior_min_gap=0.5)
+    rmap = build_regime_strategy_map(m, hard_off_sharpe=0.0, best_prior_min_gap=0.3)
     assert rmap.policy.get("trend_up|normal") == "soft"
     w = rmap.weights_for("trend_up|normal")
     assert w["A"] > 0 and w["B"] > 0
