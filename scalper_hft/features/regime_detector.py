@@ -41,6 +41,50 @@ from scalper_hft.features.regimes import (
 
 logger = logging.getLogger(__name__)
 
+
+# ────────────────────────────────────────────────────────────────────────────
+# Funding skew + liquidity helpers (2A)
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def _funding_skew_series(funding: pd.Series, window: int = 720) -> pd.Series:
+    """Z-score funding-ставки (каузально): skew = (f - rolling_mean)/rolling_std.
+
+    Додатнє значення = ринок платить longs (перегрітість long), від'ємне = short.
+    `window` за замовчуванням ~30 днів для 1h. Повертає Series 0.0 якщо даних мало.
+    """
+    f = pd.Series(funding, dtype=float).sort_index()
+    if len(f) < max(window, 20):
+        return pd.Series(0.0, index=f.index)
+    mu = f.rolling(window, min_periods=window // 2).mean()
+    sd = f.rolling(window, min_periods=window // 2).std()
+    z = (f - mu) / sd.replace(0.0, np.nan)
+    return z.fillna(0.0).clip(-3.0, 3.0)
+
+
+def _liquidity_label_from_volume(close: pd.Series, volume: pd.Series, window: int = 120) -> pd.Series:
+    """Amihud-ілюіквідність → label "low"|"normal"|"high" (каузально).
+
+    illiq_t = mean(|ret|/dollarvol) over rolling window. Високе illiq = low liquidity.
+    Розбиття — по rolling-квантилю вікна (медіана + 1.5×IQR). Повертає "normal"
+    на warmup.
+    """
+    if volume is None or len(volume) != len(close):
+        return pd.Series("normal", index=close.index)
+    ret = close.pct_change().fillna(0.0)
+    dvol = (volume.astype(float) * close.astype(float)).clip(lower=1e-12)
+    illiq = (ret.abs() / dvol).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    roll = illiq.rolling(window, min_periods=window // 2)
+    med = roll.median()
+    iqr = (roll.quantile(0.75) - roll.quantile(0.25)).clip(lower=1e-15)
+    high_thr = med + 1.5 * iqr
+    low_thr = (med - 0.5 * iqr).clip(lower=0.0)
+    label = pd.Series("normal", index=close.index)
+    label = label.where(illiq <= high_thr, "low")  # висока illiq = low liquidity
+    label = label.where(illiq >= low_thr, "high")
+    return label.fillna("normal")
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # RegimeState
 # ────────────────────────────────────────────────────────────────────────────
@@ -59,6 +103,10 @@ class RegimeState:
         hmm_probs:   вектор P(режим=k) за HMM (довжина n_states).
                      порожній масив якщо HMM не навчений.
         confidence:  max(hmm_probs) — впевненість HMM у поточному стані.
+        funding_skew: z-score funding-ставки (2A): додатнє = премія longs,
+                     від'ємне = премія shorts. 0.0 якщо funding недоступний.
+        liquidity:   ліквідність-проксі (2A): "low" | "normal" | "high".
+                     "normal" якщо дані недоступні.
     """
 
     structure: str
@@ -67,6 +115,8 @@ class RegimeState:
     hmm_state: int
     hmm_probs: np.ndarray
     confidence: float
+    funding_skew: float = 0.0
+    liquidity: str = "normal"
 
     def is_trending(self) -> bool:
         return self.structure in ("trend_up", "trend_down")
@@ -80,6 +130,17 @@ class RegimeState:
     def is_low_vol(self) -> bool:
         return self.vol == "low"
 
+    @property
+    def joint_label(self) -> str:
+        """Складений ярлик усіх факторів (2A): structure|vol|hmm|funding|liq.
+
+        Єдина «правда» про режим для роутингу: об'єднує structure × vol ×
+        HMM-стан × знак funding-skew × liquidity. Використовується мета-шаром
+        для posterior-weighted routing та validated regime→strategy map (2B).
+        """
+        fsign = "p" if self.funding_skew > 0.5 else ("n" if self.funding_skew < -0.5 else "0")
+        return f"{self.label}|h{self.hmm_state}|f{fsign}|{self.liquidity}"
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "structure": self.structure,
@@ -87,6 +148,9 @@ class RegimeState:
             "label": self.label,
             "hmm_state": self.hmm_state,
             "confidence": self.confidence,
+            "funding_skew": self.funding_skew,
+            "liquidity": self.liquidity,
+            "joint_label": self.joint_label,
         }
 
 
@@ -148,6 +212,8 @@ class RegimeDetector:
 
         # Інкрементальний стан для live (step())
         self._close_buf: list[float] = []
+        self._funding_buf: list[float] = []  # funding-ставки (2A)
+        self._volume_buf: list[float] = []  # обсяги (2A)
         self._last_state: RegimeState | None = None
 
     # ── Batch (бектест) ─────────────────────────────────────────────────────
@@ -191,20 +257,35 @@ class RegimeDetector:
 
         return self
 
-    def detect(self, close: pd.Series) -> pd.DataFrame:
+    def detect(
+        self,
+        close: pd.Series,
+        funding: pd.Series | None = None,
+        volume: pd.Series | None = None,
+        refit_every: int = 0,
+    ) -> pd.DataFrame:
         """Batch-детекція режиму для всього ряду (для бектесту).
 
         Якщо fit() ще не викликано — викликає автоматично.
 
         Повертає DataFrame з колонками:
-            structure, vol, label, hmm_state, hmm_p0..hmm_pK-1, confidence.
+            structure, vol, label, hmm_state, hmm_p0..hmm_pK-1, confidence,
+            funding_skew, liquidity, joint_label.
         Індексований як close.index.
 
         Без lookahead:
             - rule-based (EMA, vol) — каузальні.
             - HMM: filtered_proba (forward-only) на ВСЬОМУ ряді з ФІКСОВАНОЮ моделлю.
+            - funding_skew / liquidity — rolling, каузальні.
+
+        Args (2A):
+            funding: series funding-ставки (опційно) → funding_skew z-score.
+            volume: series обсягу (опційно) → liquidity label.
+            refit_every: якщо >0, walk-forward refit HMM кожні `refit_every` барів
+                на каузальному вікні [t-fit_window, t) (2A). 0 = single early fit
+                (дефолт, як раніше). Рефіт дорогий; вмикати для довгих рядів.
         """
-        if not self._fitted:
+        if not self._fitted and refit_every <= 0:
             self.fit(close)
 
         # Rule-based
@@ -235,7 +316,12 @@ class RegimeDetector:
             X = obs.values
 
             try:
-                post = self._hmm.filtered_proba(X)  # (T, K) — forward-only
+                if refit_every > 0 and len(X) > self.hmm_fit_bars:
+                    # Walk-forward refit (2A): кожні refit_every барів нова HMM на
+                    # каузальному вікні [i-fit_window, i). filtered_proba per-segment.
+                    post = self._filtered_proba_windowed(obs, X, refit_every)
+                else:
+                    post = self._hmm.filtered_proba(X)  # (T, K) — forward-only
                 states = np.argmax(post, axis=1)
                 confidence = post[np.arange(len(post)), states]
 
@@ -250,6 +336,18 @@ class RegimeDetector:
             except Exception as exc:
                 logger.warning("RegimeDetector.detect: HMM inference помилка: %s", exc)
 
+        # Funding skew + liquidity (2A) — каузальні rolling-фічі.
+        if funding is not None:
+            state_df["funding_skew"] = _funding_skew_series(funding).reindex(close.index).fillna(0.0).values
+        else:
+            state_df["funding_skew"] = 0.0
+        if volume is not None:
+            state_df["liquidity"] = (
+                _liquidity_label_from_volume(close, volume).reindex(close.index).fillna("normal").values
+            )
+        else:
+            state_df["liquidity"] = "normal"
+
         # Заповнення відсутніх колонок
         for col in ["hmm_state", "confidence"] + list(hmm_cols.keys()):
             if col not in state_df.columns:
@@ -259,6 +357,18 @@ class RegimeDetector:
         state_df["confidence"] = state_df["confidence"].ffill().fillna(0.0)
         state_df = state_df.fillna(0.0)
         state_df["hmm_state"] = state_df["hmm_state"].astype(int)
+        # joint_label (2A): єдина «правда» для роутингу.
+        fsign = np.sign(state_df["funding_skew"].astype(float))
+        ftag = np.where(fsign > 0.5, "p", np.where(fsign < -0.5, "n", "0"))
+        state_df["joint_label"] = (
+            state_df["label"].astype(str)
+            + "|h"
+            + state_df["hmm_state"].astype(str)
+            + "|f"
+            + ftag
+            + "|"
+            + state_df["liquidity"].astype(str)
+        )
 
         return state_df
 
@@ -277,19 +387,103 @@ class RegimeDetector:
                     hmm_state=int(row["hmm_state"]),
                     hmm_probs=probs,
                     confidence=float(row["confidence"]),
+                    funding_skew=float(row.get("funding_skew", 0.0)),
+                    liquidity=str(row.get("liquidity", "normal")),
                 )
             )
         return states
 
+    # ── Walk-forward refit (2A) ──────────────────────────────────────────────
+
+    def refit(self, close: pd.Series, *, start: int = 0, end: int | None = None) -> RegimeDetector:
+        """Перенавчання HMM на каузальному вікні close[start:end] (2A).
+
+        На відміну від fit() (перші hmm_fit_bars), refit дозволяє довільне
+        каузальне вікно для walk-forward. Мутує self._hmm. Використовується
+        detect(..., refit_every=N) під капотом; можна викликати вручну для
+        інкрементального live-refit.
+        """
+        ret = close.pct_change().fillna(0.0)
+        vol = ret.rolling(20, min_periods=10).std().fillna(0.0)
+        obs = pd.DataFrame({"ret": ret, "abs_ret": ret.abs(), "vol": vol}).iloc[20:]
+        end_i = len(obs) if end is None else min(end, len(obs))
+        window = obs.iloc[start:end_i]
+        if len(window) < self.n_hmm_states * 10:
+            logger.warning("RegimeDetector.refit: замало даних (%d). HMM не перенавчено.", len(window))
+            return self
+        try:
+            self._hmm = GaussianHMM(n_states=self.n_hmm_states, seed=self.hmm_seed).fit(window.values)
+            self._fitted = True
+        except ValueError as exc:
+            logger.warning("RegimeDetector.refit: HMM не навчився: %s", exc)
+        return self
+
+    def _filtered_proba_windowed(self, obs: pd.DataFrame, X: np.ndarray, refit_every: int) -> np.ndarray:
+        """Walk-forward filtered_proba з каузальним refit (2A, без lookahead).
+
+        Серію розбиваємо на сегменти по refit_every барів. Для сегмента [i, i+L):
+        HMM навчається на obs[max(0, i-fit_window):i] (строго до сегмента),
+        filtered_proba рахується лише на сегменті. Перший сегмент використовує
+        модель з fit() (ранній fit). Конкатенуємо → (T, K).
+        """
+        T, K = X.shape
+        fit_window = self.hmm_fit_bars
+        out = np.zeros((T, K), dtype=float)
+        # Перший сегмент: вже навчена модель (fit на перших hmm_fit_bars).
+        seg_end = min(refit_every, T)
+        if self._hmm is not None:
+            try:
+                out[:seg_end] = self._hmm.filtered_proba(X[:seg_end])
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("RegimeDetector WF: перший сегмент помилка: %s", exc)
+        # Подальші сегменти з каузальним refit.
+        i = seg_end
+        while i < T:
+            j = min(i + refit_every, T)
+            train_start = max(0, i - fit_window)
+            train = X[train_start:i]
+            if len(train) >= self.n_hmm_states * 10:
+                try:
+                    seg_hmm = GaussianHMM(n_states=self.n_hmm_states, seed=self.hmm_seed).fit(train)
+                    out[i:j] = seg_hmm.filtered_proba(X[i:j])
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("RegimeDetector WF: сегмент %d помилка: %s", i, exc)
+                    if self._hmm is not None:
+                        try:
+                            out[i:j] = self._hmm.filtered_proba(X[i:j])
+                        except Exception:
+                            pass
+            elif self._hmm is not None:
+                try:
+                    out[i:j] = self._hmm.filtered_proba(X[i:j])
+                except Exception:
+                    pass
+            i = j
+        return out
+
     # ── Online (live) ────────────────────────────────────────────────────────
 
-    def step(self, new_close: float) -> RegimeState:
+    def step(
+        self,
+        new_close: float,
+        funding_rate: float | None = None,
+        volume: float | None = None,
+    ) -> RegimeState:
         """Інкрементальне оновлення режиму для live (один бар).
 
         Буфер накопичує закриті ціни. Коли накопичено достатньо даних —
         автоматично навчає HMM (один раз). Повертає RegimeState поточного бару.
+
+        Args (2A):
+            funding_rate: поточна funding-ставка (опційно) → funding_skew z-score
+                рахується по буферу funding-ставок.
+            volume: обсяг поточного бару (опційно) → liquidity label.
         """
         self._close_buf.append(float(new_close))
+        if funding_rate is not None:
+            self._funding_buf.append(float(funding_rate))
+        if volume is not None:
+            self._volume_buf.append(float(volume))
 
         # Автоматичне навчання HMM коли є достатньо даних
         if not self._fitted and len(self._close_buf) >= self.hmm_fit_bars:
@@ -306,6 +500,8 @@ class RegimeDetector:
                 hmm_state=-1,
                 hmm_probs=np.zeros(self.n_hmm_states),
                 confidence=0.0,
+                funding_skew=self._current_funding_skew(),
+                liquidity=self._current_liquidity(),
             )
             self._last_state = state
             return state
@@ -351,9 +547,27 @@ class RegimeDetector:
             hmm_state=hmm_state,
             hmm_probs=hmm_probs,
             confidence=confidence,
+            funding_skew=self._current_funding_skew(),
+            liquidity=self._current_liquidity(),
         )
         self._last_state = state
         return state
+
+    # ── Funding/liquidity live helpers (2A) ─────────────────────────────────
+    def _current_funding_skew(self) -> float:
+        if len(self._funding_buf) < 20:
+            return 0.0
+        f = pd.Series(self._funding_buf, dtype=float)
+        z = _funding_skew_series(f, window=min(720, max(20, len(f) // 2)))
+        return float(z.iloc[-1]) if len(z) else 0.0
+
+    def _current_liquidity(self) -> str:
+        if len(self._volume_buf) < 40 or len(self._close_buf) < 40:
+            return "normal"
+        c = pd.Series(self._close_buf[-len(self._volume_buf) :], dtype=float)
+        v = pd.Series(self._volume_buf, dtype=float)
+        lab = _liquidity_label_from_volume(c, v, window=min(120, max(20, len(v) // 2)))
+        return str(lab.iloc[-1]) if len(lab) else "normal"
 
     @property
     def last_state(self) -> RegimeState | None:

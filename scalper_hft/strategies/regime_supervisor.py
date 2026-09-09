@@ -86,6 +86,11 @@ class RegimeSupervisor(Strategy):
             min_dwell_bars=int(self.get("min_dwell_bars", 0)),
             htf_structure=self.get("htf_tf", "") or None,
         )
+        # Lazy gating (2A): якщо True, сигнал суб-стратегії зануляється на барах,
+        # де її preferred_regimes не перетинаються з поточним (structure,vol)-
+        # режимом. «Виконуються лише стратегії активного режиму» — менше шуму від
+        # стратегій не у своєму режимі. Дефолт False (зворотна сумісність).
+        self.lazy_gating: bool = bool(self.get("lazy_gating", False))
 
         # Стан онлайн-блендера НЕ кешується між викликами generate_signals:
         # інакше повторний прогін (WF-вікна, sweep) продовжує навчання з
@@ -156,6 +161,10 @@ class RegimeSupervisor(Strategy):
         # 2. Детекція режиму (batch, каузальна)
         regime_df = self._detector.detect(df["close"])
 
+        # 2b. Lazy gating (2A): занулити сигнали стратегій поза їхнім режимом.
+        if self.lazy_gating:
+            sig_df = self._apply_lazy_gating(sig_df, regime_df)
+
         # 3. Зважування
         if self.blend_mode == "regime_soft":
             result = self._blend_regime_soft(sig_df, regime_df)
@@ -184,26 +193,37 @@ class RegimeSupervisor(Strategy):
         """Static soft-weights: taxonomy.preferred_regimes → вага в [unfavorable, 1].
 
         Найпростіший і найпрозоріший режим. Ваги не змінюються після навчання.
+
+        Якщо задано ``regime_map_path`` (2B) — валідована OOS-таблиця замінює
+        статичні taxonomy-пріори: вага стратегії = rmap.weights[regime][strat],
+        hard-off (вага 0) для стратегій нижче порогу значущості.
         """
         from scalper_hft.strategies.taxonomy import regime_capital_weight
 
         unfavorable = float(self.get("unfavorable_weight", DEFAULT_UNFAVORABLE_WEIGHT))
+        # Валідована regime→strategy map (2B): опційно.
+        rmap = self._load_regime_map()
         result = pd.Series(0.0, index=sig_df.index)
 
         for i, (idx, row) in enumerate(sig_df.iterrows()):
             structure = str(regime_df.loc[idx, "structure"]) if idx in regime_df.index else "range"
             vol = str(regime_df.loc[idx, "vol"]) if idx in regime_df.index else "normal"
-            weights = np.array(
-                [
-                    regime_capital_weight(
-                        frozenset(s.preferred_regimes),
-                        structure,
-                        vol,
-                        unfavorable=unfavorable,
-                    )
-                    for s in self._strats
-                ]
-            )
+            label = str(regime_df.loc[idx, "label"]) if idx in regime_df.index else f"{structure}|{vol}"
+            if rmap is not None:
+                rw = rmap.weights_for(label)
+                weights = np.array([float(rw.get(s.name, 0.0)) for s in self._strats])
+            else:
+                weights = np.array(
+                    [
+                        regime_capital_weight(
+                            frozenset(s.preferred_regimes),
+                            structure,
+                            vol,
+                            unfavorable=unfavorable,
+                        )
+                        for s in self._strats
+                    ]
+                )
             total_w = weights.sum()
             if total_w > 0:
                 result.iloc[i] = float(np.dot(row.values, weights / total_w))
@@ -390,6 +410,56 @@ class RegimeSupervisor(Strategy):
 
         cols = [s.name for s in self._strats]
         return pd.concat(sigs, axis=1).reindex(df.index).fillna(0.0).set_axis(cols, axis=1)
+
+    def _apply_lazy_gating(self, sig_df: pd.DataFrame, regime_df: pd.DataFrame) -> pd.DataFrame:
+        """Lazy gating (2A): сигнал стратегії = 0 на барах поза її preferred_regimes.
+
+        Стратегія «виконується» лише тоді, коли її preferred_regimes перетинаються
+        з поточним (structure, vol)-режимом. Менше шуму від стратегій не у своєму
+        режимі + швидший логічний veto. Стратегії з порожнім preferred_regimes
+        (усядеться скрізь) не гейтуються.
+        """
+        from scalper_hft.strategies.taxonomy import regime_capital_weight
+
+        unfavorable = float(self.get("unfavorable_weight", DEFAULT_UNFAVORABLE_WEIGHT))
+        structs = regime_df.reindex(sig_df.index)["structure"].fillna("range").values
+        vols = regime_df.reindex(sig_df.index)["vol"].fillna("normal").values
+        out = sig_df.copy()
+        for j, strat in enumerate(self._strats):
+            if not strat.preferred_regimes:
+                continue  # універсальна стратегія — не гейтуємо
+            # маска активності: вага > unfavorable (режим сприятливий)
+            active = np.array(
+                [
+                    regime_capital_weight(strat.preferred_regimes, str(s), str(v), unfavorable=unfavorable)
+                    > unfavorable + 1e-9
+                    for s, v in zip(structs, vols, strict=False)
+                ]
+            )
+            col = out.columns[j]
+            out[col] = out[col].where(active, 0.0)
+        return out
+
+    def _load_regime_map(self):
+        """Завантажити валідовану regime→strategy map (2B) з regime_map_path.
+
+        Опційно: якщо параметр не заданий — None (статичні taxonomy-пріори).
+        Кешується на інстансі, щоб не читати файл щоразу на бар.
+        """
+        if hasattr(self, "_regime_map_cache"):
+            return self._regime_map_cache
+        path = self.get("regime_map_path", "")
+        rmap = None
+        if path:
+            try:
+                from scalper_hft.validation.regime_map import RegimeStrategyMap
+
+                rmap = RegimeStrategyMap.from_json(str(path))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("RegimeSupervisor: не вдалося завантажити regime_map %s: %s", path, exc)
+                rmap = None
+        self._regime_map_cache = rmap  # type: ignore[assignment]
+        return rmap
 
     def regime_summary(self, df: pd.DataFrame) -> pd.DataFrame:
         """Зведення по режимах: частота, avg signal per strategy.
