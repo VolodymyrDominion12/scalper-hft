@@ -327,7 +327,9 @@ class RegimeSupervisor(Strategy):
         ret = close.pct_change().fillna(0.0)
         returns_df = sig_df.shift(1).fillna(0.0).mul(ret, axis=0)
         gamma = float(self.get("exp3_gamma", 0.05))
-        return exp3_select_signals(sig_df, returns_df, gamma=gamma)
+        seed = self.get("exp3_seed", None)
+        seed = int(seed) if seed not in (None, "") else None
+        return exp3_select_signals(sig_df, returns_df, gamma=gamma, seed=seed)
 
     # ────────────────────────────────────────────────────────────────────────
     # Helpers

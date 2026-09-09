@@ -117,15 +117,26 @@ def run_walk_forward(
     interval: str = "1m",
     is_maker: bool = False,
     collect_oos_returns: bool = False,
+    purge_bars: int = 0,
+    embargo_bars: int = 0,
 ) -> WalkForwardResult:
     """Walk-forward: параметри фіксовані (або оптимізовані вручну зовні),
     стратегія оцінюється на кожному OOS вікні.
 
     collect_oos_returns: зібрати конкатеновані OOS бар-дохідності у
     результат (для DSR/PBO на OOS без IS-забруднення).
+
+    purge_bars: «прогін» між кінцем train і початком test (AFML Ch.7/11) —
+        щоб лейбли/позиції, що перетинають межу, не змішували IS і OOS.
+        0 = без прогіну (зворотна сумісність).
+    embargo_bars: «ембарго» після кожного OOS-вікна перед наступним —
+        щоб позиція з попереднього test не «захлювала» наступне train/test.
+        0 = без ембарго (зворотна сумісність).
     """
-    if len(df) < train_bars + test_bars:
-        raise ValueError(f"Дані ({len(df)}) коротші за train+test ({train_bars + test_bars})")
+    if purge_bars < 0 or embargo_bars < 0:
+        raise ValueError("purge_bars/embargo_bars мають бути ≥ 0")
+    if len(df) < train_bars + purge_bars + test_bars:
+        raise ValueError(f"Дані ({len(df)}) коротші за train+purge+test ({train_bars + purge_bars + test_bars})")
 
     windows: list[WalkForwardWindow] = []
     oos_ret_parts: list[pd.Series] = []
@@ -138,9 +149,12 @@ def run_walk_forward(
         # індикатори зберігають warmup з train. Causal rolling не бере майбутнє.
         precomputed = _generate_signals(strategy, df, trades, funding)
 
-    while start + train_bars + test_bars <= len(df):
-        tr = df.iloc[start : start + train_bars]
-        te = df.iloc[start + train_bars : start + train_bars + test_bars]
+    while start + train_bars + purge_bars + test_bars <= len(df):
+        train_end = start + train_bars
+        test_start = train_end + purge_bars  # прогін між train і test
+        test_end = test_start + test_bars
+        tr = df.iloc[start:train_end]
+        te = df.iloc[test_start:test_end]
         # trades — це потік aggTrades (індекс = час трейду), НЕ бари: ріжемо
         # за ЧАСОМ вікна, а не позиційним зсувом барів (раніше trades.iloc[
         # start:...] давав невірні часові вікна для needs_trades стратегій).
@@ -181,9 +195,9 @@ def run_walk_forward(
             WalkForwardWindow(
                 window_idx=idx,
                 train_start=start,
-                train_end=start + train_bars,
-                test_start=start + train_bars,
-                test_end=start + train_bars + test_bars,
+                train_end=train_end,
+                test_start=test_start,
+                test_end=test_end,
                 is_sharpe=_sharpe_from_equity(res_is.equity),
                 oos_sharpe=_sharpe_from_equity(res_oos.equity),
                 oos_return=float(res_oos.equity.iloc[-1] / res_oos.equity.iloc[0] - 1),
@@ -193,7 +207,7 @@ def run_walk_forward(
         if collect_oos_returns:
             oos_ret_parts.append(res_oos.equity.pct_change().fillna(0.0))
         idx += 1
-        start += test_bars  # крок = розмір OOS (non-overlapping)
+        start += test_bars + embargo_bars  # крок = OOS + ембарго (0 = non-overlapping)
 
     if not windows:
         raise ValueError("Жодного повного вікна — збільшіть train_bars/test_bars або обсяг даних")

@@ -24,6 +24,7 @@ class Exp3Bandit:
         n_arms: int,
         gamma: float = 0.05,
         arm_names: list[str] | None = None,
+        seed: int | None = None,
     ) -> None:
         if n_arms < 2:
             raise ValueError("Потрібно щонайменше 2 руки (arms)")
@@ -32,6 +33,10 @@ class Exp3Bandit:
         self.arm_names = arm_names or [f"arm_{i}" for i in range(n_arms)]
         self._weights = np.ones(n_arms, dtype=float)
         self.history: list[dict[str, float]] = []
+        # Seeded RNG для відтворюваності (1D): однаковий seed → однаковий вибір рук.
+        # Без seed Exp3 стохастичний і невідтворюваний між прогонами — ускладнює
+        # дебаг і A/B-порівняння. Дефолт None = nondeterministic (як раніше).
+        self._rng = np.random.default_rng(seed)
 
     def probabilities(self) -> np.ndarray:
         """Поточний розподіл ймовірностей вибору рук."""
@@ -48,7 +53,7 @@ class Exp3Bandit:
         p = self.probabilities()
         if rng is not None:
             return int(rng.choice(self.n_arms, p=p))
-        return int(np.random.choice(self.n_arms, p=p))
+        return int(self._rng.choice(self.n_arms, p=p))
 
     def update(self, arm: int, reward: float) -> None:
         """Оновлення ваг після отримання винагороди.
@@ -92,6 +97,7 @@ def exp3_select_signals(
     signals_df: pd.DataFrame,
     returns_df: pd.DataFrame,
     gamma: float = 0.05,
+    seed: int | None = None,
 ) -> pd.Series:
     """Векторизований бектест вибору сигналів через Exp3 Bandit (без lookahead).
 
@@ -102,12 +108,13 @@ def exp3_select_signals(
         signals_df: (T x N) матриця сигналів суб-стратегій у [-1, 1].
         returns_df: (T x N) матриця фактичних повернень суб-стратегій.
         gamma: exploration rate.
+        seed: seed для відтворюваного вибору рук (1D). None = nondeterministic.
 
     Returns:
         Series обраного сигналу в [-1, 1], індексована як signals_df.
     """
     t, n = signals_df.shape
-    bandit = Exp3Bandit(n_arms=n, gamma=gamma, arm_names=list(signals_df.columns))
+    bandit = Exp3Bandit(n_arms=n, gamma=gamma, arm_names=list(signals_df.columns), seed=seed)
 
     chosen_signals = []
     sig_vals = signals_df.values

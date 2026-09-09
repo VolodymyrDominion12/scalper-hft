@@ -91,6 +91,13 @@ class Settings:
     corr_notional_cap: float = field(default_factory=lambda: _env_float("CORR_NOTIONAL_CAP", 0.40))
     pair_notional_pct: float = field(default_factory=lambda: _env_float("PAIR_NOTIONAL_PCT", 0.30))
     portfolio_notional_pct: float = field(default_factory=lambda: _env_float("PORTFOLIO_NOTIONAL_PCT", 0.60))
+    # Per-symbol notional cap + margin/liquidation proximity (1D): жорсткий ліміт
+    # ноціоналу на одну монету (частка equity) + блок входів, коли сумарне плече
+    # наближається до max_leverage (за `liquidation_proximity_buffer`).
+    per_symbol_notional_pct: float = field(default_factory=lambda: _env_float("PER_SYMBOL_NOTIONAL_PCT", 0.30))
+    liquidation_proximity_buffer: float = field(
+        default_factory=lambda: _env_float("LIQUIDATION_PROXIMITY_BUFFER", 0.10)
+    )
     max_losing_months: int = field(default_factory=lambda: _env_int("MAX_LOSING_MONTHS", 2))
     maker_fill_wait_bars: int = field(default_factory=lambda: _env_int("MAKER_FILL_WAIT_BARS", 1))
     # Hard-гейт overfitting-аудиту: live (DRY_RUN=false) і paper-run-pairs

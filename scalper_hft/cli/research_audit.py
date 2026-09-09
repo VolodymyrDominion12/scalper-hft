@@ -38,6 +38,7 @@ def cmd_overfit(args: argparse.Namespace) -> None:
         test_bars=args.test,
         with_cscv=True,
         strategy_params=_apply_use_kalman(args, args.param_dict),
+        n_trials_floor=int(getattr(args, "trials", 0)) or None,
     )
     if audit.status != "ok":
         fail("Аудит не вдався: %s", audit.error)
@@ -87,6 +88,72 @@ def cmd_overfit(args: argparse.Namespace) -> None:
     from scalper_hft.validation.verdict_store import record_verdict
 
     record_verdict(args.strategy, args.symbol, args.interval, label, reasons)
+
+    # Авто pair-вердикт для pairs-стратегій (раніше — лише ручний запис).
+    # Якщо стратегія multi-symbol (pairs_arb/sparse_basket/funding_arb) і задано
+    # --leg1/--leg2, проганяємо pairs walk-forward і записуємо pair-вердикт за
+    # критеріями pairs_gate (WF positive frac, PBO, n_trades) — щоб pairs_runner
+    # міг стартувати без ручного запису.
+    _maybe_record_pair_verdict(args)
+
+
+def _maybe_record_pair_verdict(args: argparse.Namespace) -> None:
+    """Авто pair-вердикт для multi-symbol стратегій з --leg1/--leg2."""
+    leg1 = getattr(args, "leg1", None)
+    leg2 = getattr(args, "leg2", None)
+    if not leg1 or not leg2:
+        return
+    from scalper_hft.strategies import get_strategy
+    from scalper_hft.validation.sweep import MULTI_SYMBOL_STRATEGIES
+
+    strategy = get_strategy(args.strategy, **_apply_use_kalman(args, args.param_dict))
+    if args.strategy not in MULTI_SYMBOL_STRATEGIES:
+        return  # не pairs — pair-вердикт не потрібен
+    from scalper_hft.backtest.pairs import run_pairs_walk_forward
+    from scalper_hft.cli import _load_klines
+    from scalper_hft.data.downloader import download_funding
+    from scalper_hft.validation.pairs_gate import WF_POS_FRAC_MIN
+    from scalper_hft.validation.verdict_store import record_pair_verdict
+
+    df1 = _load_klines(
+        leg1, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", True)
+    )
+    df2 = _load_klines(
+        leg2, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", True)
+    )
+    f1 = download_funding(leg1, args.days) if strategy.needs_funding else None
+    f2 = download_funding(leg2, args.days) if strategy.needs_funding else None
+    try:
+        wf = run_pairs_walk_forward(
+            df1,
+            df2,
+            strategy,
+            f1,
+            f2,
+            train_bars=args.train,
+            test_bars=args.test,
+            position_pct=getattr(args, "position_pct", None) or 0.3,
+            maker_execution=getattr(args, "maker", False),
+        )
+    except ValueError as exc:
+        print(f"\n[PAIR-вердикт] пропущено: {exc}")
+        return
+
+    pos_frac = float(wf["positive_windows"])
+    n_windows = int(wf["n_windows"])
+    reasons: list[str] = []
+    if n_windows == 0:
+        reasons.append("WF вікон=0")
+    elif pos_frac < WF_POS_FRAC_MIN:
+        reasons.append(f"WF positive={pos_frac:.0%}<{WF_POS_FRAC_MIN:.0%}")
+    # PBO — опційно (дорого); залишимо як майбутнє розширення (CSCV на pairs)
+    label = "PASS" if not reasons else "FAIL"
+    print(
+        "\n[PAIR-вердикт] "
+        + f"{leg1}/{leg2} {args.interval}: {label}"
+        + (f" ({'; '.join(reasons)})" if reasons else "")
+    )
+    record_pair_verdict(args.strategy, leg1, leg2, args.interval, label, "; ".join(reasons))
 
 
 def cmd_ml(args: argparse.Namespace) -> None:

@@ -112,6 +112,42 @@ def leverage_ok(
     return (float(current_notional) + float(add_notional)) <= equity * max_leverage
 
 
+def per_symbol_notional_ok(
+    add_notional: float,
+    equity: float,
+    cap_pct: float,
+) -> bool:
+    """Per-symbol notional cap: ноціонал нової позиції ≤ equity × cap_pct.
+
+    Захищає від «переважання» однієї монети в портфелі: одна погана угода не
+    може зайняти більше за `cap_pct` частку equity (Narang: position concentration).
+    """
+    if equity <= 0 or cap_pct <= 0:
+        return False
+    return float(add_notional) <= equity * cap_pct
+
+
+def margin_proximity_ok(
+    current_notional: float,
+    add_notional: float,
+    equity: float,
+    max_leverage: float,
+    buffer: float,
+) -> bool:
+    """Блок входів при наближенні до ліквідації.
+
+    Сумарне плече після входу має залишати буфер до max_leverage:
+    (cur + add)/equity ≤ max_leverage × (1 − buffer). `buffer` ∈ [0, 1).
+    При buffer=0 — вироджується у звичайний leverage-ліміт.
+    """
+    if equity <= 0 or max_leverage <= 0:
+        return False
+    if buffer < 0:
+        buffer = 0.0
+    new_leverage = (float(current_notional) + float(add_notional)) / equity
+    return new_leverage <= max_leverage * (1.0 - buffer)
+
+
 def pair_legs(pid: str) -> frozenset[str]:
     clean_pid = pid.rsplit(":", 1)[0] if ":" in pid else pid
     return frozenset(part for part in clean_pid.split("/") if part)

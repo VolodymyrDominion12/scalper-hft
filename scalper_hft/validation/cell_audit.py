@@ -269,6 +269,9 @@ def audit_cell(
     test_bars: int | None = None,
     with_cscv: bool = False,
     strategy_params: dict[str, Any] | None = None,
+    purge_bars: int = 0,
+    embargo_bars: int = 0,
+    n_trials_floor: int | None = None,
 ) -> CellAudit:
     """Повний аудит комірки. Помилки даних/рахунку — status=error, без raise.
 
@@ -276,6 +279,11 @@ def audit_cell(
     бектестів — дорого для матричних прогонів, вмикати для фінального
     вердикту комірки, напр. CLI `overfit`).
     strategy_params: параметри конструктора стратегії (напр. use_kalman).
+    purge_bars/embargo_bars: прогін/ембарго між train/test та між OOS-вікнами
+        (AFML Ch.7/11) — щоб лейбли/позиції не змішували IS і OOS. 0 = вимкнено.
+    n_trials_floor: мінімальна оцінка числа спроб для DSR (1D). Якщо задано,
+        бере max(n_trials_floor, чесна оцінка з журналу/combos) — щоб явна
+        вказівка дослідника (--trials) не занижувала DSR-корекцію.
     """
     from scalper_hft.backtest.execution import CostModel
 
@@ -366,6 +374,8 @@ def audit_cell(
             funding=funding,
             position_pct=settings.position_pct,
             collect_oos_returns=True,
+            purge_bars=purge_bars,
+            embargo_bars=embargo_bars,
         )
         windows = tuple(_window_to_dict(w) for w in wf.windows)
 
@@ -433,6 +443,8 @@ def audit_cell(
                     symbol=symbol,
                 )
             )
+            if n_trials_floor is not None and n_trials_floor > 0:
+                n_trials = max(n_trials, int(n_trials_floor))
             record_trial(
                 ledger_path,
                 strategy=strategy_name,

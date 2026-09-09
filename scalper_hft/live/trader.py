@@ -35,7 +35,12 @@ from scalper_hft.data.client import ExchangeClient
 from scalper_hft.live.account import PaperAccount
 from scalper_hft.live.exit_ladders import OneWayTradingLadder
 from scalper_hft.live.pending_orders import PendingOrder, PendingOrderManager
-from scalper_hft.live.risk_gate import CooldownState, decide_entry
+from scalper_hft.live.risk_gate import (
+    CooldownState,
+    decide_entry,
+    margin_proximity_ok,
+    per_symbol_notional_ok,
+)
 from scalper_hft.live.trader_bars import as_naive_utc, closed_klines
 from scalper_hft.live.trader_loop import (
     SilentAttritionKillSwitch,
@@ -112,6 +117,14 @@ class LiveTrader:
         self.hmm_block = hmm_block
         self.hmm_states = hmm_states
         self.hmm_threshold = hmm_threshold
+        # Peak-to-trough DrawdownBreaker (Narang: drawdown control) — як у pairs_engine,
+        # але для single-symbol LiveTrader. Просідання від історичного піку
+        # equity > max_drawdown_pct → halt + АВТО-flatten позиції.
+        from scalper_hft.live.risk_gate import DrawdownBreaker
+
+        self.dd_breaker = DrawdownBreaker(
+            max_dd_pct=getattr(self.settings, "max_drawdown_pct", 0.10), high_water=self.account.equity
+        )
         self.last_signal: int = 0
         self._last_roll_day: object | None = None
         # Тижневий ліміт збитків (ISO-тиждень), як у pairs runner
@@ -380,6 +393,20 @@ class LiveTrader:
             return False, "silent attrition: EWMA PnL нижче порогу"
         if len(self.account.positions) >= self.settings.max_open_positions:
             return False, "максимум відкритих позицій"
+        # Per-symbol notional cap + margin/liquidation proximity (1D).
+        # Ноціонал нового входу = size × ціна; поточний ноціонал позиції символу.
+        add_notional = float(decision.size) * float(mark_price if mark_price is not None else 0.0)
+        cur_pos = self.account.positions.get(self.symbol)
+        cur_notional = 0.0
+        if cur_pos is not None:
+            cur_notional = abs(float(cur_pos.size)) * float(mark_price if mark_price is not None else 0.0)
+        cap_pct = float(getattr(self.settings, "per_symbol_notional_pct", 0.30))
+        if not per_symbol_notional_ok(add_notional, self.account.equity, cap_pct):
+            return False, "per-symbol notional cap"
+        buf = float(getattr(self.settings, "liquidation_proximity_buffer", 0.10))
+        max_lev = float(getattr(self.settings, "max_leverage", 3.0))
+        if not margin_proximity_ok(cur_notional, add_notional, self.account.equity, max_lev, buf):
+            return False, "margin/liquidation proximity"
         if gate.status == "cooldown":
             return True, "cooldown"
         return True, "ok"

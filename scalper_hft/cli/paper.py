@@ -10,6 +10,29 @@ from scalper_hft.cli._common import (
 )
 
 
+def _check_directional_audit_gate(args: argparse.Namespace) -> None:
+    """Fail-closed directional overfitting-гейт для paper/paper-run.
+
+    Працює лише коли увімкнено `REQUIRE_AUDIT_PASS` (дефолт False — дослідницький
+    режим без блокування). При True — вимагає свіжий PASS з `overfit` для
+    (strategy, symbol, interval), інакше raise (старт заборонено). Pairs-стратегії
+    тут не проходять (вони мають окремий pair-гейт у pairs_runner).
+    """
+    import scalper_hft.config as _cfg
+
+    settings = _cfg.get_settings()
+    if not settings.require_audit_pass:
+        return
+    from scalper_hft.live.audit_gate import require_audit_pass
+
+    require_audit_pass(
+        args.strategy,
+        [args.symbol],
+        args.interval,
+        max_age_days=settings.audit_max_age_days,
+    )
+
+
 def cmd_paper(args: argparse.Namespace) -> None:
     # call-time імпорт: тести патчать scalper_hft.config.get_settings
     import scalper_hft.config as _cfg
@@ -21,6 +44,7 @@ def cmd_paper(args: argparse.Namespace) -> None:
         raise SystemExit(
             "paper — paper-only команда: при DRY_RUN=false відмова. Реальні ордери — лише через свідомий live-запуск."
         )
+    _check_directional_audit_gate(args)
     df = _load_klines(
         args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", True)
     )
@@ -46,6 +70,7 @@ def cmd_paper_run(args: argparse.Namespace) -> None:
             "paper-run — paper-only команда: при DRY_RUN=false відмова. "
             "Реальні ордери — лише через свідомий live-запуск."
         )
+    _check_directional_audit_gate(args)
     strategy = get_strategy(args.strategy, **args.param_dict)
     runner = PaperRunner(strategy, args.symbol, args.interval)
     result = runner.run(iterations=args.iterations, sleep_sec=args.sleep)

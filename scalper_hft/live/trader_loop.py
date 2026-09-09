@@ -83,6 +83,20 @@ def execute_signal(
 
     parts: list[str] = []
 
+    # Peak-to-trough DrawdownBreaker (Narang) — halt + АВТО-flatten, як у pairs_engine.
+    # Просідання від історичного піку equity > max_drawdown_pct → блок нових входів
+    # і закриття відкритої позиції. Вихід (close) завжди дозволений: відкрита позиція
+    # при triggered авто-flatten'иться; при відсутності позиції — halt (без нових).
+    if trader.dd_breaker.check(trader.account.equity):
+        if have != 0:
+            parts.append(trader.execute(TradeDecision("close", trader.symbol, 0.0, "dd_breaker:flatten"), close, ts))
+            trader.ladder = None
+            parts.append("dd_breaker:flatten")
+        else:
+            parts.append("dd_breaker:halt")
+        trader.last_signal = signal
+        return " | ".join(parts)
+
     ladder_exit = 0.0
     if have != 0 and trader.use_exit_ladders and trader.ladder is not None:
         ladder_exit = trader.ladder.update_price(close)

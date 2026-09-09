@@ -73,14 +73,26 @@ def stage_winners() -> pd.DataFrame:
     ok["oos_ok"] = ok["avg_oos_sharpe"].fillna(-99) > 0
     rows = []
     for (sym, iv), grp in ok.groupby(["symbol", "interval"]):
-        best = grp.sort_values("avg_oos_sharpe", ascending=False).iloc[0]
-        top3 = grp.sort_values("avg_oos_sharpe", ascending=False).head(3)
+        # Bailey–López de Prado haircut на рівні вибору переможця: обираємо
+        # найкращого за спостережуваним OOS Sharpe, але «зістрижуємо» його на
+        # очікуваний максимум N iid кандидатів (selection-bias). Без цього
+        # матриця завжди «знаходить» вигідного переможця випадково.
+        sharpes = grp["avg_oos_sharpe"].fillna(-99.0).tolist()
+        from scalper_hft.validation.deflated_sharpe import selection_haircut
+
+        order = grp.sort_values("avg_oos_sharpe", ascending=False)
+        best = order.iloc[0]
+        _best_idx, sr0, deflated_best = selection_haircut(sharpes, n_trials=len(grp))
+        top3 = order.head(3)
         rows.append(
             {
                 "symbol": sym,
                 "interval": iv,
                 "winner_strategy": best["strategy"],
                 "winner_avg_oos_sharpe": best["avg_oos_sharpe"],
+                "winner_deflated_oos_sharpe": deflated_best,
+                "winner_selection_sr0": sr0,
+                "winner_survives_haircut": bool(deflated_best > 0.0),
                 "winner_oos_pos_frac": best["oos_positive_frac"],
                 "winner_avg_is_sharpe": best["avg_is_sharpe"],
                 "winner_n_trades_oos": best["n_trades"],
@@ -111,6 +123,11 @@ def _cell_audit(task: dict) -> dict:
 
     interval = str(task["interval"])
     train, test = default_train_test(interval)
+    # CSCV PBO опційний (дорого ~20 бектестів/комірку): вмикається через
+    # env MATRIX_AUDIT_CSCV=1 або --cscv (1C). За замовч. вимкнено для матриці.
+    import os
+
+    with_cscv = os.getenv("MATRIX_AUDIT_CSCV", "0") == "1" or bool(task.get("with_cscv"))
     audit = audit_cell(
         str(task["strategy"]),
         str(task["symbol"]),
@@ -118,6 +135,7 @@ def _cell_audit(task: dict) -> dict:
         DAYS,
         train_bars=train,
         test_bars=test,
+        with_cscv=with_cscv,
     )
     return audit.to_summary_dict()
 
@@ -310,7 +328,14 @@ def stage_report() -> str:
 
 
 if __name__ == "__main__":
-    stage = sys.argv[1] if len(sys.argv) > 1 else "winners"
+    args = sys.argv[1:]
+    stage = args[0] if args else "winners"
+    if stage in ("--cscv", "-c"):
+        # --cscv перед stage: увімкнути CSCV для audit-стадії
+        import os
+
+        os.environ["MATRIX_AUDIT_CSCV"] = "1"
+        stage = args[1] if len(args) > 1 else "winners"
     if stage == "winners":
         stage_winners()
     elif stage == "audit":

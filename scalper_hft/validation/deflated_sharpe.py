@@ -80,6 +80,46 @@ def estimate_n_trials(param_combinations: int, backtests_per_combo: int = 1, mul
     return max(1, int(param_combinations * backtests_per_combo * multiplier))
 
 
+def selection_haircut(
+    oos_sharpes: Sequence[float],
+    n_trials: int | None = None,
+) -> tuple[int, float, float]:
+    """Bailey–López de Prado «haircut» для вибору переможця серед N кандидатів.
+
+    Проблема (portfolio-level multiple testing): обрати найкращого за
+    спостережуваним OOS Sharpe серед N кандидатів = максимізація по N, що
+    завищує очікуваний Sharpe на sqrt(V[SR])·z(N). Ця функція повертає
+    «зістрижений» (deflated) Sharpe переможця = max − SR0, де SR0 — очікуваний
+    максимум N iid Sharpe-оцінок з дисперсією V[SR_n] (дисперсія по
+    кандидатам). Використовується у matrix_audit/sweep для чесного вибору
+    переможця на рівні портфеля/комірки.
+
+    Args:
+        oos_sharpes: спостережувані OOS Sharpe кандидатів (можуть містити NaN —
+            ігноруються).
+        n_trials: кількість спроб (за замовч. = число кандидатів).
+
+    Returns:
+        (best_idx, sr0, deflated_best):
+            best_idx — індекс переможця (argmax по чистих значеннях);
+            sr0 — поріг очікуваного максимуму (haircut);
+            deflated_best — max(oos_sharpes) − sr0 (зістрижений Sharpe).
+            Якщо кандидатів < 2 → sr0 = 0, deflated = max (без корекції).
+    """
+    arr = np.asarray([float(x) for x in oos_sharpes if x is not None and not (float(x) != float(x))], dtype=float)
+    if arr.size == 0:
+        return -1, 0.0, 0.0
+    best_idx_raw = int(np.argmax(arr))
+    n = int(n_trials) if n_trials and n_trials > 0 else arr.size
+    if n < 2:
+        return best_idx_raw, 0.0, float(arr[best_idx_raw])
+    var_sr = float(np.var(arr, ddof=1)) if arr.size > 1 else 0.0
+    var_sr = max(var_sr, 1e-12)
+    z = (1.0 - _EULER_GAMMA) * _norm_ppf(1.0 - 1.0 / n) + _EULER_GAMMA * _norm_ppf(1.0 - 1.0 / (n * math.e))
+    sr0 = math.sqrt(var_sr) * z
+    return best_idx_raw, float(sr0), float(arr[best_idx_raw] - sr0)
+
+
 def deflated_sharpe_ratio(
     returns: Sequence[float] | pd.Series | np.ndarray,
     n_trials: int,
@@ -184,3 +224,12 @@ def probabilistic_sharpe_ratio(
         return 0.0
     z_stat = sr * math.sqrt(n - 1) / math.sqrt(var_term)
     return _norm_cdf(z_stat)
+
+
+__all__ = [
+    "estimate_n_trials",
+    "selection_haircut",
+    "deflated_sharpe_ratio",
+    "probability_of_backtest_overfitting",
+    "probabilistic_sharpe_ratio",
+]

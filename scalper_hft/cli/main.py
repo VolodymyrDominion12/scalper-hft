@@ -144,6 +144,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--test", type=int, default=500)
     p.add_argument("--trials", type=int, default=50, help="Оцінка кількості спроб для DSR")
     p.add_argument("--use-kalman", action="store_true", help="PairsArb: динамічний Kalman hedge ratio")
+    p.add_argument("--leg1", default=None, help="Pairs-стратегії: перша нога (для авто pair-вердикту)")
+    p.add_argument("--leg2", default=None, help="Pairs-стратегії: друга нога (для авто pair-вердикту)")
     p.add_argument("--enqueue", action="store_true", help="Поставити в чергу jobs.sqlite і вийти (не рахувати тут)")
     p.set_defaults(func=_cli_pkg.cmd_overfit)
 

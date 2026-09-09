@@ -231,6 +231,7 @@ def handle_overfit(payload: dict[str, Any], job_dir: Path, **_: Any) -> None:
         days,
         train_bars=train_bars,
         test_bars=test_bars,
+        with_cscv=True,  # CSCV PBO для фінального вердикту комірки (1C)
         strategy_params=payload.get("params") or None,
     )
     if audit.status != "ok":
