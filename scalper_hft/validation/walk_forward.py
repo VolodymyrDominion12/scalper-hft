@@ -30,14 +30,28 @@ if TYPE_CHECKING:
     from scalper_hft.overlay.policy import CellPolicy
 
 
-def _generate_signals(strategy: Strategy, df: pd.DataFrame, trades, funding) -> pd.Series:
+def _generate_signals(
+    strategy: Strategy,
+    df: pd.DataFrame,
+    trades,
+    funding,
+    basket_df=None,
+    *,
+    strict_data: bool = True,
+) -> pd.Series:
     """Виклик generate_signals з kwargs, які стратегія реально приймає."""
+    if strict_data:
+        validate = getattr(strategy, "validate_inputs", None)
+        if callable(validate):
+            validate(df, trades=trades, funding=funding, basket_df=basket_df)
     params = inspect.signature(strategy.generate_signals).parameters
     kwargs: dict = {}
     if "trades" in params:
         kwargs["trades"] = trades
     if "funding" in params:
         kwargs["funding"] = funding
+    if "basket_df" in params:
+        kwargs["basket_df"] = basket_df
     return strategy.generate_signals(df, **kwargs)
 
 

@@ -40,9 +40,12 @@ class OptimizationResult:
     details: dict = field(default_factory=dict)
 
     def summary(self) -> str:
+        hold = self.details.get("holdout_sharpe")
+        hold_line = f"\nHoldout Sharpe: {hold:.3f}" if isinstance(hold, (int, float)) and np.isfinite(hold) else ""
         return (
             f"Оптимізація: {self.n_trials} спроб; кращі параметри: {self.best_params}\n"
             f"CV OOS Sharpe: {self.cv_scores} (avg {np.mean(self.cv_scores):.3f})"
+            f"{hold_line}"
         )
 
 
@@ -328,3 +331,33 @@ def optimize_ml_params(
         n_trials=n_trials,
         details={"scoring": scoring, "n_splits": n_splits, "method": "PurgedKFold"},
     )
+
+
+def evaluate_holdout(
+    holdout: pd.DataFrame,
+    strategy_cls: type[Strategy],
+    params: dict,
+    *,
+    cost: CostModel | None = None,
+    trades: pd.DataFrame | None = None,
+    funding: pd.DataFrame | None = None,
+    position_pct: float = 0.01,
+) -> float:
+    """Сліпий Sharpe на holdout після Optuna (не входить у objective)."""
+    if holdout is None or holdout.empty or len(holdout) < 30:
+        return float("nan")
+    trades_ho = _slice_funding(trades, holdout.index[0], holdout.index[-1]) if trades is not None else None
+    funding_ho = _slice_funding(funding, holdout.index[0], holdout.index[-1]) if funding is not None else None
+    try:
+        res = run_backtest(
+            holdout,
+            strategy_cls(**params),
+            cost=cost or CostModel(),
+            trades=trades_ho,
+            funding=funding_ho,
+            position_pct=position_pct,
+        )
+        sharpe = float(res.metrics.sharpe)
+    except Exception:  # noqa: BLE001
+        return float("nan")
+    return sharpe if np.isfinite(sharpe) else float("nan")

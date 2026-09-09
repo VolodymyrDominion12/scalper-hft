@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 from scalper_hft.backtest.engine import run_backtest
 from scalper_hft.strategies import get_strategy
-from scalper_hft.strategies.base import MissingDataError
+from scalper_hft.strategies.base import CAPABILITIES, MissingDataError
 
 
 def _ohlcv(n: int = 120) -> pd.DataFrame:
@@ -36,6 +36,12 @@ def test_required_data_reflects_needs_flags() -> None:
     assert get_strategy("mean_reversion").required_data() == frozenset({"ohlcv"})
     assert get_strategy("cvd_momentum").required_data() == frozenset({"ohlcv", "trades"})
     assert get_strategy("funding_carry").required_data() == frozenset({"ohlcv", "funding"})
+    assert get_strategy("sparse_basket").required_data() == frozenset({"ohlcv", "basket"})
+    assert get_strategy("cross_momentum").required_data() == frozenset({"ohlcv", "multi_symbol"})
+    assert get_strategy("pairs_arb").required_data() == frozenset({"ohlcv", "multi_symbol"})
+    assert get_strategy("market_maker").required_data() == frozenset({"ohlcv", "l2"})
+    assert get_strategy("sparse_basket").requires <= CAPABILITIES
+    assert get_strategy("cross_momentum").requires <= CAPABILITIES
 
 
 def test_missing_trades_fails_fast() -> None:
@@ -68,3 +74,84 @@ def test_precomputed_signals_skip_validation() -> None:
     signals = pd.Series(0, index=df.index)
     res = run_backtest(df, get_strategy("cvd_momentum"), signals=signals)
     assert len(res.equity) == len(df)
+
+
+def _wide_close(n: int = 120) -> pd.DataFrame:
+    """OHLCV + три '{sym}_close' колонки для cross_momentum."""
+    df = _ohlcv(n)
+    df["AAA_close"] = df["close"]
+    df["BBB_close"] = df["close"] * 0.5
+    df["CCC_close"] = df["close"] * 1.2
+    return df
+
+
+def _basket(n: int = 120) -> pd.DataFrame:
+    df = _ohlcv(n)
+    return pd.DataFrame(
+        {"A": df["close"], "B": df["close"] * 0.5, "C": df["close"] * 0.3},
+        index=df.index,
+    )
+
+
+def test_sparse_basket_without_basket_fails_fast() -> None:
+    """Без кошика — MissingDataError, не односерійний z-score MR."""
+    with pytest.raises(MissingDataError, match="basket"):
+        run_backtest(_ohlcv(), get_strategy("sparse_basket"))
+
+
+def test_sparse_basket_with_basket_runs() -> None:
+    df = _ohlcv()
+    res = run_backtest(df, get_strategy("sparse_basket"), basket_df=_basket())
+    assert len(res.equity) == len(df)
+
+
+def test_sparse_basket_strict_data_false_keeps_fallback() -> None:
+    """Свідомий обхід: fallback на single-series z-score лишається доступним."""
+    res = run_backtest(_ohlcv(), get_strategy("sparse_basket"), strict_data=False)
+    assert len(res.equity) == 120
+
+
+def test_cross_momentum_single_symbol_fails_fast() -> None:
+    """Один символ — MissingDataError, не time-series momentum proxy."""
+    with pytest.raises(MissingDataError, match="multi_symbol"):
+        run_backtest(_ohlcv(), get_strategy("cross_momentum"))
+
+
+def test_cross_momentum_wide_frame_runs() -> None:
+    df = _wide_close()
+    res = run_backtest(df, get_strategy("cross_momentum", lookback=5, signal_smooth=1))
+    assert len(res.equity) == len(df)
+
+
+def test_pairs_arb_single_symbol_fails_fast() -> None:
+    """pairs_arb без leg1/leg2 більше не повертає нулі як «результат»."""
+    with pytest.raises(MissingDataError, match="multi_symbol"):
+        run_backtest(_ohlcv(), get_strategy("pairs_arb"))
+
+
+def test_pairs_arb_with_legs_runs() -> None:
+    df = _ohlcv()
+    df["leg1"] = df["close"]
+    df["leg2"] = df["close"] * 0.05
+    res = run_backtest(df, get_strategy("pairs_arb", lookback=30, regime_scale=False))
+    assert len(res.equity) == len(df)
+
+
+def test_market_maker_vector_path_requires_l2() -> None:
+    """Векторний run_backtest(market_maker) без стакана — fail-fast (не нулі)."""
+    with pytest.raises(MissingDataError, match="l2"):
+        run_backtest(_ohlcv(), get_strategy("market_maker"))
+
+
+def test_market_maker_with_imbalance_column_is_l2() -> None:
+    df = _ohlcv()
+    df["imbalance"] = 0.0
+    res = run_backtest(df, get_strategy("market_maker"))
+    assert len(res.equity) == len(df)
+
+
+def test_supervisor_unions_child_requires() -> None:
+    sup = get_strategy("regime_supervisor", strategies="cross_momentum,mean_reversion")
+    assert "multi_symbol" in sup.requires
+    with pytest.raises(MissingDataError, match="multi_symbol"):
+        run_backtest(_ohlcv(), sup)

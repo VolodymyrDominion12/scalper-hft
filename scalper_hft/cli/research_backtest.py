@@ -145,21 +145,21 @@ def cmd_walkforward(args: argparse.Namespace) -> None:
 
 
 def cmd_optimize(args: argparse.Namespace) -> None:
+    from scalper_hft.backtest.execution import CostModel
     from scalper_hft.cli import _load_klines  # call-time (patchable)
     from scalper_hft.strategies import get_strategy
-    from scalper_hft.validation.optimize import optimize_params
+    from scalper_hft.validation.optimize import evaluate_holdout, optimize_params
 
     df = _load_klines(
         args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", True)
     )
     strategy = get_strategy(args.strategy)
     settings = get_settings()
-    # «Замкований» holdout: Optuna-підбір йде лише на research-частині
-    # (перші 100-holdout_pct %); останні holdout_pct% — сліпий фінальний тест.
-    from scalper_hft.validation.holdout import split_research_holdout
+    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    from scalper_hft.validation.holdout import resolve_optuna_holdout_pct, split_research_holdout
 
-    holdout_pct = float(getattr(settings, "enforce_holdout_pct", 0.0))
-    df, _holdout = split_research_holdout(df, holdout_pct)
+    holdout_pct = resolve_optuna_holdout_pct(float(getattr(settings, "enforce_holdout_pct", 0.0)))
+    df, holdout = split_research_holdout(df, holdout_pct)
     if df.empty:
         fail("після holdout-обрізу немає даних (зменшіть HOLDOUT_PCT або збільшіть --days)")
     # OOS-дисципліна: Optuna-підбір «спалює» OOS-відрізок (strategy×symbol×дати),
@@ -182,20 +182,39 @@ def cmd_optimize(args: argparse.Namespace) -> None:
         df,
         strategy,
         n_trials=args.trials,
+        cost=cost,
         position_pct=settings.position_pct,
         n_splits=args.splits,
     )
+    if res.best_params and not holdout.empty:
+        ho = evaluate_holdout(
+            holdout,
+            type(strategy),
+            res.best_params,
+            cost=cost,
+            position_pct=settings.position_pct,
+        )
+        res.details["holdout_sharpe"] = ho
+        res.details["holdout_bars"] = int(len(holdout))
+        res.details["holdout_pct"] = holdout_pct
     print("\n" + res.summary())
 
 
 def cmd_ml_opt(args: argparse.Namespace) -> None:
     """Оптимізація параметрів маркування Triple-Barrier для ML-стратегій."""
     from scalper_hft.cli import _load_klines  # call-time (patchable)
+    from scalper_hft.config import get_settings
+    from scalper_hft.validation.holdout import resolve_optuna_holdout_pct, split_research_holdout
     from scalper_hft.validation.optimize import optimize_ml_params
 
     df = _load_klines(
         args.symbol, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", True)
     )
+    settings = get_settings()
+    holdout_pct = resolve_optuna_holdout_pct(float(getattr(settings, "enforce_holdout_pct", 0.0)))
+    df, holdout = split_research_holdout(df, holdout_pct)
+    if df.empty:
+        fail("після holdout-обрізу немає даних (зменшіть HOLDOUT_PCT або збільшіть --days)")
     trades = None
     if args.trades:
         from scalper_hft.data.downloader import download_agg_trades
@@ -214,6 +233,8 @@ def cmd_ml_opt(args: argparse.Namespace) -> None:
         trades=trades,
         sampler=args.sampler,
     )
+    res.details["holdout_bars"] = int(len(holdout))
+    res.details["holdout_pct"] = holdout_pct
     print("\n[ML OPTIMIZATION RESULT]")
     print(res.summary())
 

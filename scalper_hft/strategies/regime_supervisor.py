@@ -78,6 +78,8 @@ class RegimeSupervisor(Strategy):
         self.blend_mode: str = str(self.get("blend_mode", "contextual_hedge"))
         self.needs_trades = any(s.needs_trades for s in self._strats)
         self.needs_funding = any(s.needs_funding for s in self._strats)
+        self.requires = frozenset().union(*(s.requires for s in self._strats))
+        self._apply_oos_preferred()
 
         # RegimeDetector
         self._detector = RegimeDetector(
@@ -126,8 +128,24 @@ class RegimeSupervisor(Strategy):
 
         sup.needs_trades = any(s.needs_trades for s in sup._strats)
         sup.needs_funding = any(s.needs_funding for s in sup._strats)
+        sup.requires = frozenset().union(*(s.requires for s in sup._strats))
+        sup._apply_oos_preferred()
 
         return sup
+
+    @classmethod
+    def from_haircut_roster(cls, winners: pd.DataFrame, **params: Any) -> RegimeSupervisor:
+        """Supervisor лише на стратегіях, що пройшли sweep haircut (3–5 імен).
+
+        Не підставляє всі 17 альф і не бере відхилені MR/ST/HMM за замовчуванням.
+        """
+        from scalper_hft.validation.sweep import haircut_roster
+
+        names = haircut_roster(winners)
+        if not names:
+            raise ValueError("haircut roster порожній: жодна стратегія не survives_haircut")
+        params.setdefault("strategies", ",".join(names))
+        return cls(**params)
 
     # ────────────────────────────────────────────────────────────────────────
     # Batch (бектест)
@@ -446,6 +464,18 @@ class RegimeSupervisor(Strategy):
             col = out.columns[j]
             out[col] = out[col].where(active, 0.0)
         return out
+
+    def _apply_oos_preferred(self) -> None:
+        """OOS preferred_regimes з RegimePerfMatrix JSON (perf_matrix_path)."""
+        path = str(self.get("perf_matrix_path", "") or "")
+        if not path:
+            return
+        try:
+            from scalper_hft.validation.regime_map import RegimePerfMatrix, apply_oos_preferred_regimes
+
+            apply_oos_preferred_regimes(self._strats, RegimePerfMatrix.from_json(path))
+        except (OSError, ValueError, TypeError) as exc:
+            logger.warning("RegimeSupervisor: не вдалося застосувати perf_matrix %s: %s", path, exc)
 
     def _load_regime_map(self):
         """Завантажити валідовану regime→strategy map (2B) з regime_map_path.

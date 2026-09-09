@@ -119,6 +119,7 @@ class EnsembleStrategy(Strategy):
 
         self.needs_trades = any(s.needs_trades for s in self.strats)
         self.needs_funding = any(s.needs_funding for s in self.strats)
+        self.requires = frozenset().union(*(s.requires for s in self.strats))
 
     def generate_signals(
         self, df: pd.DataFrame, trades: pd.DataFrame | None = None, funding: pd.DataFrame | None = None

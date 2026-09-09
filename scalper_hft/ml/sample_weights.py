@@ -61,12 +61,17 @@ def get_avg_uniqueness(ind_m: pd.DataFrame) -> pd.Series:
 def seq_bootstrap(
     ind_m: pd.DataFrame,
     s_length: int | None = None,
+    *,
+    seed: int | None = None,
+    rng: np.random.Generator | None = None,
 ) -> list[int]:
     """Sequential Bootstrap: обирає індекси зразків з мінімальною одночасністю.
 
     Args:
         ind_m: матриця індикаторів (bars × labels).
         s_length: розмір вибірки (default = кількість лейблів).
+        seed: фіксоване зерно Generator (відтворюваність).
+        rng: готовий numpy Generator; якщо задано — ``seed`` ігнорується.
 
     Returns:
         Список індексів колонок ind_m (тобто індексів лейблів).
@@ -74,6 +79,7 @@ def seq_bootstrap(
     if s_length is None:
         s_length = ind_m.shape[1]
 
+    gen = rng if rng is not None else np.random.default_rng(seed)
     phi: list[Any] = []
     for _ in range(s_length):
         avg_u = pd.Series(dtype=float)
@@ -81,8 +87,15 @@ def seq_bootstrap(
             phi_ = phi + [i]
             avg_u[i] = get_avg_uniqueness(ind_m[phi_]).iloc[-1]
         # вибираємо лейбл з найвищою унікальністю (менш корельований з вже вибраними)
-        prob = avg_u / avg_u.sum()
-        phi.append(np.random.choice(prob.index, p=prob.values))
+        total = float(avg_u.sum())
+        if total <= 0 or not np.isfinite(total):
+            choices = np.asarray(ind_m.columns)
+            phi.append(int(gen.choice(choices)))
+            continue
+        prob = avg_u / total
+        choices = np.asarray(prob.index)
+        p = prob.to_numpy(dtype=float)
+        phi.append(int(gen.choice(choices, p=p)))
     return phi
 
 

@@ -17,6 +17,17 @@ from __future__ import annotations
 
 import pandas as pd
 
+# Phase 5.3: Optuna без HOLDOUT_PCT у .env усе одно лишає сліпий хвіст.
+DEFAULT_OPTUNA_HOLDOUT_PCT = 0.20
+
+
+def resolve_optuna_holdout_pct(settings_pct: float) -> float:
+    """Holdout для Optuna: явний HOLDOUT_PCT > 0, інакше 20%."""
+    pct = float(settings_pct)
+    if pct > 0:
+        return pct
+    return DEFAULT_OPTUNA_HOLDOUT_PCT
+
 
 def split_research_holdout(df: pd.DataFrame, holdout_pct: float) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Поділити ряд на research (перші 100-holdout_pct %) та holdout (останні holdout_pct %).
@@ -42,4 +53,4 @@ def split_research_holdout(df: pd.DataFrame, holdout_pct: float) -> tuple[pd.Dat
     return research, holdout
 
 
-__all__ = ["split_research_holdout"]
+__all__ = ["DEFAULT_OPTUNA_HOLDOUT_PCT", "resolve_optuna_holdout_pct", "split_research_holdout"]

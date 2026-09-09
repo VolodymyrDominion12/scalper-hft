@@ -38,6 +38,7 @@ class PairsArb(Strategy):
     name = "pairs_arb"
     family = "relative_value"
     preferred_regimes = frozenset()
+    requires = frozenset({"multi_symbol"})
 
     param_space = {
         "entry_z": (1.5, 4.0, 0.25),

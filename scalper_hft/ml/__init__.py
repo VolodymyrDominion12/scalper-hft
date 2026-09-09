@@ -40,6 +40,7 @@ from scalper_hft.ml.ood import apply_ood_veto, dissimilarity_index, fit_ood_stat
 from scalper_hft.ml.sample_weights import compute_sample_weights, get_ind_matrix, seq_bootstrap
 from scalper_hft.ml.trainer import (
     MlResult,
+    cpcv_validate_returns,
     predict,
     train_from_ohlcv,
     train_walk_forward,
@@ -53,6 +54,7 @@ __all__ = [
     "train_from_ohlcv",
     "predict",
     "MlResult",
+    "cpcv_validate_returns",
     "clustered_mda",
     "cluster_features",
     "CfiResult",

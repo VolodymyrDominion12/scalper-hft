@@ -109,6 +109,7 @@ class SparseBasketArb(Strategy):
     name = "sparse_basket"
     family = "relative_value"
     preferred_regimes = frozenset()
+    requires = frozenset({"basket"})
 
     param_space = {
         "lookback": (30, 200, 10),
@@ -173,18 +174,14 @@ class SparseBasketArb(Strategy):
         динамічний спред кошика та z-score.
         """
         if basket_df is None or basket_df.empty:
-            # Фолбек на одиночний ряд (mean-reversion на close).
-            # УВАГА: бектест-рушій НЕ передає basket_df (багатоактивний контур
-            # не підключений), тому ця гілка — ЄДИНА досяжна через CLI/рушій:
-            # «sparse_basket» у бектесті фактично = single-series z-score MR,
-            # а НЕ кошиковий арбітраж. Логуємо попередження один раз, щоб
-            # результати не трактувались як валідація basket-гіпотези.
+            # Fallback лише при strict_data=False (рушій fail-fast без кошика).
+            # УВАГА: ця гілка — single-series z-score MR, НЕ кошиковий арбітраж.
             if not getattr(self, "_warned_fallback", False):
                 self._warned_fallback = True
                 logger.warning(
-                    "sparse_basket: basket_df не передано (multi-asset контур не "
-                    "підключений до рушія) — працює single-series z-score "
-                    "mean-reversion fallback, НЕ кошиковий арбітраж"
+                    "sparse_basket: basket_df не передано — single-series z-score "
+                    "fallback (НЕ кошиковий арбітраж). Рушій вимагає basket_df "
+                    "при strict_data=True."
                 )
             close = df["close"]
             ma = close.rolling(self.lookback, min_periods=20).mean()

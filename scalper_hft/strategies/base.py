@@ -42,6 +42,42 @@ class MissingDataError(ValueError):
     """
 
 
+# Додаткові потоки поверх ohlcv/trades/funding (Strategy.requires).
+CAPABILITIES = frozenset({"basket", "l2", "multi_symbol"})
+_L2_COLUMNS = frozenset({"imbalance", "bid", "ask", "bid_qty", "ask_qty", "bid_px", "ask_px"})
+
+
+def close_wide_columns(df: pd.DataFrame) -> list[str]:
+    """Колонки '{symbol}_close' для крос-секційних стратегій."""
+    return [c for c in df.columns if str(c).endswith("_close")]
+
+
+def has_basket(df: pd.DataFrame, basket_df: pd.DataFrame | None = None) -> bool:
+    """Кошик: явний basket_df з ≥2 колонками цін."""
+    if basket_df is not None and not basket_df.empty and basket_df.shape[1] >= 2:
+        return True
+    return False
+
+
+def has_multi_symbol(df: pd.DataFrame, basket_df: pd.DataFrame | None = None) -> bool:
+    """Дві+ ноги: leg1/leg2 (pairs) або ≥3 колонок '{sym}_close' (cross-section)."""
+    if "leg1" in df.columns and "leg2" in df.columns:
+        return True
+    if len(close_wide_columns(df)) >= 3:
+        return True
+    if basket_df is not None and not basket_df.empty and basket_df.shape[1] >= 3:
+        return True
+    return False
+
+
+def has_l2(df: pd.DataFrame) -> bool:
+    """L2/book proxy: imbalance, bid/ask або depth* колонки."""
+    cols = {str(c) for c in df.columns}
+    if cols & _L2_COLUMNS:
+        return True
+    return any(str(c).startswith("depth") for c in df.columns)
+
+
 class Strategy(abc.ABC):
     """Базовий клас стратегії."""
 
@@ -52,6 +88,9 @@ class Strategy(abc.ABC):
     needs_trades: bool = False
     # чи потребує стратегія історії фандінгу
     needs_funding: bool = False
+    # Додаткові потоки (Phase 5.2 R4): "basket" | "l2" | "multi_symbol".
+    # Порожній frozenset = лише ohlcv (+ trades/funding за needs_*).
+    requires: frozenset[str] = frozenset()
     # якщо True — рушій вимикає сигнали, де очікуваний рух < round-trip витрат
     # (Narang гл. 5: edge має покривати транзакційні витрати)
     use_breakeven_gate: bool = False
@@ -69,16 +108,17 @@ class Strategy(abc.ABC):
         return self.params.get(key, default)
 
     def required_data(self) -> frozenset[str]:
-        """Набір обов'язкових потоків даних: {"ohlcv", "trades", "funding"}.
+        """Набір обов'язкових потоків: ohlcv + trades/funding + requires.
 
-        Виводиться з needs_trades/needs_funding; стратегії зі специфічними
-        вимогами (напр. bookTicker, ліквідації) можуть перевизначити.
+        requires ∈ {basket, l2, multi_symbol} — fail-fast у validate_inputs,
+        замість тихої деградації (односерійний z-score, TS-моментум).
         """
         req = {"ohlcv"}
         if self.needs_trades:
             req.add("trades")
         if self.needs_funding:
             req.add("funding")
+        req |= set(self.requires)
         return frozenset(req)
 
     def validate_inputs(
@@ -86,6 +126,8 @@ class Strategy(abc.ABC):
         df: pd.DataFrame,
         trades: pd.DataFrame | None = None,
         funding: pd.DataFrame | None = None,
+        *,
+        basket_df: pd.DataFrame | None = None,
     ) -> None:
         """Fail-fast перевірка capability contract перед генерацією сигналів.
 
@@ -97,6 +139,13 @@ class Strategy(abc.ABC):
             missing.append("trades (aggTrades)")
         if self.needs_funding and (funding is None or funding.empty):
             missing.append("funding")
+        req = set(self.requires)
+        if "basket" in req and not has_basket(df, basket_df):
+            missing.append("basket (basket_df ≥2 колонок цін)")
+        if "multi_symbol" in req and not has_multi_symbol(df, basket_df):
+            missing.append("multi_symbol (leg1+leg2 або ≥3 колонок {sym}_close)")
+        if "l2" in req and not has_l2(df):
+            missing.append("l2 (imbalance/bid/ask/depth)")
         if missing:
             raise MissingDataError(
                 f"{self.name}: заявлено {sorted(self.required_data())}, але відсутні: "
@@ -115,6 +164,7 @@ class Strategy(abc.ABC):
         df: pd.DataFrame,
         trades: pd.DataFrame | None = None,
         funding: pd.DataFrame | None = None,
+        **kwargs: Any,
     ) -> tuple[pd.Series, FilterTrace]:
         """Розширена версія: повертає (signals, FilterTrace).
 
@@ -125,7 +175,7 @@ class Strategy(abc.ABC):
         """
         from scalper_hft.research.filter_trace import FilterTrace
 
-        signals = self.generate_signals(df, trades=trades, funding=funding)
+        signals = self.generate_signals(df, trades=trades, funding=funding, **kwargs)
         return signals, FilterTrace()
 
     def exit_levels(self, df: pd.DataFrame) -> pd.DataFrame | None:

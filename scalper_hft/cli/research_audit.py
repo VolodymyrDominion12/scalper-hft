@@ -290,6 +290,23 @@ def cmd_report(args: argparse.Namespace) -> None:
     except Exception as exc:  # noqa: BLE001
         decay_md = f"\n## Time-Decay Test\n\nпомилка: {exc}\n"
 
+    stress_md = ""
+    try:
+        from scalper_hft.validation.stress import cost_concentration_stress
+
+        stress_tbl = cost_concentration_stress(
+            df,
+            strategy,
+            cost,
+            trades=trades,
+            funding=funding,
+            position_pct=settings.position_pct,
+            baseline=res,
+        )
+        stress_md = "\n## Стрес (fees×2, slippage×2, без топ-5 угод)\n\n" + stress_tbl.to_markdown() + "\n"
+    except Exception as exc:  # noqa: BLE001
+        stress_md = f"\n## Стрес\n\nпомилка: {exc}\n"
+
     md = f"""# Звіт: {args.strategy} · {args.symbol} · {args.interval}
 
 Дані: {len(df)} барів ({df.index[0]} … {df.index[-1]}), {args.days} днів.
@@ -313,7 +330,7 @@ def cmd_report(args: argparse.Namespace) -> None:
 - OOS спостережень: {len(oos_ret)}
 - trials: {n_trials}
 - **DSR: {dsr:.3f}** {"✅ edge значущий" if dsr > 0.95 else "⚠ edge не підтверджено"}
-{sens_md}{quintile_md}{decay_md}
+{sens_md}{quintile_md}{decay_md}{stress_md}
 ## Висновок
 
 - OOS Sharpe: {wf.avg_oos_sharpe:.3f} ({wf.positive_windows_frac:.0%} вікон > 0)

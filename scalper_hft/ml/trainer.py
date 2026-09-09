@@ -335,6 +335,25 @@ def train_from_ohlcv(
 # ── Walk-forward мета-лейблінг (AFML Ch.3.6–3.7) ─────────────────────────────
 
 
+def _oof_folds(
+    X: pd.DataFrame,
+    t1: pd.Series | None = None,
+    n_splits: int = 3,
+    gap: int = 10,
+    embargo_pct: float = 0.01,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Folds для meta-OOF: PurgedKFold (t1 відомий) або expanding TS-split."""
+    from scalper_hft.validation.cv import PurgedKFold, time_series_split
+
+    if t1 is not None and isinstance(X.index, pd.DatetimeIndex) and len(X) >= n_splits * 5:
+        pkf = PurgedKFold(n_splits=n_splits, embargo_pct=embargo_pct)
+        try:
+            return list(pkf.split(X, t1=t1.reindex(X.index)))
+        except (ValueError, KeyError, TypeError):
+            pass
+    return list(time_series_split(len(X), n_splits=n_splits, gap=gap))
+
+
 def _oof_primary_predictions(
     X: pd.DataFrame,
     y: pd.Series,
@@ -342,17 +361,16 @@ def _oof_primary_predictions(
     params: dict,
     n_splits: int = 3,
     gap: int = 10,
+    t1: pd.Series | None = None,
 ) -> np.ndarray:
-    """Чесні (OOF) прогнози primary на train-вікні через time-series split.
+    """Чесні (OOF) прогнози primary на train-вікні через PurgedKFold / TS-split.
 
     Потрібно, щоб мета-мітки y_meta = (primary вгадав) не були зашумлені
     IS-оптимізмом: primary на власних train-даних майже завжди «правий»,
     що робить y_meta однокласовим і мета-модель дегенеративною (p≈0.5).
     """
     preds = np.zeros(len(X), dtype=int)
-    from scalper_hft.validation.cv import time_series_split
-
-    folds = list(time_series_split(len(X), n_splits=n_splits, gap=gap))
+    folds = _oof_folds(X, t1=t1, n_splits=n_splits, gap=gap)
     for tr, te in folds:
         if len(te) == 0 or len(tr) < 2:
             continue
@@ -426,8 +444,9 @@ def train_walk_forward_meta(
         primary.fit(X_tr, y_tr, sample_weight=w_tr)
         side_te = _predict_binary(primary, X_te)  # OOS side (сигнал)
 
-        # 2) чесні OOF-прогнози primary на train → мета-мітки
-        side_tr_oof = _oof_primary_predictions(X_tr, y_tr, w_tr, params)
+        # 2) чесні OOF-прогнози primary на train → мета-мітки (PurgedKFold по t1)
+        t1_tr = t1.reindex(X_tr.index) if t1 is not None else None
+        side_tr_oof = _oof_primary_predictions(X_tr, y_tr, w_tr, params, t1=t1_tr)
         from scalper_hft.backtest.execution import CostModel
 
         fee = (cost if isinstance(cost, CostModel) else CostModel()).taker_cost_per_side() * 2
@@ -479,3 +498,27 @@ def _predict_binary(model: object, X: pd.DataFrame) -> np.ndarray:
 def predict(model: object, X: pd.DataFrame) -> np.ndarray:
     """Прогноз напрямку (+1/-1) для нових даних."""
     return _predict_binary(model, X)
+
+
+def cpcv_validate_returns(
+    returns: pd.DataFrame | np.ndarray,
+    *,
+    n_blocks: int = 8,
+    max_combos: int = 200,
+    purge_bars: int = 0,
+    embargo_bars: int = 0,
+):
+    """CPCV/PBO як валідатор моделі: матриця OOS-дохідностей варіантів (T×N або N×T).
+
+    Обгортка над ``pbo_cscv`` для ML/meta-лейблінгу — ті самі комбінаторні
+    спліти, що й CLI ``cscv``, щоб модель не мала окремого «м'якшого» шляху.
+    """
+    from scalper_hft.validation.cscv import pbo_cscv
+
+    return pbo_cscv(
+        returns,
+        n_blocks=n_blocks,
+        max_combos=max_combos,
+        purge_bars=purge_bars,
+        embargo_bars=embargo_bars,
+    )

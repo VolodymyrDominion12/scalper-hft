@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 # Двоногі стратегії (потребують пару/кошик символів) — у пер-символьному
 # sweep не мають сенсу; ML/ensemble — повільні, включаються лише за запитом.
-MULTI_SYMBOL_STRATEGIES = frozenset({"pairs_arb", "sparse_basket", "funding_arb"})
+MULTI_SYMBOL_STRATEGIES = frozenset({"pairs_arb", "sparse_basket", "funding_arb", "cross_momentum"})
 SLOW_STRATEGIES = frozenset({"ml_strategy", "ensemble"})
 
 DEFAULT_INTERVALS = ["1m", "5m", "15m", "30m", "1h", "4h"]
@@ -539,6 +539,34 @@ def sweep_winners_haircut(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def haircut_roster(
+    winners: pd.DataFrame,
+    *,
+    max_size: int = 5,
+) -> list[str]:
+    """Унікальні стратегії, що пройшли Bailey–LdP haircut, до ``max_size``.
+
+    Вхід — таблиця ``sweep_winners_haircut``. Порядок: вищий deflated Sharpe
+    спочатку. Порожній список, якщо ніхто не ``survives_haircut``.
+    """
+    if winners is None or winners.empty or "survives_haircut" not in winners.columns:
+        return []
+    if "winner_strategy" not in winners.columns:
+        return []
+    ok = winners.loc[winners["survives_haircut"].astype(bool)].copy()
+    if ok.empty:
+        return []
+    if "deflated_sharpe" in ok.columns:
+        ok = ok.sort_values("deflated_sharpe", ascending=False)
+    names: list[str] = []
+    for raw in ok["winner_strategy"].astype(str):
+        if raw not in names:
+            names.append(raw)
+        if len(names) >= max_size:
+            break
+    return names
+
+
 def save_sweep_report(df: pd.DataFrame, out_csv: str | None = None, out_md: str | None = None) -> None:
     """Зберегти результати sweep у CSV і короткий markdown-звіт."""
     from pathlib import Path
@@ -608,6 +636,7 @@ __all__ = [
     "run_sweep",
     "save_sweep_report",
     "sweep_winners_haircut",
+    "haircut_roster",
     "default_strategies",
     "DEFAULT_INTERVALS",
     "execute_sweep_cell",

@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from inspect import signature
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -400,6 +401,24 @@ def _attach_exit_levels(trades: pd.DataFrame, levels: pd.DataFrame | None) -> pd
     return t
 
 
+def _signal_kwargs(
+    strategy: Strategy,
+    trades: pd.DataFrame | None,
+    funding: pd.DataFrame | None,
+    basket_df: pd.DataFrame | None,
+) -> dict:
+    """Kwargs для generate_signals: needs_* потоки + basket_df, якщо сигнатура приймає."""
+    kwargs: dict = {}
+    if getattr(strategy, "needs_trades", False):
+        kwargs["trades"] = trades
+    if getattr(strategy, "needs_funding", False):
+        kwargs["funding"] = funding
+    params = signature(strategy.generate_signals).parameters
+    if "basket_df" in params:
+        kwargs["basket_df"] = basket_df
+    return kwargs
+
+
 def run_backtest(
     df: pd.DataFrame,
     strategy: Strategy,
@@ -420,6 +439,7 @@ def run_backtest(
     vol_target_ann: float | None = None,
     vol_lookback: int = 168,
     strict_data: bool = True,
+    basket_df: pd.DataFrame | None = None,
 ) -> BacktestResult:
     """Запуск бектесту стратегії на свічкових даних.
 
@@ -451,28 +471,23 @@ def run_backtest(
         барів. Множник відомий на закритті бару рішення (shift(1) разом із
         сигналом) — без lookahead. None = фіксований position_pct.
     strict_data: якщо True (дефолт, Phase 5.2) — fail-fast capability
-        contract: стратегія з needs_trades/needs_funding без відповідних
+        contract: needs_trades/needs_funding/requires без відповідних
         даних падає з MissingDataError замість тихої деградації в нулі.
+    basket_df: ціни кошика (T × N) для стратегій з requires={"basket"}.
     """
     if len(df) < 30:
         raise ValueError("Замало даних для бектесту")
     if strict_data and signals is None:
         validate = getattr(strategy, "validate_inputs", None)
         if callable(validate):
-            validate(df, trades=trades, funding=funding)
+            validate(df, trades=trades, funding=funding, basket_df=basket_df)
     cost = cost or CostModel()
     filter_trace = None
     if signals is None:
+        kwargs = _signal_kwargs(strategy, trades, funding, basket_df)
         if trace:
-            signals, filter_trace = strategy.generate_signals_traced(df, trades=trades, funding=funding)
+            signals, filter_trace = strategy.generate_signals_traced(df, **kwargs)
         else:
-            # Передаємо ОБИДВА потоки, якщо стратегія їх потребує (ensemble/
-            # supervisor з mixed-дітьми): раніше needs_trades блокував funding.
-            kwargs: dict = {}
-            if getattr(strategy, "needs_trades", False):
-                kwargs["trades"] = trades
-            if getattr(strategy, "needs_funding", False):
-                kwargs["funding"] = funding
             signals = strategy.generate_signals(df, **kwargs)
     else:
         signals = signals.reindex(df.index).fillna(0.0)

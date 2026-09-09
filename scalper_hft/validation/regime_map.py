@@ -186,9 +186,64 @@ def build_regime_strategy_map(
     return rmap
 
 
+def preferred_regimes_from_matrix(
+    matrix: RegimePerfMatrix,
+    strategy: str,
+    *,
+    min_sharpe: float = 0.0,
+) -> frozenset[str]:
+    """OOS-теги PreferredRegime зі комірок, де стратегія мала Sharpe ≥ порогу.
+
+    Ключі матриці — ``structure|vol`` (наприклад ``range|normal``). Повертає
+    об'єднання structure/vol міток з додатнім OOS. Порожній frozenset =
+    немає підтвердженої комірки (не записувати в клас як «усі режими»).
+    """
+    from scalper_hft.features.regimes import STRUCTURE_LABELS, VOL_LABELS
+
+    allowed = STRUCTURE_LABELS | VOL_LABELS
+    tags: set[str] = set()
+    for regime, cells in matrix.data.items():
+        cell = cells.get(strategy)
+        if not cell or float(cell.get("sharpe", 0.0)) < min_sharpe:
+            continue
+        for part in str(regime).split("|"):
+            label = part.strip()
+            if label in allowed:
+                tags.add(label)
+    return frozenset(tags)
+
+
+def preferred_regimes_book_from_matrix(
+    matrix: RegimePerfMatrix,
+    *,
+    min_sharpe: float = 0.0,
+) -> dict[str, frozenset[str]]:
+    """preferred_regimes для кожної стратегії в OOS-матриці."""
+    return {s: preferred_regimes_from_matrix(matrix, s, min_sharpe=min_sharpe) for s in matrix.strategies()}
+
+
+def apply_oos_preferred_regimes(
+    strategies: list,
+    matrix: RegimePerfMatrix,
+    *,
+    min_sharpe: float = 0.0,
+) -> None:
+    """Записати OOS-теги на інстанси. Порожній результат не затирає гіпотезу класу."""
+    for strat in strategies:
+        name = str(getattr(strat, "name", ""))
+        if not name:
+            continue
+        tags = preferred_regimes_from_matrix(matrix, name, min_sharpe=min_sharpe)
+        if tags:
+            strat.preferred_regimes = tags
+
+
 __all__ = [
     "RegimePerfMatrix",
     "RegimeStrategyMap",
     "compute_regime_perf_matrix",
     "build_regime_strategy_map",
+    "preferred_regimes_from_matrix",
+    "preferred_regimes_book_from_matrix",
+    "apply_oos_preferred_regimes",
 ]

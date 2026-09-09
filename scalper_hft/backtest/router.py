@@ -80,6 +80,7 @@ def run_strategy_backtest(
     vol_lookback: int = 168,
     apply_settings_risk: bool = True,
     strict_data: bool = True,
+    basket_df=None,
 ) -> BacktestResult | EventBacktestResult:
     max_leverage, vol_target_ann = _settings_risk(max_leverage, vol_target_ann, apply_settings_risk)
     name = getattr(strategy, "name", "")
@@ -103,7 +104,8 @@ def run_strategy_backtest(
                 max_leverage=max_leverage,
                 vol_target_ann=vol_target_ann,
                 vol_lookback=vol_lookback,
-                strict_data=strict_data,
+                strict_data=False,  # no-op клітинка: не вимагаємо L2
+                basket_df=basket_df,
             )
         # Параметри стратегії → параметри рушія (раніше лишались дефолти,
         # тож sweep/Optuna по market_maker повертали константу).
@@ -137,4 +139,5 @@ def run_strategy_backtest(
         vol_target_ann=vol_target_ann,
         vol_lookback=vol_lookback,
         strict_data=strict_data,
+        basket_df=basket_df,
     )
