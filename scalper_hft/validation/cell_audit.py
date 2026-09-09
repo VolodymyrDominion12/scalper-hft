@@ -339,7 +339,8 @@ def audit_cell(
         # недоторканим для фінального сліпого тесту (окремий виклик audit_cell).
         from scalper_hft.validation.holdout import split_research_holdout
 
-        df, _holdout = split_research_holdout(df, settings.enforce_holdout_pct)
+        holdout_pct = float(getattr(settings, "enforce_holdout_pct", 0.0))
+        df, _holdout = split_research_holdout(df, holdout_pct)
         if df.empty:
             return CellAudit(
                 symbol=symbol,
@@ -362,8 +363,8 @@ def audit_cell(
             df=df,
             days=days,
             purpose=f"audit_cell{'/cscv' if with_cscv else ''}",
-            registry_path=settings.oos_registry_path,
-            enforce=settings.enforce_oos_burn,
+            registry_path=getattr(settings, "oos_registry_path", Path("docs/reports/oos_usage.md")),
+            enforce=bool(getattr(settings, "enforce_oos_burn", False)),
         )
         if not burn_ok:
             return CellAudit(
@@ -454,7 +455,8 @@ def audit_cell(
             # опційний (TRIAL_LEDGER_PATH). Записуємо цей аудит як спробу.
             from scalper_hft.validation.trial_ledger import effective_n_trials, record_trial
 
-            ledger_path = settings.trial_ledger_path if str(settings.trial_ledger_path) else None
+            raw_ledger = getattr(settings, "trial_ledger_path", None)
+            ledger_path = raw_ledger if raw_ledger and str(raw_ledger) else None
             n_trials = int(
                 effective_n_trials(
                     ledger_path,

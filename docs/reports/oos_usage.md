@@ -11,3 +11,4 @@
 | mean_reversion | BTCUSDT | 2024-01-01 | 2024-01-05 | sweep/wf:1m |
 | mean_reversion | BTCUSDT | 2025-01-01 | 2025-01-02 | sweep/wf:1m |
 | mean_reversion | BTCUSDT | 2024-03-26 | 2024-06-01 | sweep/wf:4h |
+| ensemble | BTCUSDT | 2024-09-09 | 2026-09-09 | audit_cell/cscv |

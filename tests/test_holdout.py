@@ -90,3 +90,42 @@ def test_audit_cell_holdout_trims_research(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(cfg, "get_settings", lambda: settings0)
     a_no_holdout = audit_cell("mean_reversion", "HOLDUSDT", "1h", days=10)
     assert a_no_holdout.n_windows >= a_full.n_windows
+
+
+def test_audit_cell_missing_enforce_holdout_pct_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """audit_cell не падає з AttributeError якщо Settings не має enforce_holdout_pct (stale parent memory)."""
+    import pandas as pd
+    from scalper_hft import config as cfg
+    from scalper_hft.data import access as acc
+    from scalper_hft.data import downloader as dl
+    from scalper_hft.validation.cell_audit import audit_cell
+
+    df = _klines(100, start="2025-01-01")
+
+    class _MemStore:
+        def __init__(self) -> None:
+            self.data: dict[tuple[str, str], pd.DataFrame] = {}
+
+        def load_klines(self, symbol: str, interval: str) -> pd.DataFrame | None:
+            d = self.data.get((symbol, interval))
+            return None if d is None else d.copy()
+
+        def save_klines(self, symbol: str, interval: str, d: pd.DataFrame) -> None:
+            self.data[(symbol, interval)] = d.copy()
+
+    store = _MemStore()
+    store.save_klines("MOCKUSDT", "1h", df)
+    monkeypatch.setattr(acc, "get_store", lambda: store)
+    monkeypatch.setattr(dl, "get_store", lambda: store)
+    monkeypatch.setattr(dl, "_utc_now", lambda: pd.Timestamp("2025-01-20 00:00:00"))
+    monkeypatch.setattr(acc, "ensure_klines", lambda symbol, interval, days, **kw: df)
+
+    class OldSettings:
+        maker_fee = 0.0002
+        taker_fee = 0.0005
+        slippage_frac = 0.0001
+        position_pct = 0.1
+
+    monkeypatch.setattr(cfg, "get_settings", lambda: OldSettings())
+    audit = audit_cell("mean_reversion", "MOCKUSDT", "1h", days=5)
+    assert audit.status != "error" or "AttributeError" not in (audit.error or "")

@@ -72,10 +72,10 @@ def test_pairs_arb_with_kalman():
     leg2 = pd.Series(50.0 + np.random.normal(0, 1, 200), index=idx)
     df = pd.DataFrame({"leg1": leg1, "leg2": leg2}, index=idx)
 
-    strat_default = PairsArb(lookback=60, use_kalman=False)
+    strat_default = PairsArb(lookback=60, use_kalman=False, regime_scale=False)
     sig_default = strat_default.generate_signals(df)
 
-    strat_kalman = PairsArb(lookback=60, use_kalman=True, dynamic_half_life=True)
+    strat_kalman = PairsArb(lookback=60, use_kalman=True, dynamic_half_life=True, regime_scale=False)
     sig_kalman = strat_kalman.generate_signals(df)
 
     assert len(sig_default) == 200

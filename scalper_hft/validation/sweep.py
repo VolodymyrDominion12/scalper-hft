@@ -27,6 +27,7 @@ import json
 import logging
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
@@ -229,8 +230,9 @@ def _build_cell_runner(
         from scalper_hft.validation.holdout import split_research_holdout as _split_research_holdout
 
         _s = _get_settings()
-        if _s.enforce_holdout_pct > 0:
-            klines, _h = _split_research_holdout(klines, _s.enforce_holdout_pct)
+        holdout_pct = float(getattr(_s, "enforce_holdout_pct", 0.0))
+        if holdout_pct > 0:
+            klines, _h = _split_research_holdout(klines, holdout_pct)
             if klines.empty:
                 return SweepRow(
                     strategy=strategy.name, symbol=symbol, interval=interval, status="error", error="holdout: порожньо"
@@ -248,8 +250,8 @@ def _build_cell_runner(
                 df=klines,
                 days=days,
                 purpose=f"sweep/wf:{interval}",
-                registry_path=_s.oos_registry_path,
-                enforce=_s.enforce_oos_burn,
+                registry_path=getattr(_s, "oos_registry_path", Path("docs/reports/oos_usage.md")),
+                enforce=bool(getattr(_s, "enforce_oos_burn", False)),
             )
             if not _burn_ok:
                 return SweepRow(strategy=name, symbol=symbol, interval=interval, status="error", error=_burn_reason)
@@ -587,7 +589,8 @@ def save_sweep_report(df: pd.DataFrame, out_csv: str | None = None, out_md: str 
             for c in ["total_return", "max_dd", "win_rate"]:
                 if c in view.columns:
                     view[c] = view[c].map(lambda v: f"{v:+.2%}" if pd.notna(v) else "-")
-            view["sharpe"] = view["sharpe"].map(lambda v: f"{v:+.3f}" if pd.notna(v) else "-")
+            if "sharpe" in view.columns:
+                view["sharpe"] = view["sharpe"].map(lambda v: f"{v:+.3f}" if pd.notna(v) else "-")
             if "avg_oos_sharpe" in view.columns:
                 view["avg_oos_sharpe"] = view["avg_oos_sharpe"].map(lambda v: f"{v:+.3f}" if pd.notna(v) else "-")
             if "oos_positive_frac" in view.columns:

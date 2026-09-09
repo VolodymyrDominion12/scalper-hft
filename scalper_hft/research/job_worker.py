@@ -54,12 +54,34 @@ def _terminate(proc: Process) -> None:
     if not proc.is_alive() or proc.pid is None:
         return
     try:
-        os.kill(proc.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
+        import psutil
+
+        parent = psutil.Process(proc.pid)
+        for child in parent.children(recursive=True):
+            try:
+                child.terminate()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        parent.terminate()
+    except Exception:
+        try:
+            os.kill(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
     proc.join(timeout=5.0)
     if proc.is_alive():
-        proc.kill()
+        try:
+            import psutil
+
+            parent = psutil.Process(proc.pid)
+            for child in parent.children(recursive=True):
+                try:
+                    child.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            parent.kill()
+        except Exception:
+            proc.kill()
         proc.join(timeout=2.0)
 
 
@@ -67,7 +89,8 @@ def run_claimed_job(store: JobStore, job: Job, *, mp_context: str | None = None)
     """Запустити вже claimed job у дочірньому процесі і дочекатися фіналу."""
     job_dir = artifacts_dir(store.path, job.id)
     job_dir.mkdir(parents=True, exist_ok=True)
-    ctx = cast(Any, get_context(mp_context) if mp_context else get_context())
+    start_method = mp_context or "spawn"
+    ctx = cast(Any, get_context(start_method))
     proc = ctx.Process(
         target=_job_child_main,
         args=(job.id, job.kind, job.params, str(job_dir), str(store.path)),

@@ -56,7 +56,7 @@ class Strategy(abc.ABC):
         if "breakeven_gate" in params:
             self.use_breakeven_gate = bool(params["breakeven_gate"])
 
-    def get(self, key: str, default: Any) -> Any:
+    def get(self, key: str, default: Any = None) -> Any:
         return self.params.get(key, default)
 
     @abc.abstractmethod
