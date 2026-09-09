@@ -167,7 +167,7 @@ def test_sweep_walkforward_4h_uses_per_interval_windows() -> None:
         data_provider=provider,
     )
     assert old.iloc[0]["status"] == "error"
-    assert "train+test" in str(old.iloc[0]["error"])
+    assert "train+purge+test" in str(old.iloc[0]["error"])
 
 
 def test_sweep_overlay_disables_majors_and_keeps_alts() -> None:
