@@ -342,16 +342,33 @@ def _oof_folds(
     gap: int = 10,
     embargo_pct: float = 0.01,
 ) -> list[tuple[np.ndarray, np.ndarray]]:
-    """Folds для meta-OOF: PurgedKFold (t1 відомий) або expanding TS-split."""
-    from scalper_hft.validation.cv import PurgedKFold, time_series_split
+    """Causal meta-OOF folds: expanding TS-split + AFML t1-purge.
 
-    if t1 is not None and isinstance(X.index, pd.DatetimeIndex) and len(X) >= n_splits * 5:
-        pkf = PurgedKFold(n_splits=n_splits, embargo_pct=embargo_pct)
-        try:
-            return list(pkf.split(X, t1=t1.reindex(X.index)))
-        except (ValueError, KeyError, TypeError):
-            pass
-    return list(time_series_split(len(X), n_splits=n_splits, gap=gap))
+    Повний ``PurgedKFold`` тренує ранні фолди на МАЙБУТНЬОМУ IS-вікна
+    (train праворуч від test) — для OOF мета-міток це lookahead усередині
+    train. Тому беремо expanding-вікна і викидаємо train-зразки, чиї t1
+    заходять у test (той самий purge, що в ``PurgedKFold.split``).
+    """
+    from scalper_hft.validation.cv import time_series_split
+
+    base = list(time_series_split(len(X), n_splits=n_splits, gap=gap))
+    if t1 is None or not isinstance(X.index, pd.DatetimeIndex):
+        return base
+    t1_al = t1.reindex(X.index)
+    idx_series = pd.Series(X.index, index=X.index)
+    t1_al = t1_al.fillna(idx_series)
+    embargo = int(len(X) * embargo_pct)
+    out: list[tuple[np.ndarray, np.ndarray]] = []
+    for tr, te in base:
+        if len(te) == 0:
+            continue
+        t_test_start = X.index[int(te[0])]
+        keep = np.array([int(i) for i in tr if t1_al.iloc[int(i)] <= t_test_start], dtype=int)
+        if embargo > 0 and len(keep) > 0:
+            keep = keep[keep < int(te[0]) - embargo]
+        if len(keep) >= 2:
+            out.append((keep, te))
+    return out or base
 
 
 def _oof_primary_predictions(
@@ -363,7 +380,7 @@ def _oof_primary_predictions(
     gap: int = 10,
     t1: pd.Series | None = None,
 ) -> np.ndarray:
-    """Чесні (OOF) прогнози primary на train-вікні через PurgedKFold / TS-split.
+    """Чесні (OOF) прогнози primary на train-вікні (expanding + t1-purge).
 
     Потрібно, щоб мета-мітки y_meta = (primary вгадав) не були зашумлені
     IS-оптимізмом: primary на власних train-даних майже завжди «правий»,

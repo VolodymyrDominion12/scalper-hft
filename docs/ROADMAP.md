@@ -138,12 +138,14 @@ paper-replay реверсує і рахує daily-loss на mark-to-market. Те
 | R3 | Partial-fill політика cancel/wait (`PARTIAL_FILL_POLICY`); IntentStore ключ містить бар/ts | ✅ код |
 | R4 | Capability contract: `needs_trades`/`needs_funding` + `requires = {basket, l2, multi_symbol}` → `MissingDataError`. `sparse_basket` без кошика, `cross_momentum`/`pairs_arb` на 1 символі, векторний `market_maker` без L2 — fail-fast. Обхід: `strict_data=False` | ✅ код |
 
-### 5.3 — Мультифакторна режимна система
+### 5.3 — Мультифакторна режимна система ✅
 
-1. Заповнити `preferred_regimes` з OOS `validation/regime_map.py` для всіх 17 стратегій (9 зараз порожні = «всі режими»).
-2. `RegimeSupervisor`: posterior blend поверх haircut-відібраного ростру (3–5 стратегій, що пройшли аудит), не всіх 17.
-3. ML: PurgedKFold у meta-OOF (`trainer.py` зараз `time_series_split` з gap), seeded sequential bootstrap, CPCV як валідатор моделі, Optuna → обов'язковий holdout-прогін.
-4. Стрес-секція обов'язковою у `report` (fees ×2, slippage ×2, вилучення топ-5 угод).
+| ID | Що | Статус |
+|---|---|---|
+| M1 | `preferred_regimes` з OOS `RegimePerfMatrix` (`preferred_regimes_from_matrix` / `apply_oos_preferred_regimes`). Клас лишає порожній frozenset як «невалідовано», доки немає матриці; `RegimeSupervisor(perf_matrix_path=…)` накладає теги на інстанси | ✅ код |
+| M2 | `haircut_roster` + `RegimeSupervisor.from_haircut_roster` — 3–5 стратегій зі `survives_haircut`, не всі 17 і не відхилений дефолт MR/ST/HMM | ✅ код |
+| M3 | Meta-OOF: expanding TS-split + t1-purge (каузальний AFML purge; повний K-fold тренував би на майбутньому IS). Seeded `seq_bootstrap`; `cpcv_validate_returns`; Optuna CLI завжди лишає сліпий holdout (20%, якщо `HOLDOUT_PCT=0`) і пише `holdout_sharpe` | ✅ код |
+| M4 | `cmd_report` завжди має стрес: fees×2 + slippage×2 і вилучення топ-5 угод (`cost_concentration_stress`) | ✅ код |
 
 ### 5.4 — Дані під HFT (паралельно, довгостроково)
 
@@ -180,4 +182,4 @@ Paper Gate ≥8 тижнів на конфігурації LINK/BTC 1h maker + r
 | 4 | L2 Tardis дані, черга лімітних ордерів, live під реальний капітал | 🔜 Наступний етап |
 | 5.1 | AFML purge/embargo дефолти; DSR на OOS у report; haircut у sweep; pairs_arb v1.3 дефолти | ✅ Код цього циклу |
 | 5.2 | vol-target у paper; max_leverage у рушії; partial-fill; capability basket/l2/multi_symbol | ✅ Код цього циклу |
-| 5.3 | preferred_regimes з regime_map; supervisor на haircut-рострі; ML CPCV | 🔜 |
+| 5.3 | preferred_regimes з OOS-матриці; supervisor на haircut-рострі; ML PurgedKFold/CPCV; стрес у report | ✅ Код цього циклу |
