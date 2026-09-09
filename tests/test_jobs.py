@@ -392,3 +392,39 @@ def test_prune_jobs_cleans_orphaned_directories(tmp_path: Path) -> None:
     assert stats.orphaned_dirs == 1
     assert not orphan_dir.exists()
     store.close()
+
+
+def test_delete_jobs_terminal_and_running_protection(tmp_path: Path) -> None:
+    from scalper_hft.research.jobs import artifacts_dir
+
+    store = _store(tmp_path)
+    j1 = store.submit("backtest", {"p": 1})
+    j2 = store.submit("backtest", {"p": 2})
+    j3 = store.submit("backtest", {"p": 3})
+
+    # j1: finished (succeeded)
+    art1 = artifacts_dir(store.path, j1.id)
+    art1.mkdir(parents=True)
+    (art1 / "job.log").write_text("done", encoding="utf-8")
+    store.finish(j1.id, "succeeded")
+
+    # j2: running
+    store._conn.execute("UPDATE jobs SET status='running' WHERE id=?", (j2.id,))
+
+    # j3: cancelled
+    store.request_cancel(j3.id)
+
+    # Empty list
+    assert store.delete_jobs([]) == 0
+
+    # Delete j1, j2 (running), j3
+    # j2 MUST NOT be deleted because it is running
+    deleted = store.delete_jobs([j1.id, j2.id, j3.id])
+    assert deleted == 2
+    assert not art1.exists()
+    assert store.get(j1.id) is None
+    assert store.get(j2.id) is not None  # running preserved
+    assert store.get(j3.id) is None
+
+    store.close()
+

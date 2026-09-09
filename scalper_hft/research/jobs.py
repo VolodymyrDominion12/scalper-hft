@@ -539,3 +539,33 @@ class JobStore:
             freed_bytes=freed_bytes,
             orphaned_dirs=orphaned_dirs,
         )
+
+    def delete_jobs(self, job_ids: Sequence[int]) -> int:
+        """Видалити завершені/скасовані/помилкові задачі та їхні артефакти за списком id.
+
+        Задачі у статусі running не видаляються для безпеки.
+        """
+        if not job_ids:
+            return 0
+        ids = [int(jid) for jid in job_ids]
+        placeholders = ",".join("?" * len(ids))
+        rows = self._conn.execute(
+            f"SELECT id, status FROM jobs WHERE id IN ({placeholders}) AND status != 'running'",
+            ids,
+        ).fetchall()
+        target_ids = [int(r["id"]) for r in rows]
+        if not target_ids:
+            return 0
+        for jid in target_ids:
+            self._clear_artifacts(jid)
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                for jid in target_ids:
+                    self._conn.execute("DELETE FROM jobs WHERE id=?", (jid,))
+                self._conn.execute("COMMIT")
+            except Exception:
+                self._conn.execute("ROLLBACK")
+                raise
+        return len(target_ids)
+

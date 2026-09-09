@@ -207,7 +207,7 @@ def job_open_target(kind: str, params: Mapping[str, Any]) -> tuple[str, dict[str
             RESEARCH_SECTION: "Аудит комірки",
         }
     if kind == "sweep":
-        return "app_pages/research.py", {RESEARCH_SECTION: "Sweep matrix"}
+        return "app_pages/research.py", {RESEARCH_SECTION: "Масовий пошук"}
     return "app_pages/jobs.py", {}
 
 

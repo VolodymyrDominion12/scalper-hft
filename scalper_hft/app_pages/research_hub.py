@@ -20,7 +20,7 @@ _SWEEP_DB = Path("results") / "sweep.db"
 
 if not _SWEEP_DB.exists():
     st.info("Немає бази результатів (`results/sweep.db`). Спочатку запустіть sweep.")
-    st.page_link("app_pages/research.py", label="Дослідження → Sweep matrix", icon=":material/science:")
+    st.page_link("app_pages/research.py", label="Дослідження → Масовий пошук", icon=":material/science:")
     st.stop()
 
 
