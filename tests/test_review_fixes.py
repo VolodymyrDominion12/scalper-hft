@@ -498,7 +498,15 @@ class TestRouterParamFlow:
             {"open": px, "high": px * 1.001, "low": px * 0.999, "close": px, "volume": 10.0, "imbalance": imb},
             index=idx,
         )
-        res = run_strategy_backtest(df, ObImbalanceScalper(buy_threshold=0.1), position_pct=0.1)
+        trades = pd.DataFrame(
+            {
+                "price": px,
+                "amount": np.abs(rng.normal(1.0, 0.3, 300)),
+                "side": np.where(rng.random(300) > 0.5, "buy", "sell"),
+            },
+            index=idx,
+        )
+        res = run_strategy_backtest(df, ObImbalanceScalper(buy_threshold=0.1), position_pct=0.1, trades=trades)
         # BacktestResult (векторний рушій), а не EventBacktestResult
         assert type(res).__name__ == "BacktestResult"
         assert res.metrics.n_trades > 0

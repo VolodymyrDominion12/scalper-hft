@@ -325,7 +325,7 @@ def test_jobs_bulk_actions_logic(tmp_path: Path) -> None:
     j3 = store.submit("backtest", {"p": 3})  # will be succeeded
     store._conn.execute("UPDATE jobs SET status='running' WHERE id=?", (j3.id,))
     store.finish(j3.id, "succeeded")
-    j4 = store.submit("backtest", {"p": 4})  # queued
+    store.submit("backtest", {"p": 4})  # queued (4-та задача — перевірка списку нижче)
 
     all_jobs = store.list_jobs(limit=10)
     assert len(all_jobs) == 4

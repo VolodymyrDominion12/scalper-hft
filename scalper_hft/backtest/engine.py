@@ -457,7 +457,9 @@ def run_backtest(
     if len(df) < 30:
         raise ValueError("Замало даних для бектесту")
     if strict_data and signals is None:
-        strategy.validate_inputs(df, trades=trades, funding=funding)
+        validate = getattr(strategy, "validate_inputs", None)
+        if callable(validate):
+            validate(df, trades=trades, funding=funding)
     cost = cost or CostModel()
     filter_trace = None
     if signals is None:
