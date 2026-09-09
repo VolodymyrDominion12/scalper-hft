@@ -376,7 +376,7 @@ LINK/BTC 1h maker + regime_scale(0.25) + vol-target + fill-parity.
 
 ## Критерій «план виконано»
 
-- [ ] R1: paper і BT maker — mid + той самий seed; snapshot rng; тести parity
+- [x] R1: paper і BT maker — mid + той самий seed; snapshot rng; тести parity
 - [ ] R2: API-юніт localhost; lifespan fail-closed на слабкий ключ + публічний host
 - [ ] R3: `docs/env/vps-paper.env.example` + `research.env.example`; HOLDOUT у `.env.example`
 - [ ] R4: `use_exit_ladders` явне поле, дефолт false; немає getattr-магії

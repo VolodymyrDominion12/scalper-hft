@@ -383,3 +383,26 @@ def test_jobs_page_apptest_selection() -> None:
     assert any("Видалити вибрані" in lbl for lbl in active_buttons)
 
 
+def test_research_page_presets_apptest() -> None:
+    from streamlit.testing.v1 import AppTest
+
+    script_path = Path(__file__).resolve().parent.parent / "scalper_hft" / "app_pages" / "research.py"
+    at = AppTest.from_file(str(script_path), default_timeout=30).run()
+    assert not at.exception
+    assert at.session_state["sw_slow"] is False
+
+    # Click "Усі × усі × усі"
+    btn_all = [b for b in at.button if b.key == "sw_preset_all"]
+    assert len(btn_all) == 1
+    btn_all[0].click().run(timeout=30)
+    assert not at.exception
+    assert at.session_state["sw_slow"] is True
+
+    # Click "Рекомендований"
+    btn_reco = [b for b in at.button if b.key == "sw_preset_reco"]
+    assert len(btn_reco) == 1
+    btn_reco[0].click().run(timeout=30)
+    assert not at.exception
+    assert at.session_state["sw_slow"] is False
+
+

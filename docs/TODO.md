@@ -48,7 +48,7 @@ H1–H8 закриті: [CHANGE_PLAN_HEALTH.md](CHANGE_PLAN_HEALTH.md).
 ### 0. Цикл R1–R8 (до рестарту Paper-Gate)
 Деталі: [CHANGE_PLAN_REVIEW.md](CHANGE_PLAN_REVIEW.md). R1 змінює модель філу —
 не котити на живий `paper-v0.1.0` без нового тегу і скидання 8-тижневого годинника.
-- [ ] **R1** Fill-parity paper ↔ backtest (mid + `MAKER_FILL_SEED`, snapshot rng)
+- [x] **R1** Fill-parity paper ↔ backtest (mid + `MAKER_FILL_SEED`, snapshot rng)
 - [ ] **R2** `scalper-api.service` localhost + lifespan `require_safe_api_bind`
 - [ ] **R3** Профілі `docs/env/vps-paper.env.example` і `research.env.example`
 - [ ] **R4** Явне `use_exit_ladders=false` (не вмикати в циклі)

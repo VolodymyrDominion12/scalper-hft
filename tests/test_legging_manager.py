@@ -8,6 +8,13 @@ from scalper_hft.live.pairs_runner import PairsEngine, PendingOrder
 from scalper_hft.strategies.pairs_arb import PairsArb
 
 
+class _FillOnTouch:
+    """P(fill|touch)=1: mid-модель не повинна ламати chase/unwind інтеграцію."""
+
+    def random(self) -> float:
+        return 0.0
+
+
 def test_resolve_legging_both_filled():
     d1 = FillDecision(True, 100.0, "filled")
     d2 = FillDecision(True, 50.0, "filled")
@@ -71,7 +78,15 @@ def test_resolve_legging_unwind_when_drift_exceeded():
 def test_pairs_engine_legging_chase_integration():
     acc = PaperAccount(initial_capital=10_000.0)
     strat = PairsArb(lookback=60)
-    engine = PairsEngine("XRPUSDT", "BTCUSDT", strat, acc, legging_mode="chase", max_drift_bps=20.0)
+    engine = PairsEngine(
+        "XRPUSDT",
+        "BTCUSDT",
+        strat,
+        acc,
+        legging_mode="chase",
+        max_drift_bps=20.0,
+        fill_rng=_FillOnTouch(),
+    )
 
     now = pd.Timestamp("2026-01-01 12:00:00")
     # Setup pending order: o1 buy @ 100, o2 sell @ 50
