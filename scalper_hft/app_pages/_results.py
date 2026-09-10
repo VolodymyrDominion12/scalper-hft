@@ -217,7 +217,7 @@ def trade_column_config() -> dict[str, object]:
     return {hint.key: _hint_config(hint) for hint in TRADE_COLUMNS}
 
 
-def open_combo_details(row: Mapping[str, Any], *, enqueue: bool = True) -> None:
+def open_combo_details(row: Mapping[str, Any], *, enqueue: bool = True, switch: bool = True) -> None:
     """Провалитись на досьє комірки: свічки, equity, точки входу/виходу."""
     combo = combo_prefill(row)
     st.session_state[RESEARCH_CELL_PREFILL] = combo
@@ -232,10 +232,11 @@ def open_combo_details(row: Mapping[str, Any], *, enqueue: bool = True) -> None:
                 int(combo["days"]),
             )
             submit_research_job("backtest", payload)
-    st.switch_page("app_pages/cell.py")
+    if switch:
+        st.switch_page("app_pages/cell.py")
 
 
-def open_combo_audit(row: Mapping[str, Any], *, enqueue: bool = True) -> None:
+def open_combo_audit(row: Mapping[str, Any], *, enqueue: bool = True, switch: bool = True) -> None:
     """Відкрити досьє комірки на вкладці аудиту і поставити overfit job."""
     combo = combo_prefill(row)
     st.session_state[RESEARCH_CELL_PREFILL] = combo
@@ -253,7 +254,8 @@ def open_combo_audit(row: Mapping[str, Any], *, enqueue: bool = True) -> None:
                 test_bars=test_b,
             )
             submit_research_job("overfit", payload)
-    st.switch_page("app_pages/cell.py")
+    if switch:
+        st.switch_page("app_pages/cell.py")
 
 
 def _on_results_row_action() -> None:
@@ -276,10 +278,47 @@ def _on_results_row_action() -> None:
     if prefix == "tq_jobs":
         st.session_state["tq_override_job_id"] = int(row["id"])
         return
+    # У Streamlit виклик st.switch_page всередині on_click callback блокується
+    # («Calling st.rerun() within a callback is a no-op»).
+    # Тому готуємо стан без переходу, а сам switch викликаємо у нормальному циклі рендеру.
     if is_audit_action(label):
-        open_combo_audit(row)
+        open_combo_audit(row, switch=False)
+    else:
+        open_combo_details(row, switch=False)
+    st.session_state["_results_pending_switch"] = "app_pages/cell.py"
+
+
+def consume_results_action(key_prefix: str | None = None) -> None:
+    """Обробити перехід на досьє комірки / аудит поза межами callback.
+
+    У Streamlit `st.switch_page()` всередині `on_click` callback блокується
+    («Calling st.rerun() within a callback is a no-op»). Тому перехід
+    виконується в нормальному контексті виконання сторінки.
+    """
+    target = st.session_state.pop("_results_pending_switch", None)
+    if target:
+        st.switch_page(target)
         return
-    open_combo_details(row)
+
+    prefixes = [key_prefix] if key_prefix else list(_TABLE_PREFIXES)
+    for candidate in prefixes:
+        if not candidate:
+            continue
+        click = st.session_state.get(f"{candidate}_open_btn")
+        if click is not None:
+            stored = st.session_state.get(f"{candidate}_row_payloads") or []
+            row_i = int(getattr(click, "row", -1))
+            if 0 <= row_i < len(stored):
+                row = stored[row_i]
+                label = str(getattr(click, "label", "") or "")
+                if candidate == "tq_jobs":
+                    st.session_state["tq_override_job_id"] = int(row["id"])
+                    return
+                if is_audit_action(label):
+                    open_combo_audit(row, switch=True)
+                else:
+                    open_combo_details(row, switch=True)
+                return
 
 
 def list_combo_jobs(
@@ -358,6 +397,7 @@ def render_sweep_explorer(
     """
     if key_prefix not in _TABLE_PREFIXES:
         raise ValueError(f"unknown results table prefix: {key_prefix}")
+    consume_results_action(key_prefix)
     st.session_state["_results_active_prefix"] = key_prefix
     if caption:
         st.caption(caption)

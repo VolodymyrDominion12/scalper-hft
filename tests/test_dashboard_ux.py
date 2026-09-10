@@ -475,3 +475,49 @@ def test_research_page_presets_apptest() -> None:
     btn_reco[0].click().run(timeout=30)
     assert not at.exception
     assert at.session_state["sw_slow"] is False
+
+
+def test_open_combo_details_and_audit_switch_deferred() -> None:
+    from unittest import mock
+    import streamlit as st
+    from scalper_hft.app_pages._results import (
+        _on_results_row_action,
+        consume_results_action,
+        open_combo_audit,
+        open_combo_details,
+    )
+
+    state = st.session_state
+    state.clear()
+
+    row = {"strategy": "mean_reversion", "symbol": "BTCUSDT", "interval": "15m", "days": 30}
+
+    # open_combo_details with switch=False shouldn't call st.switch_page
+    open_combo_details(row, enqueue=False, switch=False)
+    assert state[RESEARCH_CELL_PREFILL]["strategy"] == "mean_reversion"
+    assert state[RESEARCH_CELL_TAB] == "price"
+
+    # open_combo_audit with switch=False
+    open_combo_audit(row, enqueue=False, switch=False)
+    assert state[RESEARCH_CELL_PREFILL]["strategy"] == "mean_reversion"
+    assert state[RESEARCH_CELL_TAB] == "audit"
+
+    # _on_results_row_action sets _results_pending_switch instead of calling switch_page in callback
+    class DummyClick:
+        row = 0
+        label = ":material/candlestick_chart: Деталі"
+
+    state["hub_open_btn"] = DummyClick()
+    state["hub_row_payloads"] = [row]
+    _on_results_row_action()
+
+    assert state.get("_results_pending_switch") == "app_pages/cell.py"
+    assert state[RESEARCH_CELL_TAB] == "price"
+
+    # consume_results_action executes the deferred switch
+    switched: list[str] = []
+    with mock.patch("streamlit.switch_page", side_effect=switched.append):
+        consume_results_action("hub")
+    assert switched == ["app_pages/cell.py"]
+    assert "_results_pending_switch" not in state
+

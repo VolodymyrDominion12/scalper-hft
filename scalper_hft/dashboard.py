@@ -42,7 +42,7 @@ if not check_password():
 
 inject_busy_overlay()
 
-st.navigation(
+nav = st.navigation(
     {
         "Дослідження": [
             st.Page("app_pages/research_hub.py", title="Каталог", icon=":material/library_books:"),
@@ -63,4 +63,11 @@ st.navigation(
             st.Page("app_pages/help.py", title="Довідка", icon=":material/help:"),
         ],
     }
-).run()
+)
+
+_pending_switch = st.session_state.pop("_results_pending_switch", None)
+if _pending_switch:
+    st.switch_page(_pending_switch)
+
+nav.run()
+

@@ -45,3 +45,16 @@
 | smc_fvg | ADAUSDT | 2023-09-09 | 2026-09-08 | sweep/wf:15m |
 | stoch_rsi | ADAUSDT | 2023-09-09 | 2026-09-08 | sweep/wf:15m |
 | supertrend | ADAUSDT | 2023-09-09 | 2026-09-08 | sweep/wf:15m |
+| mean_reversion | ATOMUSDT | 2023-09-09 | 2026-09-08 | sweep/wf:1h |
+| ml_strategy | ATOMUSDT | 2023-09-09 | 2026-09-08 | sweep/wf:1h |
+| ob_imbalance | ATOMUSDT | 2023-09-09 | 2026-09-08 | sweep/wf:1h |
+| regime_supervisor | ATOMUSDT | 2023-09-09 | 2026-09-08 | sweep/wf:1h |
+| smc_fvg | ATOMUSDT | 2023-09-09 | 2026-09-08 | sweep/wf:1h |
+| stoch_rsi | ATOMUSDT | 2023-09-09 | 2026-09-08 | sweep/wf:1h |
+| supertrend | ATOMUSDT | 2023-09-09 | 2026-09-08 | sweep/wf:1h |
+| basis_reversion | ATOMUSDT | 2023-09-09 | 2026-09-08 | sweep/wf:30m |
+| cvd_momentum | ATOMUSDT | 2023-09-09 | 2026-09-08 | sweep/wf:30m |
+| ensemble | ATOMUSDT | 2023-09-09 | 2026-09-08 | sweep/wf:30m |
+| funding_carry | ATOMUSDT | 2023-09-09 | 2026-09-08 | sweep/wf:30m |
+| hmm_reversion | ATOMUSDT | 2023-09-09 | 2026-09-08 | sweep/wf:30m |
+| market_maker | ATOMUSDT | 2023-09-09 | 2026-09-08 | sweep/wf:30m |
