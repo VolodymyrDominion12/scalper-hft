@@ -28,7 +28,9 @@ def cmd_download(args: argparse.Namespace) -> None:
     retries = getattr(args, "retries", None)
     batch_delay = getattr(args, "delay", None)
     checkpoint_batches = getattr(args, "checkpoint_batches", None)
-    exchange_id = getattr(args, "exchange", settings.exchange)
+    # Ринкові дані: --exchange override, інакше DATA_EXCHANGE (не торговий EXCHANGE —
+    # той може бути testnet і віддати синтетичну історію).
+    exchange_id = getattr(args, "exchange", None) or settings.data_exchange
 
     logger.info("Спочатку звірю кеш: докачаю лише відсутні дні/вікна (--force оновлює хвіст)")
     for sym in symbols:
@@ -106,7 +108,7 @@ def cmd_plot(args: argparse.Namespace) -> None:
         strategy,
         base=getattr(args, "base", None) or "1m",
         derive=getattr(args, "derive", True),
-        exchange_id=getattr(args, "exchange", settings.exchange),
+        exchange_id=getattr(args, "exchange", None) or settings.data_exchange,
     )
     df = bundle.klines
     if df is None or df.empty:
@@ -192,6 +194,38 @@ def cmd_download_oi(args: argparse.Namespace) -> None:
 
     for sym in (args.symbol or "BTCUSDT").split(","):
         download_oi(sym, args.days)
+
+
+def cmd_data_audit(args: argparse.Namespace) -> None:
+    """Аудит кешу ринкових даних проти LIVE-біржі (`DATA_EXCHANGE`).
+
+    Fail-closed: exit code 1, якщо хоч один символ не пройшов — щоб команду
+    можна було ставити у cron/CI перед дослідницькими прогонами.
+    """
+    import json
+
+    from scalper_hft.data.audit import audit_symbols, format_report
+
+    settings = get_settings()
+    symbols = [s.strip() for s in (args.symbol or ",".join(settings.default_symbols)).split(",") if s.strip()]
+    interval = args.interval or "1m"
+    results = audit_symbols(
+        symbols,
+        interval=interval,
+        days=args.days,
+        live_samples=int(getattr(args, "live_samples", 5)),
+        check_funding=not getattr(args, "no_funding", False),
+    )
+    report = format_report(results, days=args.days)
+    print(report)
+    if getattr(args, "json", None):
+        Path(args.json).write_text(
+            json.dumps([r.to_dict() for r in results], indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        logger.info("JSON-звіт: %s", args.json)
+    bad = [r for r in results if not r.ok]
+    if bad:
+        fail(f"Аудит даних провалено для {len(bad)} символ(ів): {', '.join(r.symbol for r in bad)}")
 
 
 def cmd_migrate_to_parquet(args: argparse.Namespace) -> None:

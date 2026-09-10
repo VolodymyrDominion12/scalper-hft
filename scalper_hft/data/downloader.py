@@ -48,6 +48,74 @@ def _utc_now() -> pd.Timestamp:
     return pd.Timestamp.now(tz="UTC").tz_localize(None)
 
 
+# Мінімальна частка очікуваних ставок фандінгу у вікні `days`. Нижче — кеш
+# обрізаний (напр. testnet віддає лише ~13 міс історії, і funding_carry
+# рахується зі 62% відсутніх нарахувань, лишаючись status="ok").
+FUNDING_COVERAGE_MIN = 0.90
+
+
+def funding_coverage_ratio(
+    df: pd.DataFrame | None,
+    days: int,
+    *,
+    now: pd.Timestamp | None = None,
+) -> float:
+    """Частка наявних ставок фандінгу від очікуваних за `days` днів (0..N).
+
+    Крок ставки береться як медіана фактичних інтервалів у вікні (Binance
+    переводив частину символів з 8h на 4h, тому «магічна» 8h некоректна).
+    `days <= 0` → 1.0 (вікно не задано — не блокуємо).
+    """
+    if days is None or days <= 0:
+        return 1.0
+    if df is None or df.empty:
+        return 0.0
+    now_ts = now if now is not None else _utc_now()
+    end = now_ts
+    last = df.index[-1]
+    if last < now_ts - pd.Timedelta(hours=16):
+        # Історичний/тестовий кеш (фіксовані дати, реплей): міряємо вікно від
+        # його власного кінця — інакше будь-які дані не «за сьогодні» дають
+        # хибний FAIL. Обрізану історію це не маскує: свіжий кеш із testnet
+        # закінчується «сьогодні», тому anchor = now і дефіцит початку видно.
+        end = last
+    window_start = end - pd.Timedelta(days=int(days))
+    win = df[df.index >= window_start]
+    win = win[win.index <= end]
+    if win.empty:
+        return 0.0
+    step = win.index.to_series().diff().dropna().median() if len(win) > 1 else pd.NaT
+    if step is pd.NaT or step is None or step <= pd.Timedelta(0):
+        step = pd.Timedelta(hours=8)
+    expected = max(int(pd.Timedelta(days=int(days)) / step), 1)
+    return float(len(win)) / float(expected)
+
+
+def _require_funding_coverage(
+    symbol: str,
+    df: pd.DataFrame | None,
+    days: int,
+    *,
+    strict: bool,
+    origin: str,
+) -> None:
+    """Fail-closed: неповне покриття funding → RuntimeError (або warning)."""
+    ratio = funding_coverage_ratio(df, days)
+    if ratio >= FUNDING_COVERAGE_MIN:
+        return
+    n = 0 if df is None or df.empty else len(df)
+    first = "" if df is None or df.empty else str(df.index[0])
+    msg = (
+        f"funding {symbol}: покрито лише {ratio:.0%} очікуваних ставок за {days} днів "
+        f"(рядків={n}, перша={first or '—'}). Схоже на обрізану історію "
+        f"(testnet віддає ~13 міс; потрібен DATA_EXCHANGE=binanceusdm). "
+        f"Поріг {FUNDING_COVERAGE_MIN:.0%}."
+    )
+    if strict:
+        raise RuntimeError(f"{msg} [{origin}]")
+    logger.warning("%s [%s, non-strict]", msg, origin)
+
+
 def _interval_ms(interval: str) -> int:
     """Тривалість інтервалу в мілісекундах: '1s'=1000, '1m'=60000, '1h'=3.6M."""
     unit = interval[-1]
@@ -380,10 +448,13 @@ class Downloader:
         batch_delay: float | None = None,
         checkpoint_batches: int | None = None,
         exchange_id: str | None = None,
+        strict_funding_coverage: bool = True,
     ) -> None:
         settings = get_settings()
         from scalper_hft.config import require_live_data_exchange
 
+        # Fail-closed: покриття funding перевіряється після завантаження.
+        self.strict_funding_coverage = bool(strict_funding_coverage)
         # Fail-closed: testnet/sandbox для ринкових даних заборонено (див.
         # `Settings.data_exchange`). `client=` (тести) обходить цю перевірку.
         self.exchange_id = require_live_data_exchange(settings, exchange_id) if client is None else (
@@ -819,6 +890,9 @@ class Downloader:
             raise
 
         out = _make_merged()
+        # Fail-closed: обрізана історія (testnet ~13 міс) робить funding_carry
+        # беззмістовним, але раніше зберігалась як валідний кеш.
+        _require_funding_coverage(symbol, out, days, strict=self.strict_funding_coverage, origin="downloader")
         if not out.empty:
             self.store.save_funding(symbol, out)
         return out
@@ -901,10 +975,13 @@ def download_funding(
     batch_delay: float | None = None,
     checkpoint_batches: int | None = None,
     exchange_id: str | None = None,
+    strict_coverage: bool = True,
 ) -> pd.DataFrame:
     """Кеш фандінгу: свіжий лише якщо покриває період і остання ставка < 16 год.
 
     Binance USDT-M нараховує фандінг кожні 8 год; 2 періоди без оновлення = stale.
+    `strict_coverage=True` (дефолт) — fail-closed на обрізаній історії:
+    без цього `funding_carry` мовчки рахується з відсутніми нарахуваннями.
     """
     store = get_store()
     cached = None if force else store.load_funding(symbol)
@@ -915,6 +992,7 @@ def download_funding(
         needed_from = now - pd.Timedelta(days=days)
         stale = newest < now - pd.Timedelta(hours=16)
         if oldest <= needed_from and not stale:
+            _require_funding_coverage(symbol, cached, days, strict=strict_coverage, origin="cache")
             logger.info("Кеш funding %s покриває період і свіжий: %d рядків (до %s)", symbol, len(cached), newest)
             return cached
         logger.info("Оновлення funding %s: %d рядків (до %s, stale=%s)", symbol, len(cached), newest, stale)
@@ -925,6 +1003,7 @@ def download_funding(
         batch_delay=batch_delay,
         checkpoint_batches=checkpoint_batches,
         exchange_id=exchange_id,
+        strict_funding_coverage=strict_coverage,
     ).funding(symbol, days)
 
 

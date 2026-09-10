@@ -77,7 +77,10 @@ class Settings:
     # Binance
     binance_api_key: str = field(default_factory=lambda: os.getenv("BINANCE_API_KEY", ""))
     binance_api_secret: str = field(default_factory=lambda: os.getenv("BINANCE_API_SECRET", ""))
-    exchange: str = field(default_factory=lambda: os.getenv("EXCHANGE", "binance-testnet"))
+    # Live public API за замовчуванням: testnet дає синтетичну історію,
+    # і бектест/paper на ній малює фальшивий edge. Реальні ордери все одно
+    # потребують DRY_RUN=false (дефолт true).
+    exchange: str = field(default_factory=lambda: os.getenv("EXCHANGE", "binance"))
     dry_run: bool = field(default_factory=lambda: _env_bool("DRY_RUN", True))
 
     # Біржа для РИНКОВИХ ДАНИХ (klines/aggTrades/funding/OI) — окремо від

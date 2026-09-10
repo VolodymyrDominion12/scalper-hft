@@ -16,7 +16,11 @@ def main(argv: list[str] | None = None) -> None:
     sub = parser.add_subparsers(dest="command", required=True)
 
     def add_common(p: argparse.ArgumentParser) -> None:
-        p.add_argument("--exchange", default=None, help="Біржа, e.g. binance, bybit (за замовч. з .env)")
+        p.add_argument(
+            "--exchange",
+            default=None,
+            help="Біржа, e.g. binance / binanceusdm (за замовч. EXCHANGE з .env; дані — DATA_EXCHANGE)",
+        )
         p.add_argument("--symbol", default=None, help="Символ, e.g. BTCUSDT (за замовч. з .env)")
         p.add_argument("--interval", default=None, help="Таймфрейм: 1s/5s/1m/5m/15m/1h")
         p.add_argument(
@@ -155,6 +159,22 @@ def main(argv: list[str] | None = None) -> None:
         help="AFML ембарго між OOS-вікнами (барів). За замовч. max(1, 1%% test-вікна); 0 = вимкнути",
     )
     p.add_argument("--trials", type=int, default=50, help="Оцінка кількості спроб для DSR")
+    p.add_argument(
+        "--audit-mode",
+        dest="audit_mode",
+        default="exploratory",
+        choices=["exploratory", "final"],
+        help=(
+            "exploratory (дефолт) — критерії дають EXPLORATORY_PASS; "
+            "final — вердикт PASS для live-гейту, вимагає HOLDOUT_PCT>0 і OOS_ENFORCE_BURN=true"
+        ),
+    )
+    p.add_argument(
+        "--explicit-holdout",
+        dest="explicit_holdout",
+        action="store_true",
+        help="final-режим без HOLDOUT_PCT: дослідник явно підтверджує, що тримає holdout окремо",
+    )
     p.add_argument("--use-kalman", action="store_true", help="PairsArb: динамічний Kalman hedge ratio")
     p.add_argument("--leg1", default=None, help="Pairs-стратегії: перша нога (для авто pair-вердикту)")
     p.add_argument("--leg2", default=None, help="Pairs-стратегії: друга нога (для авто pair-вердикту)")
@@ -226,6 +246,19 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--symbol", default="BTCUSDT", help="Символ(и) через кому")
     p.add_argument("--days", type=int, default=30, help="Глибина історії, днів")
     p.set_defaults(func=_cli_pkg.cmd_download_oi)
+
+    p = sub.add_parser(
+        "data-audit",
+        help="Перевірити кеш даних проти LIVE-біржі (неринкові бари, funding, розбіжність цін)",
+    )
+    p.add_argument("--symbol", default=None, help="Символ(и) через кому (за замовч. DEFAULT_SYMBOLS)")
+    p.add_argument("--interval", default="1m", help="Таймфрейм кешу для перевірки (за замовч. 1m)")
+    p.add_argument("--days", type=int, default=1095, help="Вікно перевірки funding, днів")
+    p.add_argument("--live-samples", type=int, default=5, help="Скільки барів звіряти з live на символ")
+    p.add_argument("--no-funding", action="store_true", help="Не перевіряти покриття funding")
+    p.add_argument("--json", default=None, help="Шлях для JSON-звіту")
+    p.set_defaults(func=_cli_pkg.cmd_data_audit)
+
     p = sub.add_parser("arb", help="Delta-neutral funding arb (перп+спот)")
     add_common(p)
     p.add_argument("--position-pct", type=float, default=None, help="Ноціонал кожної ноги (за замовч. 0.1)")

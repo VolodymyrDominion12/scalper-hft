@@ -24,6 +24,7 @@ from scalper_hft.cli.ops import (
     cmd_api,
     cmd_dashboard,
     cmd_dashboard_hash,
+    cmd_data_audit,
     cmd_download,
     cmd_download_liquidations,
     cmd_download_oi,

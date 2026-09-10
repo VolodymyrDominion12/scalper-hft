@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import numpy as np
 import pandas as pd
 
 
@@ -17,13 +18,60 @@ class BarQualityReport:
     monotonic: bool
     ok: bool
     issues: list[str] = field(default_factory=list)
+    # Фальшиві рухи ціни (див. `_spike_stats`): testnet віддає серію з рухами
+    # +27% за 1m і «плитами» O=H=L=C з нульовим обсягом. Такі бари не є
+    # ринковими, і будь-який бектест на них дає фальшивий edge.
+    n_spikes: int = 0
+    spike_rate: float = 0.0
+    max_flat_run: int = 0
 
     def summary(self) -> str:
         status = "ok" if self.ok else "FAIL"
         return (
             f"bars {status}: n={self.n_rows} dup={self.n_duplicates} "
-            f"ohlc={self.n_ohlc_violations} gaps={self.n_gaps} future={self.n_future}"
+            f"ohlc={self.n_ohlc_violations} gaps={self.n_gaps} future={self.n_future} "
+            f"spikes={self.n_spikes}({self.spike_rate:.3%})"
         )
+
+
+# ── Детекція неринкових барів ────────────────────────────────────────────────
+# Поріг спайка: |r| > max(SPIKE_ABS_MIN, SPIKE_MAD_MULT × MAD(r)), де MAD —
+# медіанне абсолютне відхилення дохідностей (стійке до викидів, на відміну від σ).
+# Абсолютний флор потрібен, щоб дрібні ТФ з малою MAD не флагували нормальні рухи.
+SPIKE_ABS_MIN = 0.05
+SPIKE_MAD_MULT = 20.0
+# Критично, якщо таких барів більше ніж ця частка: справжні «хвости» крипто
+# дають ~0.0005% (ETHUSDT: 7 із 1.59M), а синтетична історія — 0.2–6%
+# (BNBUSDT: 86633 із 1.59M = 5.5%).
+SPIKE_RATE_CRITICAL = 0.001
+# «Плита»: довгі серії O=H=L=C (ціна не рухається взагалі). Мертвий ринок
+# такого не дає; testnet — дає тисячами барів підряд.
+FLAT_RUN_CRITICAL = 240
+_FLAT_RUN_WARN = 60
+
+
+def _spike_stats(closes: pd.Series) -> tuple[int, float]:
+    """(кількість спайків, їх частка) за стійким порогом MAD."""
+    r = closes.astype(float).pct_change().replace([float("inf"), float("-inf")], pd.NA).dropna()
+    if len(r) < 30:
+        return 0, 0.0
+    mad = float((r - r.median()).abs().median())
+    threshold = max(SPIKE_ABS_MIN, SPIKE_MAD_MULT * mad)
+    n = int((r.abs() > threshold).sum())
+    return n, n / len(r)
+
+
+def _flat_run(closes: pd.Series) -> int:
+    """Найдовша серія підряд однакових close (справжній ринок такого не дає)."""
+    c = closes.to_numpy(dtype=float)
+    if len(c) < 2:
+        return 0
+    change = np.empty(len(c), dtype=bool)
+    change[0] = True
+    change[1:] = c[1:] != c[:-1]
+    starts = np.flatnonzero(change)
+    ends = np.append(starts[1:], len(c))
+    return int((ends - starts).max())
 
 
 def validate_bars(
@@ -32,7 +80,12 @@ def validate_bars(
     interval: str | None = None,
     now: pd.Timestamp | None = None,
 ) -> BarQualityReport:
-    """Перевіряє high/low, монотонний індекс, дублікати, майбутні мітки."""
+    """Перевіряє high/low, монотонний індекс, дублікати, майбутні мітки.
+
+    Додатково — неринкові бари (спайки, «плити»): раніше кеш, скачаний з
+    testnet, проходив валідацію з `ok=True` (усі перевірки формальні), і
+    sweep рахував фальшивий edge.
+    """
     issues: list[str] = []
     if df is None or df.empty:
         return BarQualityReport(0, 0, 0, 0, 0, True, False, ["порожній датасет"])
@@ -78,8 +131,42 @@ def validate_bars(
         if n_gaps:
             issues.append(f"дірки: {n_gaps}")
 
+    # ── Неринкові бари (спайки / «плити») ───────────────────────────────────
+    n_spikes, spike_rate, flat = 0, 0.0, 0
+    if "close" in df.columns and len(df) > 30:
+        n_spikes, spike_rate = _spike_stats(df["close"])
+        if spike_rate > SPIKE_RATE_CRITICAL:
+            issues.append(
+                f"неринкові рухи ціни: {n_spikes} барів ({spike_rate:.2%}) "
+                f"> |r| {SPIKE_ABS_MIN:.0%} — схоже на testnet/синтетичну історію"
+            )
+        flat = _flat_run(df["close"])
+        if flat >= FLAT_RUN_CRITICAL:
+            issues.append(f"«плита»: {flat} барів підряд з однаковим close (неринкові дані)")
+        elif flat >= _FLAT_RUN_WARN:
+            issues.append(f"довга серія однакових close: {flat} барів")
+
     ok = not issues
-    return BarQualityReport(len(df), n_dup, n_ohlc, n_gaps, n_future, monotonic, ok, issues)
+    return BarQualityReport(
+        len(df), n_dup, n_ohlc, n_gaps, n_future, monotonic, ok, issues, n_spikes, spike_rate, flat
+    )
+
+
+def bars_are_critical(report: BarQualityReport) -> bool:
+    """Критичні дефекти барів для fail-closed запису кешу (`save_klines`).
+
+    Спільна точка для storage: формальні порушення + неринкові дані.
+    """
+    if report.n_rows == 0:
+        return True
+    return bool(
+        not report.monotonic
+        or report.n_duplicates
+        or report.n_ohlc_violations
+        or report.n_future
+        or report.spike_rate > SPIKE_RATE_CRITICAL
+        or report.max_flat_run >= FLAT_RUN_CRITICAL
+    )
 
 
 @dataclass

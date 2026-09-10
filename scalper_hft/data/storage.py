@@ -136,22 +136,16 @@ def load_funding(path: Path) -> pd.DataFrame | None:
 def save_klines(path: Path, df: pd.DataFrame, *, strict: bool = True) -> None:
     """Зберегти klines у parquet. Fail-closed (strict=True, за замовчуванням):
     критичні дефекти (порожній датасет, немонотонний індекс, дублікати,
-    OHLC-порушення, майбутні бари) → ValueError, файл НЕ пишеться.
+    OHLC-порушення, майбутні бари, НЕРИНКОВІ рухи/«плити») → ValueError,
+    файл НЕ пишеться.
     Дірки (gaps) — лише warning: легітимні для тонких символів, downloader
     їх дозаповнює інкрементально."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    from scalper_hft.data.validate import validate_bars
+    from scalper_hft.data.validate import bars_are_critical, validate_bars
 
     report = validate_bars(df)
     if not report.ok:
-        critical = bool(
-            report.n_rows == 0
-            or not report.monotonic
-            or report.n_duplicates
-            or report.n_ohlc_violations
-            or report.n_future
-        )
-        if strict and critical:
+        if strict and bars_are_critical(report):
             raise ValueError(f"Відмова у збереженні битих барів {path.name}: {report.summary()}")
         logger.warning("Якість барів %s: %s", path.name, report.summary())
     _atomic_parquet(path, df[_KLINES_COLUMNS].astype(float))

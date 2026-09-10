@@ -245,6 +245,11 @@ def cell_verdict(
     interval = str(row.get("interval") or "")
     reasons: list[str] = []
 
+    # Аудит, що впав, не має «проходити» через формальні метрики: раніше
+    # status=error повертав лише перелік nan-метрик, і причина збою губилась.
+    if row.get("status") is not None and str(row.get("status")) != "ok":
+        return "FAIL", f"аудит не виконано: {row.get('error') or 'невідома помилка'}"
+
     oos = _as_float(row.get("avg_oos_sharpe"))
     if oos is None or oos <= OOS_SHARPE_MIN:
         shown = "nan" if oos is None else f"{oos:.3f}"

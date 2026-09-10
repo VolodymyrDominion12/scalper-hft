@@ -28,7 +28,7 @@ class ExchangeClient:
         self,
         api_key: str = "",
         api_secret: str = "",
-        exchange_id: str = "binance-testnet",
+        exchange_id: str = "binance",
         auth: bool = False,
         market_type: str = "future",
     ) -> None:

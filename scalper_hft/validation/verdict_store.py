@@ -35,10 +35,16 @@ def record_verdict(
     path: Path | None = None,
     now: datetime | None = None,
     pair: str = "",
+    dedupe: bool = True,
 ) -> None:
-    """Додати вердикт комірки у JSONL-журнал (append-only)."""
+    """Додати вердикт комірки у JSONL-журнал (append-only).
+
+    `dedupe=True` (дефолт) пропускає запис, якщо останній рядок тієї самої
+    комірки має ідентичні label+reasons: повторні прогони одного аудиту не
+    мають засмічувати журнал. У старому журналі 70 із 77 рядків були дублями
+    однієї комірки — реальних вердиктів було неможливо порахувати.
+    """
     p = path or DEFAULT_VERDICTS_PATH
-    p.parent.mkdir(parents=True, exist_ok=True)
     row: dict[str, Any] = {
         "ts": (now or datetime.now(UTC)).isoformat(),
         "strategy": strategy,
@@ -48,9 +54,42 @@ def record_verdict(
         "reasons": reasons,
         "pair": pair,
     }
+    if dedupe and _is_duplicate(p, row):
+        logger.info("Вердикт %s %s %s: без змін (%s) — не дублюємо", strategy, symbol, interval, label)
+        return
+    p.parent.mkdir(parents=True, exist_ok=True)
     with p.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
     logger.info("Вердикт %s %s %s pair=%s: %s", strategy, symbol, interval, pair or "—", label)
+
+
+def _is_duplicate(path: Path, row: dict[str, Any]) -> bool:
+    """Чи дорівнює останній рядок журналу для цієї комірки новому вердикту."""
+    if not path.exists():
+        return False
+    last: dict[str, Any] | None = None
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if (
+                    rec.get("strategy") == row["strategy"]
+                    and rec.get("symbol") == row["symbol"]
+                    and rec.get("interval") == row["interval"]
+                    and rec.get("pair", "") == row["pair"]
+                ):
+                    last = rec
+    except OSError:
+        return False
+    if last is None:
+        return False
+    return last.get("label") == row["label"] and last.get("reasons", "") == row["reasons"]
 
 
 def record_pair_verdict(

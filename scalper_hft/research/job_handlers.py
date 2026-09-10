@@ -223,12 +223,17 @@ def handle_capacity(payload: dict[str, Any], job_dir: Path, **_: Any) -> None:
 
 def handle_overfit(payload: dict[str, Any], job_dir: Path, **_: Any) -> None:
     from scalper_hft.research.job_artifacts import save_cell_audit
-    from scalper_hft.validation.cell_audit import audit_cell, default_train_test
+    from scalper_hft.validation.cell_audit import AuditMode, audit_cell, default_train_test
 
     name = str(payload["strategy"])
     symbol = str(payload["symbol"])
     interval = str(payload["interval"])
     days = int(payload["days"])
+    # Режим беремо з payload (CLI `--audit-mode`), а не хардкод "final":
+    # інакше кожен enqueue-джоб падав на передумовах HOLDOUT_PCT/OOS_ENFORCE_BURN.
+    audit_mode: AuditMode = str(payload.get("audit_mode") or "exploratory")  # type: ignore[assignment]
+    if audit_mode not in ("exploratory", "final"):
+        audit_mode = "exploratory"
     train_default, test_default = default_train_test(interval)
     train_bars = int(payload.get("train_bars") or train_default)
     test_bars = int(payload.get("test_bars") or test_default)
@@ -237,10 +242,11 @@ def handle_overfit(payload: dict[str, Any], job_dir: Path, **_: Any) -> None:
         symbol,
         interval,
         days,
-        mode="final",
+        mode=audit_mode,
         train_bars=train_bars,
         test_bars=test_bars,
         with_cscv=True,  # CSCV PBO для фінального вердикту комірки (1C)
+        explicit_holdout=bool(payload.get("explicit_holdout", False)),
         strategy_params=payload.get("params") or None,
     )
     if audit.status != "ok":
@@ -251,13 +257,14 @@ def handle_overfit(payload: dict[str, Any], job_dir: Path, **_: Any) -> None:
     from scalper_hft.validation.cell_audit import cell_verdict
     from scalper_hft.validation.verdict_store import record_verdict
 
-    label, reasons = cell_verdict(audit, mode="final")
+    label, reasons = cell_verdict(audit, mode=audit_mode)
     record_verdict(name, symbol, interval, label, reasons)
     logger.info(
-        "overfit %s %s %s: oos=%.3f dsr=%s n_trades=%s",
+        "overfit %s %s %s [%s]: oos=%.3f dsr=%s n_trades=%s",
         name,
         symbol,
         interval,
+        audit_mode,
         audit.avg_oos_sharpe or 0.0,
         audit.dsr,
         audit.bt_n_trades,
@@ -328,6 +335,8 @@ def payload_from_overfit_cli(args: Any) -> dict[str, Any]:
         "days": args.days,
         "train_bars": getattr(args, "train", None),
         "test_bars": getattr(args, "test", None),
+        "audit_mode": str(getattr(args, "audit_mode", "exploratory") or "exploratory"),
+        "explicit_holdout": bool(getattr(args, "explicit_holdout", False)),
         "params": dict(getattr(args, "param_dict", None) or {}),
     }
 

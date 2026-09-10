@@ -26,6 +26,7 @@ nautilus_trader + L2 дані (Tardis.dev).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -35,6 +36,8 @@ from scalper_hft.backtest.execution import CostModel
 from scalper_hft.backtest.metrics import BacktestMetrics, compute_metrics
 from scalper_hft.research.filter_trace import FilterTrace
 from scalper_hft.strategies.base import Strategy
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -118,6 +121,7 @@ def run_event_backtest(
     equity_points: list[tuple[pd.Timestamp, float]] = []
     positions_points: list[tuple[pd.Timestamp, float]] = []
     n_fills_total = 0
+    liquidated = False
 
     def _pnl(entry_px: float, exit_px: float, units: float) -> float:
         return (exit_px - entry_px) / entry_px * notional_per_unit * units if entry_px else 0.0
@@ -208,6 +212,18 @@ def run_event_backtest(
         # запізнювалась на бар і геп-прибуток був фантомним).
         unrealized = _pnl(avg_cost, close.iloc[i], inventory) if inventory != 0 else 0.0
         equity = initial_capital + realized_pnl - fees_paid + unrealized
+        if equity <= 0.0:
+            # Капітал знищено: реальний трейдер ліквідований і не може втратити
+            # більше, ніж має. Без цього стопу симуляція продовжувалась, equity
+            # ішла в мінус, і клітинка отримувала total_return = −3415% та
+            # max_dd = −3415% (56 клітинок market_maker у sweep), ламаючи
+            # агрегати й рейтинги.
+            equity_points.append((ts, 0.0))
+            positions_points.append((ts, 0.0))
+            inventory = 0.0
+            liquidated = True
+            logger.warning("market maker: equity ≤ 0 на %s — ліквідація, симуляцію зупинено", ts)
+            break
         equity_points.append((ts, equity))
         positions_points.append((ts, float(inventory * quote_size_pct)))
 
@@ -250,5 +266,6 @@ def run_event_backtest(
             "spread_offset_mult": spread_offset_mult,
             "adverse_sel_haircut": adverse_sel_haircut,
             "n_fills": n_fills_total,
+            "liquidated": liquidated,
         },
     )

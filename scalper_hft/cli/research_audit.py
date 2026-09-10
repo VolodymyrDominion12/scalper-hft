@@ -16,6 +16,30 @@ from scalper_hft.cli._common import (
 from scalper_hft.config import get_settings
 
 
+def _require_audit_mode_prereqs(mode: str, explicit_holdout: bool) -> None:
+    """Fail-fast на передумовах final-режиму (замість падіння всередині аудиту).
+
+    Раніше `overfit` завжди стартував у mode="final" (хардкод), а final вимагає
+    HOLDOUT_PCT>0 і OOS_ENFORCE_BURN=true. На дефолтному .env це давало
+    миттєвий `RuntimeError: final mode: потрібен HOLDOUT_PCT>0...` після повного
+    прогону — 4 такі джоби згоріли, і жодного реального вердикту не з'явилось.
+    """
+    if mode != "final":
+        return
+    settings = get_settings()
+    if float(getattr(settings, "enforce_holdout_pct", 0.0)) <= 0 and not explicit_holdout:
+        fail(
+            "final-аудит вимагає HOLDOUT_PCT>0 у .env (останні N% історії лишаються "
+            "для сліпого тесту) або явного --explicit-holdout. "
+            "Для дослідницького прогону використовуйте --audit-mode exploratory (дефолт)."
+        )
+    if not bool(getattr(settings, "enforce_oos_burn", False)):
+        fail(
+            "final-аудит вимагає OOS_ENFORCE_BURN=true у .env (fail-closed на повторне "
+            "використання того самого OOS-вікна)."
+        )
+
+
 def cmd_overfit(args: argparse.Namespace) -> None:
     """Повний аудит на перенавчання: WF + sensitivity (OOS) + DSR (OOS) + CSCV PBO + вердикт."""
     if getattr(args, "enqueue", False):
@@ -30,7 +54,9 @@ def cmd_overfit(args: argparse.Namespace) -> None:
     print(f"AUDIT: стратегія {args.strategy}, {args.symbol} {args.interval}, {args.days} днів")
     print("═" * 60)
 
-    audit_mode: AuditMode = getattr(args, "audit_mode", "final") or "final"
+    audit_mode: AuditMode = getattr(args, "audit_mode", "exploratory") or "exploratory"
+    explicit_holdout = bool(getattr(args, "explicit_holdout", False))
+    _require_audit_mode_prereqs(audit_mode, explicit_holdout)
     audit = run_cell_audit(
         RunCellAudit(
             strategy=args.strategy,
@@ -41,7 +67,7 @@ def cmd_overfit(args: argparse.Namespace) -> None:
             train_bars=args.train,
             test_bars=args.test,
             with_cscv=True,
-            explicit_holdout=bool(getattr(args, "explicit_holdout", False)),
+            explicit_holdout=explicit_holdout,
             strategy_params=_apply_use_kalman(args, args.param_dict),
             purge_bars=getattr(args, "purge_bars", None),
             embargo_bars=getattr(args, "embargo_bars", None),
@@ -49,7 +75,7 @@ def cmd_overfit(args: argparse.Namespace) -> None:
         )
     )
     if audit.status != "ok":
-        fail("Аудит не вдався: %s", audit.error)
+        fail(f"Аудит не вдався: {audit.error}")
 
     print("\n[1] WALK-FORWARD")
     print(

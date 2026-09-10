@@ -55,6 +55,28 @@ def test_cli_download_funding_keyword_args(monkeypatch: pytest.MonkeyPatch) -> N
     assert called_args.get("days") == 5
 
 
+def test_cli_download_uses_data_exchange_not_trading_testnet(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Без --exchange download бере DATA_EXCHANGE, навіть якщо EXCHANGE=testnet."""
+    from dataclasses import replace
+
+    from scalper_hft.config import set_settings
+
+    orig = get_settings()
+    set_settings(replace(orig, exchange="binance-testnet", data_exchange="binanceusdm"))
+    seen: dict[str, object] = {}
+
+    def fake_download_klines(*_args: object, **kwargs: object) -> pd.DataFrame:
+        seen["exchange_id"] = kwargs.get("exchange_id")
+        return pd.DataFrame()
+
+    try:
+        monkeypatch.setattr("scalper_hft.data.downloader.download_klines", fake_download_klines)
+        main(["download", "--symbol", "BTCUSDT", "--days", "1"])
+        assert seen.get("exchange_id") == "binanceusdm"
+    finally:
+        set_settings(orig)
+
+
 def test_cli_regime_backtest_execution() -> None:
     """Перевірка, що regime-backtest працює без помилок відсутності BacktestEngine або slippage."""
     with patch("scalper_hft.cli._load_klines") as mock_load:

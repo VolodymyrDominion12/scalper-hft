@@ -87,6 +87,56 @@ SLOW_STRATEGIES = frozenset({"ml_strategy", "ensemble"})
 
 DEFAULT_INTERVALS = ["1m", "5m", "15m", "30m", "1h", "4h"]
 
+# Абсолютний поріг «неправдоподібного» річного Sharpe для клітинки. Реальна
+# крипто-стратегія на 5m–1h не дає >20; значення 30–57 у старих прогонах були
+# артефактом синтетичної (testnet) історії.
+DEGENERATE_SHARPE_ABS = 20.0
+# Гейт застосовується лише до прогонів дослідницького масштабу (≥ 30 днів
+# історії). На smoke-тестах (days=1..4, сотні барів) 0 угод і екстремальний
+# Sharpe — це шум вибірки, а не дефект клітинки.
+DEGENERATE_MIN_DAYS = 30
+
+
+def flag_degenerate_row(row: SweepRow) -> SweepRow:
+    """Помітити клітинку, чиї метрики не є результатом реальної торгівлі.
+
+    Раніше такі рядки зберігались як `status="ok"` і потрапляли в рейтинги та
+    Bailey–LdP haircut: `basis_reversion` з 0 угод (60 клітинок) виглядала як
+    валідний нульовий результат, `market_maker` з equity < 0 (56 клітинок) — як
+    «погана стратегія», а ml/ensemble з Sharpe 30–57 — як переможці.
+
+    WF-режим перевіряється лише на кількість угод: `total_return`/`profit_factor`
+    там NaN за дизайном.
+    """
+    if row.status != "ok":
+        return row
+    if int(row.days or 0) < DEGENERATE_MIN_DAYS:
+        return row
+    from scalper_hft.validation.cell_audit import min_trades_for
+
+    reasons: list[str] = []
+    min_nt = min_trades_for(row.interval)
+    if row.n_trades <= 0:
+        reasons.append("0 угод — стратегія не торгувала")
+    elif min_nt and row.n_trades < min_nt:
+        reasons.append(f"угод {row.n_trades} < {min_nt} (статистично шум)")
+
+    if row.mode == "backtest":
+        tr = row.total_return
+        if tr == tr and tr <= -1.0:  # NaN-safe
+            reasons.append(f"капітал знищено (total_return={tr:.2%}, equity ≤ 0)")
+        pf = row.profit_factor
+        if pf != pf or pf == float("inf"):  # NaN або inf
+            reasons.append("profit_factor невизначений (немає збиткових/усіх угод)")
+        sh = row.sharpe
+        if sh == sh and abs(sh) > DEGENERATE_SHARPE_ABS:
+            reasons.append(f"|Sharpe|={sh:.1f} > {DEGENERATE_SHARPE_ABS:.0f} — неправдоподібно")
+
+    if reasons:
+        row.status = "degenerate"
+        row.error = "; ".join(reasons)
+    return row
+
 
 def default_strategies(*, include_slow: bool = False) -> list[str]:
     """Стратегії для sweep за замовчуванням: всі single-symbol без ML/ensemble."""
@@ -361,6 +411,7 @@ def execute_sweep_cell(
     else:
         row.days = days
         row.mode = mode
+    flag_degenerate_row(row)
     if store_path:
         with SweepStore(store_path) as store:
             store.upsert(row)
@@ -552,8 +603,17 @@ def sweep_winners_haircut(df: pd.DataFrame) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     if df.empty or "status" not in df.columns:
         return pd.DataFrame(rows)
-    ok = df[df["status"] == "ok"]
-    for iv, grp in ok.groupby("interval"):
+    ok = df[df["status"] == "ok"].copy()
+    if ok.empty:
+        return pd.DataFrame(rows)
+    # Старі таблиці (CSV/знімки) можуть не мати колонки mode — вважаємо backtest.
+    if "mode" not in ok.columns:
+        ok["mode"] = "backtest"
+    # Групуємо окремо за режимом: `mode=backtest` — in-sample оцінка, тому
+    # змішувати її з WF-OOS в одному рейтингу не можна (ranks були
+    # неспівставні: для ml_strategy backtest — внутрішній WF, для решти —
+    # повний in-sample прогін).
+    for (mode, iv), grp in ok.groupby(["mode", "interval"]):
         metric = "avg_oos_sharpe"
         if metric not in grp.columns or grp[metric].notna().sum() < 2:
             metric = "sharpe"
@@ -567,6 +627,7 @@ def sweep_winners_haircut(df: pd.DataFrame) -> pd.DataFrame:
         best = cand.iloc[best_idx]
         rows.append(
             {
+                "mode": mode,
                 "interval": iv,
                 "metric": metric,
                 "winner_strategy": best["strategy"],
@@ -578,7 +639,11 @@ def sweep_winners_haircut(df: pd.DataFrame) -> pd.DataFrame:
                 "n_candidates": int(len(cand)),
             }
         )
-    return pd.DataFrame(rows)
+    if not rows:
+        return pd.DataFrame(rows)
+    # WF-OOS наперед: якщо є хоч один walkforward-результат, саме він має вагу.
+    out = pd.DataFrame(rows)
+    return out.sort_values(["mode", "interval"], ascending=[False, True]).reset_index(drop=True)
 
 
 def haircut_roster(
@@ -682,5 +747,7 @@ __all__ = [
     "haircut_roster",
     "default_strategies",
     "DEFAULT_INTERVALS",
+    "DEGENERATE_SHARPE_ABS",
     "execute_sweep_cell",
+    "flag_degenerate_row",
 ]

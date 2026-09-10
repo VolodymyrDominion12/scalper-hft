@@ -40,7 +40,7 @@ def cmd_backtest(args: argparse.Namespace) -> None:
     strategy = get_strategy(args.strategy, **params)
     _warn_pairs_short_interval(args.strategy, args.interval)
     settings = get_settings()
-    exchange_id = getattr(args, "exchange", settings.exchange)
+    exchange_id = getattr(args, "exchange", None) or settings.data_exchange
     bar_type = getattr(args, "bar_type", "time")
     bundle = load_research_data(
         args.symbol,
@@ -101,7 +101,7 @@ def cmd_walkforward(args: argparse.Namespace) -> None:
     from scalper_hft.validation.walk_forward import run_walk_forward
 
     settings = get_settings()
-    exchange_id = getattr(args, "exchange", settings.exchange)
+    exchange_id = getattr(args, "exchange", None) or settings.data_exchange
     interval = args.interval or settings.default_interval
     df = _load_klines(
         args.symbol,
