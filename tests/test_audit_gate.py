@@ -15,7 +15,12 @@ from scalper_hft.live.audit_gate import (
     require_audit_pass,
     require_pair_audit_pass,
 )
-from scalper_hft.validation.verdict_store import latest_verdict, record_pair_verdict, record_verdict
+from scalper_hft.validation.verdict_store import (
+    latest_verdict,
+    latest_verdicts,
+    record_pair_verdict,
+    record_verdict,
+)
 
 
 @pytest.fixture()
@@ -52,6 +57,16 @@ class TestVerdictStore:
         verdicts_path.write_text("{broken json\n", encoding="utf-8")
         _pass(verdicts_path)
         assert latest_verdict("pairs_arb", "BTCUSDT", "1h", path=verdicts_path) is not None
+
+    def test_latest_verdicts_dedupes_cell(self, verdicts_path: Path) -> None:
+        record_verdict("mean_reversion", "BTCUSDT", "1h", "FAIL", "x", path=verdicts_path)
+        record_verdict("mean_reversion", "BTCUSDT", "1h", "PASS", "", path=verdicts_path)
+        record_verdict("cvd_momentum", "ETHUSDT", "15m", "FAIL", "y", path=verdicts_path)
+        rows = latest_verdicts(verdicts_path)
+        assert len(rows) == 2
+        by_strat = {r["strategy"]: r["label"] for r in rows}
+        assert by_strat["mean_reversion"] == "PASS"
+        assert by_strat["cvd_momentum"] == "FAIL"
 
 
 class TestAuditGate:

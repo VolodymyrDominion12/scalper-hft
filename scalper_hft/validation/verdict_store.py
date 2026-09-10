@@ -86,6 +86,18 @@ def load_verdicts(path: Path | None = None) -> list[dict[str, Any]]:
     return rows
 
 
+def latest_verdicts(path: Path | None = None) -> list[dict[str, Any]]:
+    """Останній вердикт на комірку (strategy, symbol, interval). Порядок — як у журналі."""
+    best: dict[tuple[Any, Any, Any], dict[str, Any]] = {}
+    order: list[tuple[Any, Any, Any]] = []
+    for row in load_verdicts(path):
+        key = (row.get("strategy"), row.get("symbol"), row.get("interval"))
+        if key not in best:
+            order.append(key)
+        best[key] = row
+    return [best[k] for k in order]
+
+
 def latest_verdict(
     strategy: str,
     symbol: str,

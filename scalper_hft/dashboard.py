@@ -5,12 +5,11 @@
     uv pip install -e ".[dashboard]"
     uv run python -m scalper_hft.cli dashboard
 
-Сторінки (app_pages/):
-    - «Моніторинг» — кеш даних по символах та paper-результати;
-    - «Бектест» — постановка бектесту в чергу, інтерактивний графік угод;
-    - «Дослідження» — масовий sweep (enqueue), filter attribution, порівняння;
-    - «Задачі» — черга job, логи, cancel / rerun;
-    - «Довідка» — посібник користувача.
+Сторінки (app_pages/), групи навігації:
+    - Дослідження: Каталог, Фіналісти, Комірка;
+    - Запуск: Бектест, Sweep, Задачі;
+    - Операції: Моніторинг, Live, Multi-Exchange;
+    - Довідка.
 """
 
 from __future__ import annotations
@@ -43,14 +42,25 @@ if not check_password():
 
 inject_busy_overlay()
 
-pages = [
-    st.Page("app_pages/overview.py", title="Моніторинг", icon=":material/monitoring:", default=True),
-    st.Page("app_pages/live_monitor.py", title="Live / WebSocket", icon=":material/sensors:"),
-    st.Page("app_pages/multi_exchange.py", title="Multi-Exchange", icon=":material/stacked_line_chart:"),
-    st.Page("app_pages/backtest.py", title="Бектест", icon=":material/query_stats:"),
-    st.Page("app_pages/research.py", title="Дослідження", icon=":material/science:"),
-    st.Page("app_pages/research_hub.py", title="Research Hub", icon=":material/library_books:"),
-    st.Page("app_pages/jobs.py", title="Задачі", icon=":material/pending_actions:"),
-    st.Page("app_pages/help.py", title="Довідка", icon=":material/help:"),
-]
-st.navigation(pages).run()
+st.navigation(
+    {
+        "Дослідження": [
+            st.Page("app_pages/research_hub.py", title="Каталог", icon=":material/library_books:"),
+            st.Page("app_pages/finalists.py", title="Фіналісти", icon=":material/verified:"),
+            st.Page("app_pages/cell.py", title="Комірка", icon=":material/candlestick_chart:", url_path="cell"),
+        ],
+        "Запуск": [
+            st.Page("app_pages/backtest.py", title="Бектест", icon=":material/query_stats:"),
+            st.Page("app_pages/research.py", title="Sweep", icon=":material/science:"),
+            st.Page("app_pages/jobs.py", title="Задачі", icon=":material/pending_actions:"),
+        ],
+        "Операції": [
+            st.Page("app_pages/overview.py", title="Моніторинг", icon=":material/monitoring:", default=True),
+            st.Page("app_pages/live_monitor.py", title="Live / WebSocket", icon=":material/sensors:"),
+            st.Page("app_pages/multi_exchange.py", title="Multi-Exchange", icon=":material/stacked_line_chart:"),
+        ],
+        "": [
+            st.Page("app_pages/help.py", title="Довідка", icon=":material/help:"),
+        ],
+    }
+).run()

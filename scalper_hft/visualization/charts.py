@@ -227,6 +227,97 @@ def add_sl_tp_levels(fig: go.Figure, trades: pd.DataFrame, row: int = 1, max_tra
             first = False
 
 
+DEFAULT_VIEW_BARS = 250
+PAD_BARS_BEFORE = 20
+
+
+def default_price_window(
+    index: pd.DatetimeIndex,
+    trades: pd.DataFrame | None = None,
+    *,
+    bars: int = DEFAULT_VIEW_BARS,
+    pad_before: int = PAD_BARS_BEFORE,
+) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Робоче вікно свічок: ~``bars`` від першого входу (інакше від старту ряду)."""
+    if index is None or len(index) == 0:
+        raise ValueError("index порожній")
+    width = max(int(bars), 2)
+    pad = max(int(pad_before), 0)
+    start_pos = 0
+    if trades is not None and not trades.empty and "entry_ts" in trades.columns:
+        first = pd.to_datetime(trades["entry_ts"], errors="coerce").dropna()
+        if not first.empty:
+            loc = int(index.searchsorted(first.iloc[0], side="left"))
+            start_pos = max(0, loc - pad)
+    end_pos = min(len(index) - 1, start_pos + width - 1)
+    start_pos = max(0, end_pos - width + 1)
+    return pd.Timestamp(index[start_pos]), pd.Timestamp(index[end_pos])
+
+
+def shift_window(
+    start: pd.Timestamp | str,
+    end: pd.Timestamp | str,
+    index: pd.DatetimeIndex,
+    direction: int,
+) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Зсунути [start, end] на половину ширини. ``direction``: −1 ліворуч, +1 праворуч."""
+    if index is None or len(index) == 0:
+        raise ValueError("index порожній")
+    i0 = int(index.searchsorted(pd.Timestamp(start), side="left"))
+    i1 = int(index.searchsorted(pd.Timestamp(end), side="right")) - 1
+    i0 = max(0, min(i0, len(index) - 1))
+    i1 = max(i0, min(i1, len(index) - 1))
+    width = max(i1 - i0 + 1, 2)
+    step = max(width // 2, 1) * (1 if int(direction) >= 0 else -1)
+    new0 = max(0, min(i0 + step, len(index) - width))
+    new1 = min(len(index) - 1, new0 + width - 1)
+    return pd.Timestamp(index[new0]), pd.Timestamp(index[new1])
+
+
+def window_around_trade(
+    entry_ts: pd.Timestamp | str,
+    index: pd.DatetimeIndex,
+    *,
+    bars: int = DEFAULT_VIEW_BARS,
+) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Вікно ``bars`` барів, центроване на вході угоди (обрізане індексом)."""
+    if index is None or len(index) == 0:
+        raise ValueError("index порожній")
+    width = max(int(bars), 2)
+    loc = int(index.searchsorted(pd.Timestamp(entry_ts), side="left"))
+    loc = max(0, min(loc, len(index) - 1))
+    half = width // 2
+    start_pos = max(0, loc - half)
+    end_pos = min(len(index) - 1, start_pos + width - 1)
+    start_pos = max(0, end_pos - width + 1)
+    return pd.Timestamp(index[start_pos]), pd.Timestamp(index[end_pos])
+
+
+def neighboring_entry_ts(
+    trades: pd.DataFrame,
+    current: pd.Timestamp | str | None,
+    *,
+    step: int,
+) -> pd.Timestamp | None:
+    """Попередній/наступний ``entry_ts``. ``step`` −1 або +1. None, якщо краю досягнуто."""
+    if trades is None or trades.empty or "entry_ts" not in trades.columns:
+        return None
+    entries = pd.to_datetime(trades["entry_ts"], errors="coerce").dropna().sort_values().unique()
+    if len(entries) == 0:
+        return None
+    if current is None:
+        pick = entries[0] if int(step) >= 0 else entries[-1]
+        return pd.Timestamp(pick)
+    pos = int(pd.Index(entries).searchsorted(pd.Timestamp(current), side="left"))
+    if pos < len(entries) and pd.Timestamp(entries[pos]) == pd.Timestamp(current):
+        nxt = pos + int(step)
+    else:
+        nxt = pos if int(step) >= 0 else pos - 1
+    if nxt < 0 or nxt >= len(entries):
+        return None
+    return pd.Timestamp(entries[nxt])
+
+
 # ── Вікно / даунсемплінг ─────────────────────────────────────────────────────
 def _window(
     df: pd.DataFrame,

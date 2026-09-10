@@ -8,11 +8,15 @@ import pandas as pd
 import pytest
 from scalper_hft.app_pages._common import (
     RESEARCH_BT_PREFILL,
+    RESEARCH_CELL_PREFILL,
+    RESEARCH_CELL_TAB,
     RESEARCH_SECTION,
     RESEARCH_SECTIONS,
     apply_research_bt_prefill,
+    apply_research_cell_prefill,
     apply_research_section_prefill,
     capacity_job_payload,
+    check_strategy_support,
     combo_from_job_params,
     job_label,
     job_open_target,
@@ -29,6 +33,24 @@ from scalper_hft.research.job_artifacts import (
     save_capacity_curve,
 )
 from scalper_hft.research.jobs import Job, JobStore
+
+
+def test_apply_research_cell_prefill() -> None:
+    state: dict[str, object] = {
+        RESEARCH_CELL_PREFILL: {
+            "strategy": "mean_reversion",
+            "symbol": "ETHUSDT",
+            "interval": "15m",
+            "days": 45,
+        }
+    }
+
+    apply_research_cell_prefill(state)
+    assert state["cell_strategy"] == "mean_reversion"
+    assert state["cell_symbol"] == "ETHUSDT"
+    assert state["cell_interval"] == "15m"
+    assert state["cell_days"] == 45
+    assert RESEARCH_CELL_PREFILL not in state
 
 
 def test_apply_research_bt_prefill_pair() -> None:
@@ -60,6 +82,7 @@ def test_apply_research_section_prefill() -> None:
 
 def test_research_sections_cover_ui() -> None:
     assert "Масовий пошук" in RESEARCH_SECTIONS
+    assert "Порівняння equity" not in RESEARCH_SECTIONS
 
 
 def test_job_label_pairs_and_sweep() -> None:
@@ -76,17 +99,21 @@ def test_job_open_target_routes() -> None:
     page, upd = job_open_target(
         "overfit", {"strategy": "mean_reversion", "symbol": "BTCUSDT", "interval": "1h", "days": 30}
     )
-    assert page.endswith("research.py")
-    assert upd[RESEARCH_SECTION] == "Аудит комірки"
-    assert upd[RESEARCH_SECTION] in RESEARCH_SECTIONS
+    assert page.endswith("cell.py")
+    assert upd[RESEARCH_CELL_TAB] == "audit"
+    assert upd[RESEARCH_CELL_PREFILL]["strategy"] == "mean_reversion"
     page_bt, upd_bt = job_open_target(
         "pairs", {"strategy": "pairs_arb", "leg1": "XRPUSDT", "leg2": "BTCUSDT", "interval": "1h", "days": 90}
     )
-    assert page_bt.endswith("backtest.py")
-    assert upd_bt[RESEARCH_BT_PREFILL]["pair"] == "XRPUSDT/BTCUSDT"
+    assert page_bt.endswith("cell.py")
+    assert upd_bt[RESEARCH_CELL_PREFILL]["pair"] == "XRPUSDT/BTCUSDT"
+    assert upd_bt[RESEARCH_CELL_TAB] == "price"
+    page_cap, upd_cap = job_open_target(
+        "capacity", {"strategy": "mean_reversion", "symbol": "BTCUSDT", "interval": "1h", "days": 30}
+    )
+    assert page_cap.endswith("cell.py")
+    assert upd_cap[RESEARCH_CELL_TAB] == "stress"
     page_sw, upd_sw = job_open_target("sweep", {"strategies": ["a"], "symbols": ["BTCUSDT"], "intervals": ["1h"]})
-    # Розділ перейменовано «Sweep matrix» → «Масовий пошук»: target має бути
-    # валідним у RESEARCH_SECTIONS, інакше «Відкрити результат» веде нікуди.
     assert upd_sw[RESEARCH_SECTION] == "Масовий пошук"
     assert upd_sw[RESEARCH_SECTION] in RESEARCH_SECTIONS
     assert page_sw.endswith("research.py")
@@ -105,6 +132,50 @@ def test_single_backtest_payload_trace_flag() -> None:
     assert traced["trace"] is True
     cap = capacity_job_payload("mean_reversion", "BTCUSDT", "1h", 60)
     assert cap["scales"] == [1.0, 2.0, 5.0, 10.0]
+
+
+def test_check_strategy_support() -> None:
+    # Single-symbol valid strategies
+    ok, err = check_strategy_support("mean_reversion", is_pair=False)
+    assert ok is True and err is None
+
+    ok, err = check_strategy_support("supertrend", is_pair=False)
+    assert ok is True and err is None
+
+    # Multi-symbol strategies on single symbol
+    ok, err = check_strategy_support("cross_momentum", is_pair=False)
+    assert ok is False
+    assert "cross_momentum" in (err or "")
+
+    ok, err = check_strategy_support("pairs_arb", is_pair=False)
+    assert ok is False
+    assert "pairs_arb" in (err or "")
+
+    ok, err = check_strategy_support("sparse_basket", is_pair=False)
+    assert ok is False
+    assert "sparse_basket" in (err or "")
+
+    # Pairs mode
+    ok, err = check_strategy_support("pairs_arb", is_pair=True)
+    assert ok is True and err is None
+
+    ok, err = check_strategy_support("mean_reversion", is_pair=True)
+    assert ok is False
+
+    ok, err = check_strategy_support("sparse_basket", is_pair=True)
+    assert ok is False
+
+
+def test_payload_validation_rejects_unsupported() -> None:
+    with pytest.raises(ValueError, match="cross_momentum"):
+        single_backtest_payload("cross_momentum", "BTCUSDT", "1h", 30)
+
+    # validate=False allows bypass
+    raw = single_backtest_payload("cross_momentum", "BTCUSDT", "1h", 30, validate=False)
+    assert raw["strategy"] == "cross_momentum"
+
+    with pytest.raises(ValueError, match="pairs_arb"):
+        capacity_job_payload("pairs_arb", "BTCUSDT", "1h", 30)
 
 
 def test_job_status_caption() -> None:
@@ -404,5 +475,3 @@ def test_research_page_presets_apptest() -> None:
     btn_reco[0].click().run(timeout=30)
     assert not at.exception
     assert at.session_state["sw_slow"] is False
-
-

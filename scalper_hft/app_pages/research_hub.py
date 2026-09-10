@@ -1,4 +1,4 @@
-"""Research Hub: накопичені результати sweep і walk-forward."""
+"""Каталог: останні результати sweep і walk-forward."""
 
 from __future__ import annotations
 
@@ -10,17 +10,17 @@ import streamlit as st
 from scalper_hft.app_pages._results import render_sweep_explorer
 from scalper_hft.research.sweep_store import SweepStore
 
-st.title("Research Hub")
+st.title("Каталог комірок")
 st.caption(
-    "Усі клітинки sweep і walk-forward. Наведіть на колонку — підказка. "
-    "**Деталі** відкриває бектест зі свічками, equity і точками входу/виходу."
+    "Останні прогони sweep / walk-forward. Увімкніть «Кандидати» для OOS-гейтів аудиту. "
+    "**Деталі** відкриває досьє зі свічками; чекбокси — пакетний аудит, бектест або capacity."
 )
 
 _SWEEP_DB = Path("results") / "sweep.db"
 
 if not _SWEEP_DB.exists():
     st.info("Немає бази результатів (`results/sweep.db`). Спочатку запустіть sweep.")
-    st.page_link("app_pages/research.py", label="Дослідження → Масовий пошук", icon=":material/science:")
+    st.page_link("app_pages/research.py", label="Sweep — масовий пошук", icon=":material/science:")
     st.stop()
 
 
@@ -50,4 +50,5 @@ with st.container(horizontal=True):
     if "strategy" in results_df.columns:
         st.metric("Стратегій", int(results_df["strategy"].nunique()), border=True)
 
+st.page_link("app_pages/finalists.py", label="Фіналісти (аудит)", icon=":material/verified:")
 render_sweep_explorer(results_df, key_prefix="hub")

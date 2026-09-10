@@ -9,9 +9,10 @@ import pandas as pd
 import streamlit as st
 
 from scalper_hft.app_pages._common import (
-    RESEARCH_AUDIT_PREFILL,
-    RESEARCH_BT_PREFILL,
-    RESEARCH_SECTION,
+    RESEARCH_CELL_PREFILL,
+    RESEARCH_CELL_TAB,
+    capacity_job_payload,
+    check_strategy_support,
     combo_prefill,
     overfit_job_payload,
     single_backtest_payload,
@@ -22,11 +23,13 @@ from scalper_hft.research.results_table import (
     SWEEP_COLUMN_BY_KEY,
     TRADE_COLUMNS,
     ColumnHint,
+    candidate_mask,
     default_sort_column,
     display_columns,
     filter_sweep_results,
     is_audit_action,
     job_matches_combo,
+    latest_cells,
     open_action_cells,
 )
 from scalper_hft.validation.cell_audit import default_train_test
@@ -120,6 +123,59 @@ def enqueue_cell_audits(rows: list[Mapping[str, Any]], *, skip_active: bool = Tr
     return launched, skipped
 
 
+def enqueue_cell_backtests(rows: list[Mapping[str, Any]], *, trace: bool = True) -> tuple[int, int]:
+    """Поставити повний backtest (за замовчуванням з trace) для вибраних комірок."""
+    launched = 0
+    skipped = 0
+    for row in rows:
+        combo = combo_prefill(row)
+        if not (combo.get("strategy") and combo.get("symbol") and combo.get("interval")):
+            continue
+        ok, _ = check_strategy_support(str(combo["strategy"]), is_pair=False)
+        if not ok:
+            skipped += 1
+            continue
+        payload = single_backtest_payload(
+            str(combo["strategy"]),
+            str(combo["symbol"]),
+            str(combo["interval"]),
+            int(combo["days"]),
+            trace=trace,
+        )
+        job, _alive = submit_research_job("backtest", payload)
+        if job.status == "queued":
+            launched += 1
+        else:
+            skipped += 1
+    return launched, skipped
+
+
+def enqueue_cell_capacity(rows: list[Mapping[str, Any]]) -> tuple[int, int]:
+    """Поставити capacity для вибраних одиночних комірок."""
+    launched = 0
+    skipped = 0
+    for row in rows:
+        combo = combo_prefill(row)
+        if not (combo.get("strategy") and combo.get("symbol") and combo.get("interval")):
+            continue
+        ok, _ = check_strategy_support(str(combo["strategy"]), is_pair=False)
+        if not ok:
+            skipped += 1
+            continue
+        payload = capacity_job_payload(
+            str(combo["strategy"]),
+            str(combo["symbol"]),
+            str(combo["interval"]),
+            int(combo["days"]),
+        )
+        job, _alive = submit_research_job("capacity", payload)
+        if job.status == "queued":
+            launched += 1
+        else:
+            skipped += 1
+    return launched, skipped
+
+
 def _hint_config(hint: ColumnHint) -> object:
     if hint.kind == "text":
         return st.column_config.TextColumn(hint.label, help=hint.help, pinned=hint.pinned or None)
@@ -162,40 +218,42 @@ def trade_column_config() -> dict[str, object]:
 
 
 def open_combo_details(row: Mapping[str, Any], *, enqueue: bool = True) -> None:
-    """Провалитись на Бектест: свічки, equity, точки входу/виходу.
-
-    Sweep не зберігає угоди — тому за потреби ставимо повний backtest job.
-    """
+    """Провалитись на досьє комірки: свічки, equity, точки входу/виходу."""
     combo = combo_prefill(row)
-    st.session_state[RESEARCH_BT_PREFILL] = combo
+    st.session_state[RESEARCH_CELL_PREFILL] = combo
+    st.session_state[RESEARCH_CELL_TAB] = "price"
     if enqueue and combo.get("strategy") and combo.get("symbol") and combo.get("interval"):
-        payload = single_backtest_payload(
-            str(combo["strategy"]),
-            str(combo["symbol"]),
-            str(combo["interval"]),
-            int(combo["days"]),
-        )
-        submit_research_job("backtest", payload)
-    st.switch_page("app_pages/backtest.py")
+        ok, _ = check_strategy_support(str(combo["strategy"]), is_pair=False)
+        if ok:
+            payload = single_backtest_payload(
+                str(combo["strategy"]),
+                str(combo["symbol"]),
+                str(combo["interval"]),
+                int(combo["days"]),
+            )
+            submit_research_job("backtest", payload)
+    st.switch_page("app_pages/cell.py")
 
 
 def open_combo_audit(row: Mapping[str, Any], *, enqueue: bool = True) -> None:
-    """Відкрити аудит комірки (walk-forward + DSR) і поставити overfit job."""
+    """Відкрити досьє комірки на вкладці аудиту і поставити overfit job."""
     combo = combo_prefill(row)
-    st.session_state[RESEARCH_AUDIT_PREFILL] = combo
-    st.session_state[RESEARCH_SECTION] = "Аудит комірки"
+    st.session_state[RESEARCH_CELL_PREFILL] = combo
+    st.session_state[RESEARCH_CELL_TAB] = "audit"
     if enqueue and combo.get("strategy") and combo.get("symbol") and combo.get("interval"):
-        train_b, test_b = default_train_test(str(combo["interval"]))
-        payload = overfit_job_payload(
-            str(combo["strategy"]),
-            str(combo["symbol"]),
-            str(combo["interval"]),
-            int(combo["days"]),
-            train_bars=train_b,
-            test_bars=test_b,
-        )
-        submit_research_job("overfit", payload)
-    st.switch_page("app_pages/research.py")
+        ok, _ = check_strategy_support(str(combo["strategy"]), is_pair=False)
+        if ok:
+            train_b, test_b = default_train_test(str(combo["interval"]))
+            payload = overfit_job_payload(
+                str(combo["strategy"]),
+                str(combo["symbol"]),
+                str(combo["interval"]),
+                int(combo["days"]),
+                train_bars=train_b,
+                test_bars=test_b,
+            )
+            submit_research_job("overfit", payload)
+    st.switch_page("app_pages/cell.py")
 
 
 def _on_results_row_action() -> None:
@@ -306,16 +364,23 @@ def render_sweep_explorer(
     else:
         st.caption(
             "Наведіть на назву колонки — підказка. Клік по заголовку сортує. "
-            "**Деталі** відкриває бектест зі свічками й угодами (sweep зберігає лише метрики). "
-            "**Аудит** ставить walk-forward+DSR аудит комірки в чергу."
+            "**Деталі** відкриває досьє комірки зі свічками. "
+            "**Аудит** ставить walk-forward+DSR у чергу."
         )
 
-    strategies = sorted(df["strategy"].dropna().astype(str).unique()) if "strategy" in df.columns else []
-    symbols = sorted(df["symbol"].dropna().astype(str).unique()) if "symbol" in df.columns else []
-    intervals = sorted(df["interval"].dropna().astype(str).unique()) if "interval" in df.columns else []
+    source = df
+    with st.container(horizontal=True):
+        latest_only = st.toggle("Лише останні", value=True, key=f"{key_prefix}_latest")
+        cand_only = st.toggle("Кандидати (OOS-гейти)", value=False, key=f"{key_prefix}_cands")
+    if latest_only:
+        source = latest_cells(source)
+
+    strategies = sorted(source["strategy"].dropna().astype(str).unique()) if "strategy" in source.columns else []
+    symbols = sorted(source["symbol"].dropna().astype(str).unique()) if "symbol" in source.columns else []
+    intervals = sorted(source["interval"].dropna().astype(str).unique()) if "interval" in source.columns else []
     modes = ["Усі"]
-    if "mode" in df.columns:
-        modes.extend(sorted(df["mode"].dropna().astype(str).unique()))
+    if "mode" in source.columns:
+        modes.extend(sorted(source["mode"].dropna().astype(str).unique()))
 
     with st.container(horizontal=True, vertical_alignment="bottom"):
         query = st.text_input(
@@ -337,7 +402,7 @@ def render_sweep_explorer(
         min_wr = st.number_input("Min win rate", 0.0, 1.0, wr_default, step=0.05, key=f"{key_prefix}_minwr")
 
     view = filter_sweep_results(
-        df,
+        source,
         strategies=sel_strats or None,
         symbols=sel_syms or None,
         intervals=sel_ivs or None,
@@ -347,6 +412,8 @@ def render_sweep_explorer(
         min_win_rate=float(min_wr),
         query=str(query or ""),
     )
+    if cand_only and not view.empty:
+        view = view.loc[candidate_mask(view)].reset_index(drop=True)
     if view.empty:
         st.warning("Немає рядків після фільтрів.")
         return view
@@ -391,11 +458,11 @@ def render_sweep_explorer(
             on_select="rerun",
             selection_mode="multi-row",
         )
-        st.caption(f"Показано **{len(shown)}** з {len(df)} рядків.")
+        st.caption(f"Показано **{len(shown)}** з {len(source)} рядків.")
         sel_rows = list(selection.selection.rows) if selection is not None and selection.selection else []
         if sel_rows:
             with st.container(border=True):
-                st.markdown(f"**Аудит комірок у чергу: вибрано {len(sel_rows)}**")
+                st.markdown(f"**Пакетні задачі: вибрано {len(sel_rows)}**")
                 _preview = [
                     f"{payloads[int(i)].get('strategy', '?')} · {payloads[int(i)].get('symbol', '?')} · "
                     f"{payloads[int(i)].get('interval', '?')} ({payloads[int(i)].get('days', '?')}d)"
@@ -410,20 +477,51 @@ def render_sweep_explorer(
                     value=True,
                     key=f"{key_prefix}_audit_skip",
                 )
-                if st.button(
-                    f"Поставити аудит ({len(sel_rows)} комірок) у чергу",
-                    icon=":material/fact_check:",
-                    type="primary",
-                    key=f"{key_prefix}_audit_btn",
-                ):
-                    rows = [payloads[int(i)] for i in sel_rows if 0 <= int(i) < len(payloads)]
-                    launched, skipped = enqueue_cell_audits(rows, skip_active=bool(skip_active))
-                    st.success(
-                        f"Overfit-аудит поставлено в чергу: **{launched}** комірок"
-                        + (f", пропущено: **{skipped}**" if skipped else "")
-                        + ". Прогрес — на сторінці «Задачі»."
-                    )
-                    st.page_link("app_pages/jobs.py", label="Черга задач", icon=":material/pending_actions:")
+                rows = [payloads[int(i)] for i in sel_rows if 0 <= int(i) < len(payloads)]
+                with st.container(horizontal=True):
+                    if st.button(
+                        f"Аудит ({len(sel_rows)})",
+                        icon=":material/fact_check:",
+                        type="primary",
+                        key=f"{key_prefix}_audit_btn",
+                    ):
+                        launched, skipped = enqueue_cell_audits(rows, skip_active=bool(skip_active))
+                        st.success(
+                            f"Overfit-аудит у черзі: **{launched}**"
+                            + (f", пропущено: **{skipped}**" if skipped else "")
+                        )
+                    if st.button(
+                        f"Бектест + trace ({len(sel_rows)})",
+                        icon=":material/candlestick_chart:",
+                        key=f"{key_prefix}_bt_btn",
+                    ):
+                        launched, skipped = enqueue_cell_backtests(rows, trace=True)
+                        st.success(
+                            f"Backtest у черзі: **{launched}**" + (f", пропущено: **{skipped}**" if skipped else "")
+                        )
+                    if st.button(
+                        f"Capacity ({len(sel_rows)})",
+                        icon=":material/speed:",
+                        key=f"{key_prefix}_cap_btn",
+                    ):
+                        launched, skipped = enqueue_cell_capacity(rows)
+                        st.success(
+                            f"Capacity у черзі: **{launched}**" + (f", пропущено: **{skipped}**" if skipped else "")
+                        )
+                    if st.button(
+                        "До порівняння",
+                        icon=":material/compare:",
+                        key=f"{key_prefix}_cmp_btn",
+                    ):
+                        bag = list(st.session_state.get("finalist_compare") or [])
+                        for row in rows:
+                            combo = combo_prefill(row)
+                            if combo not in bag:
+                                bag.append(combo)
+                        st.session_state["finalist_compare"] = bag
+                        st.success(f"У порівнянні: **{len(bag)}** комірок.")
+                st.page_link("app_pages/jobs.py", label="Черга задач", icon=":material/pending_actions:")
+                st.page_link("app_pages/finalists.py", label="Фіналісти", icon=":material/verified:")
     else:
         st.dataframe(
             shown,

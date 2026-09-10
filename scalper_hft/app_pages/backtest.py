@@ -8,40 +8,31 @@ from __future__ import annotations
 
 from typing import Any
 
-import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
 from scalper_hft.app_pages._busy import busy
+from scalper_hft.app_pages._charts import render_backtest_chart, render_pairs_chart
 from scalper_hft.app_pages._common import (
     BT_INTERVALS,
     PAIR_CHOICES,
     SYMBOLS,
     apply_research_bt_prefill,
     capacity_job_payload,
+    check_strategy_support,
     job_status_caption,
     lookup_job,
     submit_research_job,
 )
-from scalper_hft.app_pages._results import trade_column_config
 from scalper_hft.backtest.execution import CostModel
 from scalper_hft.config import get_settings
 from scalper_hft.data.access import klines_from_store
-from scalper_hft.features.indicators import add_standard_features
 from scalper_hft.research.dashboard_brief import dsr_verdict, hurdle_note
 from scalper_hft.research.job_artifacts import load_backtest_result, load_capacity_curve, load_pairs_result
 from scalper_hft.research.jobs import DEFAULT_JOBS_PATH, JobStore, artifacts_dir, fingerprint
 from scalper_hft.research.strategy_book import select_label
 from scalper_hft.strategies import REGISTRY, get_strategy
 from scalper_hft.validation.deflated_sharpe import deflated_sharpe_ratio, estimate_n_trials
-from scalper_hft.visualization import (
-    auto_indicator_columns,
-    find_trade_by_ts,
-    make_backtest_figure,
-    make_pairs_figure,
-    trade_detail_figure,
-    trades_table,
-)
 
 settings = get_settings()
 
@@ -77,6 +68,10 @@ strategy_name = st.sidebar.selectbox(
     key="bt_strategy",
 )
 is_pairs = strategy_name == "pairs_arb"
+is_supported, support_err = check_strategy_support(strategy_name, is_pair=is_pairs)
+if not is_supported and support_err:
+    st.sidebar.warning(support_err)
+
 if is_pairs:
     pair_sel = st.sidebar.selectbox("Пара", PAIR_CHOICES, key="bt_pair")
     leg1, leg2 = pair_sel.split("/")
@@ -85,155 +80,15 @@ else:
     symbol = st.sidebar.selectbox("Символ", SYMBOLS, key="bt_symbol")
     interval = st.sidebar.selectbox("Таймфрейм", BT_INTERVALS, index=1, key="bt_interval_single")
 days = st.sidebar.slider("Глибина даних, днів", 7, 1095, 90 if is_pairs else 30, key="bt_days")
-run_bt = st.sidebar.button("Запустити бектест", icon=":material/play_arrow:")
-run_rerun = st.sidebar.button("Перезапустити задачу", icon=":material/replay:")
-run_capacity = st.sidebar.button("Capacity (черга)", icon=":material/speed:")
-
-
-def _clear_trade_selection() -> None:
-    """Скинути вибір угоди: і наш стан, і selection widget-стану графіка."""
-    st.session_state["bt_sel_ts"] = None
-    st.session_state.pop("bt_fig", None)
-
-
-@st.fragment
-def _render_bt_chart(view: dict) -> None:
-    """Графік угод + клік по маркеру + таблиця (окремий фрагмент — не перезапускає бектест)."""
-    df, res, title = view["df"], view["res"], view["title"]
-    st.subheader("Графік угод")
-    left, right = st.columns([1, 4])
-    with left:
-        ts0 = df.index[0].to_pydatetime()
-        ts1 = df.index[-1].to_pydatetime()
-        st.caption("Вікно графіка")
-        window = st.slider(
-            "Час",
-            min_value=ts0,
-            max_value=ts1,
-            value=(ts0, ts1),
-            format="%d.%m %H:%M",
-            key="bt_window",
-        )
-        with_trades = st.toggle("Точки входу/виходу", value=True, key="bt_trades")
-        with_sl_tp = st.toggle("Рівні SL / TP", value=True, key="bt_sl_tp")
-        with_inds = st.toggle("Індикатори", value=True, key="bt_inds")
-        max_bars = st.select_slider(
-            "Максимум барів",
-            options=[1_000, 5_000, 20_000, 100_000, 500_000],
-            value=20_000,
-            key="bt_max_bars",
-        )
-        st.caption(f"Угод: {len(res.trades)} · Max DD: {res.metrics.max_drawdown:.1%}")
-        st.caption("💡 Клік по маркеру ▲/▼/× — деталі угоди")
-    with right:
-        with busy("Будую графік угод…"):
-            fdf = add_standard_features(df)  # фічі лише для графіка
-            fig = make_backtest_figure(
-                fdf,
-                res,
-                symbol=title,
-                start=window[0],
-                end=window[1],
-                max_bars=max_bars,
-                with_trades=with_trades,
-                with_sl_tp=with_sl_tp,
-                indicators=auto_indicator_columns(fdf) if with_inds else [],
-            )
-        sel = st.plotly_chart(fig, width="stretch", key="bt_fig", on_select="rerun", selection_mode="points")
-        sel_state: Any = getattr(sel, "selection", None)
-        if sel_state:
-            # шукаємо угоду серед усіх вибраних точок (клік може зачепити
-            # лінію індикатора на тому ж барі — ts все одно співпаде)
-            points = sel_state.get("points") if isinstance(sel_state, dict) else getattr(sel_state, "points", None)
-            for p in points or []:
-                if isinstance(p, dict) and p.get("x") is not None and find_trade_by_ts(res.trades, p["x"]) is not None:
-                    st.session_state["bt_sel_ts"] = p["x"]
-                    break
-
-    # ── Деталі вибраної угоди ──────────────────────────────────────────────
-    sel_ts = st.session_state.get("bt_sel_ts")
-    trade = find_trade_by_ts(res.trades, sel_ts) if sel_ts is not None else None
-    if trade is not None:
-        t0 = pd.Timestamp(trade["entry_ts"])
-        with st.container(border=True):
-            st.subheader(f"Деталі угоди · {t0:%d.%m.%Y %H:%M}")
-            sl = trade["sl_price"] if "sl_price" in trade.index else float("nan")
-            tp = trade["tp_price"] if "tp_price" in trade.index else float("nan")
-
-            with st.container(horizontal=True):
-                st.metric("Сторона", "Лонг" if trade["side"] == 1 else "Шорт", border=True)
-                st.metric("Вхід → Вихід", f"{trade['entry_price']:.2f} → {trade['exit_price']:.2f}", border=True)
-                st.metric("PnL", f"{trade['ret']:.3%}", border=True)
-                st.metric("SL / TP", f"{sl:.2f} / {tp:.2f}" if pd.notna(sl) and pd.notna(tp) else "—", border=True)
-
-            st.plotly_chart(trade_detail_figure(fdf, res, trade["entry_ts"]), width="stretch", key="bt_detail_fig")
-            if st.button("✕ Закрити деталі", key="bt_clear_sel", on_click=_clear_trade_selection):
-                st.rerun(scope="fragment")
-
-    st.subheader("Угоди")
-    if res.trades is not None and not res.trades.empty:
-        st.dataframe(
-            trades_table(res, initial_capital=10_000.0),
-            width="stretch",
-            hide_index=True,
-            column_config=trade_column_config(),
-        )
-    else:
-        st.info("Угод за цей період немає — спробуйте іншу стратегію/період.")
-
-
-@st.fragment
-def _render_pairs_chart(res: Any, title: str) -> None:
-    """Спред + маркери угод для pairs_arb (окремий фрагмент)."""
-    if res.spread is None or getattr(res.spread, "empty", True):
-        st.warning("Немає спреду в артефактах.")
-        return
-    st.subheader("Графік спреду")
-    left, right = st.columns([1, 4])
-    with left:
-        ts0 = res.spread.index[0].to_pydatetime()
-        ts1 = res.spread.index[-1].to_pydatetime()
-        st.caption("Вікно графіка")
-        window = st.slider(
-            "Час",
-            min_value=ts0,
-            max_value=ts1,
-            value=(ts0, ts1),
-            format="%d.%m %H:%M",
-            key="pairs_window",
-        )
-        with_trades = st.toggle("Точки входу/виходу", value=True, key="pairs_trades")
-        max_bars = st.select_slider(
-            "Максимум барів",
-            options=[1_000, 5_000, 20_000, 100_000, 500_000],
-            value=20_000,
-            key="pairs_max_bars",
-        )
-        st.caption(f"Угод: {len(res.trades)} · Max DD: {res.metrics.max_drawdown:.1%}")
-    with right:
-        with busy("Будую графік спреду…"):
-            fig = make_pairs_figure(
-                res,
-                start=window[0],
-                end=window[1],
-                max_bars=max_bars,
-                with_trades=with_trades,
-                symbol=title,
-            )
-        st.plotly_chart(fig, width="stretch", key="pairs_fig")
-    st.subheader("Угоди")
-    if res.trades is not None and not res.trades.empty:
-        st.dataframe(
-            trades_table(res, initial_capital=10_000.0),
-            width="stretch",
-            hide_index=True,
-            column_config=trade_column_config(),
-        )
-    else:
-        st.info("Угод за цей період немає.")
+run_bt = st.sidebar.button("Запустити бектест", icon=":material/play_arrow:", disabled=not is_supported)
+run_rerun = st.sidebar.button("Перезапустити задачу", icon=":material/replay:", disabled=not is_supported)
+run_capacity = st.sidebar.button("Capacity (черга)", icon=":material/speed:", disabled=not is_supported or is_pairs)
 
 
 st.header("Запуск бектесту")
+if not is_supported:
+    st.warning(support_err)
+
 if is_pairs:
     _kind = "pairs"
     _payload = {
@@ -268,11 +123,11 @@ with JobStore(DEFAULT_JOBS_PATH) as _js:
     _job = _js.get_by_fingerprint(_fp)
     _alive = _js.worker_is_alive()
 
-if run_bt:
+if run_bt and is_supported:
     with JobStore(DEFAULT_JOBS_PATH) as _js:
         _job = _js.submit(_kind, _payload)
     st.rerun()
-if run_rerun:
+if run_rerun and is_supported:
     with JobStore(DEFAULT_JOBS_PATH) as _js:
         _job = _js.submit(_kind, _payload, force=True)
     st.rerun()
@@ -374,10 +229,10 @@ if st.session_state.get("bt_fp") != _fp:
 st.session_state["bt_fp"] = _fp
 
 if st.session_state.get("pairs_view") is not None:
-    _render_pairs_chart(st.session_state["pairs_view"], _title)
+    render_pairs_chart(st.session_state["pairs_view"], _title, key_prefix="pairs")
 
 if st.session_state.get("bt_view") is not None:
-    _render_bt_chart(st.session_state["bt_view"])
+    render_backtest_chart(st.session_state["bt_view"], key_prefix="bt")
 
     # ── Розширена аналітика після основного графіка ─────────────────────────
     bt_res = st.session_state["bt_view"].get("res")
@@ -585,6 +440,8 @@ else:
 
 if is_pairs:
     st.caption("Capacity рахується для одиночних стратегій (не pairs_arb).")
+elif not is_supported:
+    st.caption("Capacity доступна лише для валідних одиночних стратегій.")
 else:
     _cap_payload = capacity_job_payload(strategy_name, symbol, interval, days)
     if run_capacity:

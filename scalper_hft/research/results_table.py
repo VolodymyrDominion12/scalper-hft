@@ -170,6 +170,58 @@ def default_sort_column(df: pd.DataFrame) -> str:
     return df.columns[0] if len(df.columns) else "strategy"
 
 
+def latest_cells(df: pd.DataFrame) -> pd.DataFrame:
+    """Один рядок на (strategy, symbol, interval, mode) — найсвіжіший ``run_ts``."""
+    if df.empty:
+        return df
+    keys = [c for c in ("strategy", "symbol", "interval", "mode") if c in df.columns]
+    if not keys:
+        return df.reset_index(drop=True)
+    out = coerce_sweep_metrics(df)
+    if "run_ts" in out.columns:
+        stamp = pd.to_datetime(out["run_ts"], errors="coerce", utc=True)
+        out = out.assign(_rank=stamp).sort_values("_rank", na_position="first")
+        out = out.drop(columns=["_rank"])
+    return out.groupby(keys, dropna=False, sort=False).tail(1).reset_index(drop=True)
+
+
+def candidate_mask(df: pd.DataFrame) -> pd.Series:
+    """True для комірок, що проходять OOS-гейти аудиту. Без OOS — завжди False."""
+    from scalper_hft.validation.cell_audit import (
+        DEFAULT_MIN_TRADES,
+        MIN_TRADES,
+        OOS_POS_FRAC_MIN,
+        OOS_SHARPE_MIN,
+    )
+
+    if df.empty:
+        return pd.Series(dtype=bool)
+    oos = (
+        pd.to_numeric(df["avg_oos_sharpe"], errors="coerce")
+        if "avg_oos_sharpe" in df.columns
+        else pd.Series(float("nan"), index=df.index, dtype=float)
+    )
+    pos = (
+        pd.to_numeric(df["oos_positive_frac"], errors="coerce")
+        if "oos_positive_frac" in df.columns
+        else pd.Series(float("nan"), index=df.index, dtype=float)
+    )
+    trades = (
+        pd.to_numeric(df["n_trades"], errors="coerce")
+        if "n_trades" in df.columns
+        else pd.Series(0.0, index=df.index, dtype=float)
+    )
+    intervals = df["interval"].astype(str) if "interval" in df.columns else pd.Series("", index=df.index)
+    min_tr = intervals.map(lambda iv: float(MIN_TRADES.get(iv, DEFAULT_MIN_TRADES)))
+    return (
+        oos.notna()
+        & (oos > float(OOS_SHARPE_MIN))
+        & pos.notna()
+        & (pos >= float(OOS_POS_FRAC_MIN))
+        & (trades.fillna(0) >= min_tr)
+    )
+
+
 def filter_sweep_results(
     df: pd.DataFrame,
     *,

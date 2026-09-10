@@ -351,3 +351,67 @@ class TestPairsFigure:
         )
         with pytest.raises(ValueError, match="spread"):
             make_pairs_figure(res)
+
+
+# ── 7. Робоче вікно свічок ───────────────────────────────────────────────────
+class TestPriceWindow:
+    def test_default_starts_at_first_entry(self) -> None:
+        from scalper_hft.visualization.charts import default_price_window
+
+        idx = pd.date_range("2025-01-01", periods=1000, freq="1min")
+        entry = idx[100]
+        trades = pd.DataFrame({"entry_ts": [entry], "exit_ts": [idx[120]]})
+        start, end = default_price_window(idx, trades, bars=50, pad_before=10)
+        assert start == idx[90]
+        assert end == idx[139]
+        assert (end - start).value == (idx[49] - idx[0]).value or (
+            idx.get_indexer([end])[0] - idx.get_indexer([start])[0] + 1
+        ) == 50
+
+    def test_default_without_trades_from_start(self) -> None:
+        from scalper_hft.visualization.charts import default_price_window
+
+        idx = pd.date_range("2025-01-01", periods=80, freq="1h")
+        start, end = default_price_window(idx, None, bars=20)
+        assert start == idx[0]
+        assert end == idx[19]
+
+    def test_default_empty_index_raises(self) -> None:
+        from scalper_hft.visualization.charts import default_price_window
+
+        with pytest.raises(ValueError, match="порожній"):
+            default_price_window(pd.DatetimeIndex([]))
+
+    def test_shift_does_not_leave_index(self) -> None:
+        from scalper_hft.visualization.charts import shift_window
+
+        idx = pd.date_range("2025-01-01", periods=100, freq="1min")
+        start, end = shift_window(idx[0], idx[19], idx, 1)
+        assert start == idx[10]
+        assert end == idx[29]
+        left_s, left_e = shift_window(idx[0], idx[19], idx, -1)
+        assert left_s == idx[0]
+        assert left_e == idx[19]
+        right_s, right_e = shift_window(idx[80], idx[99], idx, 1)
+        assert right_e == idx[99]
+        assert right_s == idx[80]
+
+    def test_window_around_trade_contains_entry(self) -> None:
+        from scalper_hft.visualization.charts import window_around_trade
+
+        idx = pd.date_range("2025-01-01", periods=200, freq="1min")
+        entry = idx[50]
+        start, end = window_around_trade(entry, idx, bars=40)
+        assert start <= entry <= end
+        assert idx.get_indexer([end])[0] - idx.get_indexer([start])[0] + 1 == 40
+
+    def test_neighboring_entry_steps(self) -> None:
+        from scalper_hft.visualization.charts import neighboring_entry_ts
+
+        idx = pd.date_range("2025-01-01", periods=10, freq="1h")
+        trades = pd.DataFrame({"entry_ts": [idx[1], idx[4], idx[7]]})
+        assert neighboring_entry_ts(trades, None, step=1) == idx[1]
+        assert neighboring_entry_ts(trades, idx[1], step=1) == idx[4]
+        assert neighboring_entry_ts(trades, idx[4], step=-1) == idx[1]
+        assert neighboring_entry_ts(trades, idx[7], step=1) is None
+        assert neighboring_entry_ts(pd.DataFrame(), idx[1], step=1) is None

@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 from scalper_hft.research.jobs import Job
 from scalper_hft.research.results_table import (
     SWEEP_DISPLAY_KEYS,
+    candidate_mask,
     default_sort_column,
     display_columns,
     filter_sweep_results,
     is_audit_action,
     job_matches_combo,
+    latest_cells,
     row_actions,
     trade_quality_blockers,
 )
@@ -112,3 +115,38 @@ def test_job_matches_from_dataclass() -> None:
         status="succeeded",
     )
     assert job_matches_combo(job.params, strategy="mean_reversion", symbol="BTCUSDT", interval="1h", days=30)
+
+
+def test_latest_cells_keeps_newest_run() -> None:
+    df = pd.DataFrame(
+        {
+            "strategy": ["mean_reversion", "mean_reversion", "cvd_momentum"],
+            "symbol": ["BTCUSDT", "BTCUSDT", "ETHUSDT"],
+            "interval": ["15m", "15m", "1h"],
+            "mode": ["backtest", "backtest", "walkforward"],
+            "sharpe": [0.1, 0.9, 0.2],
+            "run_ts": ["2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z", "2026-02-01T00:00:00Z"],
+        }
+    )
+    out = latest_cells(df)
+    assert len(out) == 2
+    row = out[(out["strategy"] == "mean_reversion")].iloc[0]
+    assert row["sharpe"] == pytest.approx(0.9)
+
+
+def test_candidate_mask_requires_oos_gates() -> None:
+    df = pd.DataFrame(
+        {
+            "strategy": ["a", "b", "c"],
+            "interval": ["15m", "15m", "1h"],
+            "n_trades": [80, 80, 80],
+            "avg_oos_sharpe": [0.5, float("nan"), 0.1],
+            "oos_positive_frac": [0.6, 0.8, 0.9],
+        }
+    )
+    mask = candidate_mask(df)
+    assert list(mask) == [True, False, False]
+
+
+def test_candidate_mask_empty() -> None:
+    assert candidate_mask(pd.DataFrame()).empty

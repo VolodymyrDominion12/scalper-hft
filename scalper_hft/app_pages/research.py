@@ -1,10 +1,9 @@
-"""Сторінка «Дослідження»: масовий пошук, повний цикл (аналіз угод, аудит, режими), порівняння."""
+"""Сторінка Sweep: масовий пошук, повний цикл і постановка аудиту комірки."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -16,14 +15,12 @@ from scalper_hft.app_pages._common import (
     SYMBOLS,
     apply_research_audit_prefill,
     apply_research_section_prefill,
+    check_strategy_support,
     job_status_caption,
     lookup_job,
     overfit_job_payload,
     single_backtest_payload,
     submit_research_job,
-)
-from scalper_hft.app_pages._results import (
-    render_sweep_explorer,
 )
 from scalper_hft.config import get_settings
 from scalper_hft.research.job_artifacts import load_backtest_result, load_cell_audit
@@ -37,7 +34,7 @@ _SWEEP_DB = Path("results/sweep.db")
 
 apply_research_audit_prefill(st.session_state)
 apply_research_section_prefill(st.session_state)
-if "research_section" not in st.session_state:
+if "research_section" not in st.session_state or st.session_state["research_section"] not in RESEARCH_SECTIONS:
     st.session_state["research_section"] = RESEARCH_SECTIONS[0]
 if "rs_days" not in st.session_state:
     st.session_state["rs_days"] = 60
@@ -47,7 +44,7 @@ st.title("Дослідження")
 # --- Спільні параметри у Sidebar ---
 with st.sidebar:
     st.subheader("Спільні параметри")
-    st.caption("Ці налаштування використовуються для Повного циклу та Порівняння.")
+    st.caption("Ці налаштування використовуються для Повного циклу та Аудиту комірки.")
     from scalper_hft.data.exchange_registry import ExchangeRegistry
 
     exchanges = ExchangeRegistry.list_supported()
@@ -55,6 +52,9 @@ with st.sidebar:
     idx = exchanges.index(settings.exchange) if settings.exchange in exchanges else 0
     rs_ex = st.selectbox("Біржа", exchanges, index=idx, key="rs_exchange")
     rs_strat = st.selectbox("Стратегія", sorted(REGISTRY), key="rs_strategy")
+    is_strat_ok, strat_err = check_strategy_support(str(rs_strat), is_pair=False)
+    if not is_strat_ok and strat_err:
+        st.warning(strat_err)
     rs_sym = st.selectbox("Символ", SYMBOLS, key="rs_symbol")
     rs_iv = st.pills("Таймфрейм", BT_INTERVALS, default=BT_INTERVALS[min(1, len(BT_INTERVALS) - 1)], key="rs_interval")
     if rs_iv is None:
@@ -65,6 +65,13 @@ with st.sidebar:
 section = st.segmented_control("Розділ", list(RESEARCH_SECTIONS), key="research_section")
 if section is None:
     section = RESEARCH_SECTIONS[0]
+
+
+def _safe_page_link(page: str, label: str, *, icon: str | None = None) -> None:
+    try:
+        st.page_link(page, label=label, icon=icon)
+    except Exception:
+        pass
 
 
 def _job_banner(job: object, alive: bool) -> None:
@@ -92,6 +99,7 @@ if section == "Масовий пошук":
         col_left, col_right = st.columns([1, 3])
         with col_left:
             with st.container(border=True):
+
                 def _apply_preset_reco() -> None:
                     st.session_state["sw_slow"] = False
                     st.session_state["sw_strats"] = list(default_strategies(include_slow=False))
@@ -126,9 +134,7 @@ if section == "Масовий пошук":
                 if "sw_strats" not in st.session_state:
                     st.session_state["sw_strats"] = all_strats[:5]
                 else:
-                    st.session_state["sw_strats"] = [
-                        s for s in st.session_state["sw_strats"] if s in all_strats
-                    ]
+                    st.session_state["sw_strats"] = [s for s in st.session_state["sw_strats"] if s in all_strats]
                 if "sw_syms" not in st.session_state:
                     st.session_state["sw_syms"] = list(SYMBOLS[:3])
                 if "sw_ivs" not in st.session_state:
@@ -246,8 +252,11 @@ if section == "Масовий пошук":
                     fig.update_layout(height=max(300, 50 * len(pivot)), font=dict(size=11))
                     st.plotly_chart(fig, width="stretch")
 
-                st.subheader("Таблиця результатів")
-                render_sweep_explorer(df_all, key_prefix="sw_all")
+                _safe_page_link(
+                    "app_pages/research_hub.py",
+                    label="Відкрити каталог комірок (фільтри, аудит, досьє)",
+                    icon=":material/library_books:",
+                )
 
     with tab_top:
         st.subheader("Топ комбінації зі sweep")
@@ -300,7 +309,12 @@ if section == "Масовий пошук":
                 else:
                     top = filtered.head(int(bc_show_n))
                 top_view = top.reset_index(drop=True)
-                render_sweep_explorer(top_view, key_prefix="sw_top")
+                st.dataframe(top_view, width="stretch", hide_index=True)
+                _safe_page_link(
+                    "app_pages/research_hub.py",
+                    label="Фільтри, аудит і досьє — у каталозі",
+                    icon=":material/library_books:",
+                )
 
                 csv_bytes = top_view.to_csv(index=False).encode("utf-8")
                 st.download_button(
@@ -344,6 +358,16 @@ elif section == "Повний цикл":
     st.subheader(f"Повний цикл: {rs_strat} | {rs_sym} | {rs_iv} | {rs_days}d")
     st.caption("Цей розділ об'єднує результати бектесту (з увімкненим трейсингом) та overfit-аудиту.")
 
+    if not is_strat_ok:
+        st.warning(strat_err or f"Стратегія '{rs_strat}' не підтримується для одиночного бектесту.")
+        if rs_strat == "pairs_arb":
+            _safe_page_link(
+                "app_pages/cell.py",
+                label="Перейти до досьє комірки (режим пар)",
+                icon=":material/arrow_forward:",
+            )
+        st.stop()
+
     with st.container(border=True):
         col1, col2 = st.columns([1, 1])
         with col1:
@@ -359,7 +383,7 @@ elif section == "Повний цикл":
 
                 st.rerun()
         with col2:
-            st.page_link("app_pages/jobs.py", label="Черга задач", icon=":material/pending_actions:")
+            _safe_page_link("app_pages/jobs.py", label="Черга задач", icon=":material/pending_actions:")
 
     bt_payload = single_backtest_payload(str(rs_strat), str(rs_sym), str(rs_iv), int(rs_days), trace=True)
     bt_job, bt_alive = lookup_job("backtest", bt_payload)
@@ -638,6 +662,15 @@ elif section == "Аудит комірки":
         "пороги overfitting-audit виконано. Рахунок іде через чергу задач (kind=overfit) — "
         "сторінку не блокує."
     )
+    if not is_strat_ok:
+        st.warning(strat_err or f"Стратегія '{rs_strat}' не підтримується для одиночного аудиту.")
+        if rs_strat == "pairs_arb":
+            _safe_page_link(
+                "app_pages/cell.py",
+                label="Перейти до досьє комірки (режим пар)",
+                icon=":material/arrow_forward:",
+            )
+        st.stop()
     _dt_au, _dte_au = default_train_test(str(rs_iv))
     # Синхронізувати train/test з таймфреймом при зміні комбінації — інакше
     # залишаться вікна попереднього інтервалу, і аудит піде з чужими барами.
@@ -661,7 +694,7 @@ elif section == "Аудит комірки":
         if st.button("Поставити аудит у чергу", icon=":material/fact_check:", type="primary", key="au_run"):
             submit_research_job("overfit", au_payload)
             st.rerun()
-        st.page_link("app_pages/jobs.py", label="Черга задач", icon=":material/pending_actions:")
+        _safe_page_link("app_pages/jobs.py", label="Черга задач", icon=":material/pending_actions:")
     au_job, au_alive = lookup_job("overfit", au_payload)
     _job_banner(au_job, au_alive)
     if au_job is None or au_job.status != "succeeded":
@@ -723,69 +756,3 @@ elif section == "Аудит комірки":
                     st.plotly_chart(fig_s, width="stretch")
                 with st.expander("Деталі sensitivity"):
                     st.dataframe(sens_df, width="stretch", hide_index=True)
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Порівняння Equity
-# ═══════════════════════════════════════════════════════════════════════════════
-elif section == "Порівняння equity":
-    st.subheader("Порівняння Equity Curves")
-    st.caption("Кожна крива — окремий backtest у черзі. Нормалізація: база = 1.0")
-    st.session_state.setdefault("eq_jobs", [])
-    ec_label = st.text_input("Мітка", value=f"{rs_strat} {rs_sym} {rs_iv}", key="ec_label")
-    with st.container(horizontal=True):
-        if st.button("Додати поточну криву", icon=":material/add:", key="ec_add"):
-            payload = single_backtest_payload(str(rs_strat), str(rs_sym), str(rs_iv), int(rs_days))
-            submit_research_job("backtest", payload)
-            items = [x for x in st.session_state["eq_jobs"] if x.get("label") != ec_label]
-            items.append({"label": ec_label, "payload": payload})
-            st.session_state["eq_jobs"] = items
-            st.rerun()
-        if st.button("Очистити всі", icon=":material/delete:", key="ec_clear"):
-            st.session_state["eq_jobs"] = []
-            st.rerun()
-
-    pending: list[str] = []
-    curves: dict[str, pd.Series] = {}
-    for item in list(st.session_state.get("eq_jobs") or []):
-        label = str(item.get("label") or "")
-        payload = item.get("payload") or {}
-        job, _alive = lookup_job("backtest", payload)
-        if job is None or job.status in {"queued", "running"}:
-            pending.append(f"{label}: {job.status if job else 'немає'}")
-            continue
-        if job.status != "succeeded":
-            pending.append(f"{label}: {job.status}")
-            continue
-        try:
-            res = load_backtest_result(artifacts_dir(DEFAULT_JOBS_PATH, job.id))
-            curves[label] = res.equity
-        except Exception:
-            pending.append(f"{label}: помилка артефактів")
-
-    if pending:
-        st.caption("Очікуємо: " + " · ".join(pending))
-
-    if not curves:
-        st.info("Додайте криві.")
-    else:
-        fig_eq = go.Figure()
-        for label, equity in curves.items():
-            if equity is None or equity.empty:
-                continue
-            norm = equity / equity.iloc[0]
-            fig_eq.add_trace(go.Scatter(x=norm.index, y=norm.values, mode="lines", name=label))
-        fig_eq.update_layout(
-            title="Нормалізовані Equity", xaxis_title="", yaxis_title="Нормалізована вартість", height=400
-        )
-        st.plotly_chart(fig_eq, width="stretch")
-
-        st.subheader("Rolling Sharpe (30-денне вікно)")
-        fig_rs = go.Figure()
-        for label, equity in curves.items():
-            daily_ret = equity.resample("1D").last().pct_change().dropna()
-            if len(daily_ret) >= 30:
-                rolling_sharpe = (daily_ret.rolling(30).mean() / daily_ret.rolling(30).std()) * np.sqrt(365)
-                fig_rs.add_trace(go.Scatter(x=rolling_sharpe.index, y=rolling_sharpe.values, mode="lines", name=label))
-        fig_rs.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
-        fig_rs.update_layout(height=300)
-        st.plotly_chart(fig_rs, width="stretch")
