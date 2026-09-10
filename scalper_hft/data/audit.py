@@ -96,7 +96,11 @@ def _sample_timestamps(index: pd.DatetimeIndex, n: int) -> list[pd.Timestamp]:
 def _live_close(client: Any, symbol: str, interval: str, ts: pd.Timestamp) -> tuple[pd.Timestamp, float] | None:
     """Закриття бару з LIVE-біржі за міткою `ts` (перший бар ≥ ts)."""
     since = int(ts.value // 1_000_000)
-    candle = client.fetch_ohlcv(symbol, interval, since=since, limit=1)
+    fetch_klines = getattr(client, "fetch_klines", None)
+    if callable(fetch_klines):
+        candle = fetch_klines(symbol, interval, since, 1)
+    else:  # сирий ccxt-клієнт (тести/скрипти)
+        candle = client.fetch_ohlcv(symbol, interval, since=since, limit=1)
     if not candle:
         return None
     row = candle[0]

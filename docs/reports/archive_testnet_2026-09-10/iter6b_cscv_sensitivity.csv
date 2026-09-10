@@ -1,0 +1,9 @@
+calmar,frac_oos_negative,maxdd,n_combos,n_variants,oos_sharpe_median,pbo,pf,ret_3y,seconds,sharpe_h,smoothness,test,trades,variant
+,0.0,,70,20,0.0149,0.0,,,7.0,,,CSCV,,regime_scale=True
+,0.0,,70,20,0.0162,0.0,,,2.0,,,CSCV,,regime_scale=False (baseline)
+1.34,,-0.1058,,,,,2.08,0.1418,,0.00365,0.2403,sensitivity,34.0,factor=0.0
+3.118,,-0.1293,,,,,2.076,0.4032,,0.00639,0.2403,sensitivity,193.0,factor=0.25
+2.647,,-0.2155,,,,,1.987,0.5706,,0.00644,0.2403,sensitivity,193.0,factor=0.5
+2.047,,-0.3127,,,,,1.949,0.6401,,0.00621,0.2403,sensitivity,193.0,factor=0.75
+1.462,,-0.4087,,,,,1.99,0.5975,,0.00602,0.2403,sensitivity,187.0,factor=1.0
+,,,,,,,,,1.6,,0.2403,sensitivity,,summary
