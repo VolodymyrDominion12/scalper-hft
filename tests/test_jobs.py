@@ -11,12 +11,46 @@ import pandas as pd
 import pytest
 from scalper_hft.research.job_artifacts import load_backtest_result, load_cell_audit, save_backtest_result
 from scalper_hft.research.job_handlers import handle_backtest, handle_overfit, payload_from_backtest_cli, run_job
-from scalper_hft.research.job_worker import run_claimed_job
+from scalper_hft.research.job_worker import _worker_process_main, run_claimed_job, spawn_workers
 from scalper_hft.research.jobs import JobStore, fingerprint
 
 
 def _store(tmp_path: Path) -> JobStore:
     return JobStore(tmp_path / "jobs.sqlite")
+
+
+def test_worker_process_main_is_picklable() -> None:
+    import pickle
+
+    pickle.dumps(_worker_process_main)
+
+
+def test_spawn_workers_uses_picklable_target(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import pickle
+
+    recorded: list[object] = []
+
+    class _FakeProc:
+        pid = 1
+
+        def __init__(self, *, target: object, args: tuple[object, ...], name: str) -> None:
+            pickle.dumps(target)
+            recorded.append((target, args, name))
+
+        def start(self) -> None:
+            return None
+
+        def join(self) -> None:
+            return None
+
+    class _FakeCtx:
+        def Process(self, **kwargs: object) -> _FakeProc:
+            return _FakeProc(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("scalper_hft.research.job_worker.get_context", lambda *_a, **_k: _FakeCtx())
+    spawn_workers(2, store_path=tmp_path / "jobs.sqlite")
+    assert len(recorded) == 2
+    assert recorded[0][0] is _worker_process_main
 
 
 def test_fingerprint_stable_and_days_matter() -> None:

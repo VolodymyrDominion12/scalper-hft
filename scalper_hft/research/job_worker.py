@@ -165,6 +165,12 @@ def worker_loop(
             store.finish(job.id, "failed", error="worker exception", attempt=job.attempt)
 
 
+def _worker_process_main(store_path: str, job_budget: int) -> None:
+    """Точка входу worker-процесу (picklable для forkserver/spawn)."""
+    with JobStore(store_path) as store:
+        worker_loop(store, cpu_budget=job_budget)
+
+
 def spawn_workers(n: int, store_path: Path | str | None = None) -> None:
     """N процесів worker_loop у цьому інтерпретаторі (блокирує)."""
     path = Path(store_path) if store_path else DEFAULT_JOBS_PATH
@@ -173,15 +179,16 @@ def spawn_workers(n: int, store_path: Path | str | None = None) -> None:
         with JobStore(path) as store:
             worker_loop(store, cpu_budget=budget)
         return
-    ctx = get_context()
+    # spawn: forkserver/spawn вимагають pickle target; fork — дефолт лише до 3.13.
+    ctx = get_context("spawn")
     procs: list[Process] = []
 
-    def _one(p: str, job_budget: int) -> None:
-        with JobStore(p) as store:
-            worker_loop(store, cpu_budget=job_budget)
-
     for i in range(n):
-        proc = ctx.Process(target=_one, args=(str(path), budget), name=f"scalper-worker-{i}")
+        proc = ctx.Process(
+            target=_worker_process_main,
+            args=(str(path), budget),
+            name=f"scalper-worker-{i}",
+        )
         proc.start()
         procs.append(proc)
         logger.info("started worker %s pid=%s", i, proc.pid)
