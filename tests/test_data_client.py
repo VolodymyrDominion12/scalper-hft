@@ -223,3 +223,37 @@ class TestClockSync:
         c = _client(FakeExchange())  # без fetch_time
         assert c.server_time_offset_ms() is None
         assert c.assert_clock_synced() == 0.0  # warn, не падає
+
+
+class TestDescribeSource:
+    def test_describe_source_live_binanceusdm(self) -> None:
+        c = ExchangeClient(exchange_id="binanceusdm")
+        assert not c.is_testnet
+        assert "fapi.binance.com" in c.api_url
+        desc = c.describe_source()
+        assert "binanceusdm" in desc
+        assert "LIVE (НЕ testnet ✓)" in desc
+        assert "https://fapi.binance.com" in desc
+
+    def test_describe_source_live_spot(self) -> None:
+        c = ExchangeClient(exchange_id="binance", market_type="spot")
+        assert not c.is_testnet
+        assert "api.binance.com" in c.api_url
+        desc = c.describe_source()
+        assert "binance" in desc
+        assert "LIVE (НЕ testnet ✓)" in desc
+
+    def test_describe_source_testnet(self) -> None:
+        c = ExchangeClient(exchange_id="binanceusdm-testnet")
+        assert c.is_testnet
+        desc = c.describe_source()
+        assert "TESTNET/SANDBOX" in desc
+
+    def test_describe_source_fake_exchange_without_urls(self) -> None:
+        c = _client(FakeExchange())
+        assert c.api_url == ""
+        assert not c.is_testnet
+        desc = c.describe_source()
+        assert "fake" in desc
+        assert "LIVE (НЕ testnet ✓)" in desc
+

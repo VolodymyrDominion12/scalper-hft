@@ -55,6 +55,63 @@ class ExchangeClient:
         self.market_type = market_type
         self._market_cache: dict[str, dict[str, Any]] = {}
 
+    @property
+    def api_url(self) -> str:
+        """Базовий URL REST API біржі."""
+        urls = getattr(self.exchange, "urls", None)
+        if not isinstance(urls, dict):
+            return ""
+        api_urls = urls.get("api")
+        url = ""
+        if isinstance(api_urls, dict):
+            if getattr(self, "market_type", "") == "spot":
+                for k in ("public", "v1", "sapi"):
+                    if k in api_urls:
+                        url = str(api_urls[k])
+                        break
+            if not url:
+                for k in ("fapiPublic", "dapiPublic", "public", "fapiData", "dapiData", "v1", "sapi"):
+                    if k in api_urls:
+                        url = str(api_urls[k])
+                        break
+            if not url:
+                try:
+                    url = str(next(iter(api_urls.values())))
+                except StopIteration:
+                    url = ""
+        elif isinstance(api_urls, str):
+            url = api_urls
+
+        if "{hostname}" in url:
+            hostname = getattr(self.exchange, "hostname", "") or "binance.com"
+            url = url.replace("{hostname}", hostname)
+        return url
+
+    @property
+    def is_testnet(self) -> bool:
+        """Чи веде клієнт на testnet / sandbox (синтетичні або тестові дані)."""
+        ex_id = str(getattr(self, "exchange_id", "")).lower()
+        if "testnet" in ex_id:
+            return True
+        exchange_obj = getattr(self, "exchange", None)
+        if exchange_obj is not None:
+            sandbox = getattr(exchange_obj, "sandbox", False) or getattr(exchange_obj, "is_sandbox_mode_enabled", False)
+            if sandbox:
+                return True
+        url = self.api_url.lower()
+        return "testnet" in url or "demo" in url
+
+    def describe_source(self) -> str:
+        """Опис джерела даних для логів: біржа, статус live/testnet та API endpoint."""
+        url = self.api_url or "default URL"
+        ex_id = getattr(self, "exchange_id", "exchange")
+        if self.is_testnet:
+            status = "УВАГА: TESTNET/SANDBOX ⚠ (синтетичні дані)"
+        else:
+            status = "LIVE (НЕ testnet ✓)"
+        return f"{ex_id} [{status}] endpoint={url}"
+
+
     # ── метадані ──────────────────────────────────────────────────────────────
     def load_markets(self) -> dict[str, Any]:
         if not self._market_cache:

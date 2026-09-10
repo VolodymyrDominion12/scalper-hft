@@ -468,6 +468,16 @@ class Downloader:
         )
         self.store = store if store is not None else get_store()
 
+    def describe_source(self, client: Any = None) -> str:
+        """Людиночитаний опис джерела даних з підтвердженням live/testnet."""
+        c = client or self.client
+        if hasattr(c, "describe_source") and callable(c.describe_source):
+            return str(c.describe_source())
+        is_testnet = "testnet" in str(self.exchange_id).lower()
+        status = "УВАГА: TESTNET/SANDBOX ⚠ (синтетичні дані)" if is_testnet else "LIVE (НЕ testnet ✓)"
+        client_name = type(c).__name__ if c is not None else "None"
+        return f"{self.exchange_id} [{status}] (client={client_name})"
+
     def _with_retry(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
         last: Exception | None = None
         for attempt in range(self.retries):
@@ -557,6 +567,7 @@ class Downloader:
         *,
         force: bool = False,
         save_fn: Callable[[pd.DataFrame], None] | None = None,
+        source_desc: str | None = None,
     ) -> pd.DataFrame:
         """Долити в кеш лише відсутні вікна (префікс / дірки / хвіст) з чекпоінтами та graceful recovery."""
         interval_ms = _interval_ms(interval)
@@ -569,7 +580,8 @@ class Downloader:
         if not windows:
             return existing if existing is not None and not existing.empty else _empty_ohlcv()
 
-        logger.info("Докачую klines %s %s: %s", symbol, interval, format_ms_windows(windows))
+        src = source_desc or self.describe_source()
+        logger.info("Докачую klines %s %s з джерела %s: %s", symbol, interval, src, format_ms_windows(windows))
         frames: list[pd.DataFrame] = [existing] if existing is not None and not existing.empty else []
         new_frames: list[pd.DataFrame] = []
 
@@ -628,6 +640,7 @@ class Downloader:
             days,
             force=force,
             save_fn=save_fn,
+            source_desc=self.describe_source(),
         )
         if not out.empty:
             self.store.save_klines(symbol, interval, out)
@@ -646,6 +659,7 @@ class Downloader:
             days,
             force=force,
             save_fn=save_fn,
+            source_desc=self.describe_source(spot_client),
         )
         if not out.empty:
             self.store.save_spot_klines(symbol, interval, out)
@@ -673,6 +687,13 @@ class Downloader:
         frames: list[pd.DataFrame] = [existing] if existing is not None and not existing.empty else []
         new_frames: list[pd.DataFrame] = []
         since = start_ms
+        if _to_ms(_utc_now()) - start_ms > 60_000:
+            logger.info(
+                "oi %s: докачую з мережі [%s] (від %s)",
+                symbol,
+                self.describe_source(),
+                pd.Timestamp(start_ms, unit="ms"),
+            )
         guard = 0
 
         def _make_merged() -> pd.DataFrame:
@@ -750,6 +771,13 @@ class Downloader:
         frames: list[pd.DataFrame] = [existing] if existing is not None and not existing.empty else []
         new_frames: list[pd.DataFrame] = []
         since = begin_ms
+        if end_ms - since > 60_000:
+            logger.info(
+                "aggTrades %s: докачую з REST [%s] (від %s)",
+                symbol,
+                self.describe_source(),
+                pd.Timestamp(since, unit="ms"),
+            )
         guard = 0
         total_rows = 0
         synthetic = 0
@@ -846,6 +874,13 @@ class Downloader:
         frames: list[pd.DataFrame] = [existing] if existing is not None and not existing.empty else []
         new_frames: list[pd.DataFrame] = []
         since = start_ms
+        if _to_ms(_utc_now()) - start_ms > 60_000:
+            logger.info(
+                "funding %s: докачую з REST [%s] (від %s)",
+                symbol,
+                self.describe_source(),
+                pd.Timestamp(start_ms, unit="ms"),
+            )
         guard = 0
 
         def _make_merged() -> pd.DataFrame:
@@ -918,7 +953,7 @@ def download_klines(
     if coverage.complete and not force:
         return cached if cached is not None and not cached.empty else _empty_ohlcv()
     if force and coverage.complete:
-        logger.info("force: оновлюю хвіст %s %s", symbol, interval)
+        logger.info("force: оновлюю хвіст %s %s з джерела %s", symbol, interval, exchange_id or getattr(get_settings(), "data_exchange", "binanceusdm"))
     return Downloader(
         store=store,
         retries=retries,
@@ -945,7 +980,7 @@ def download_agg_trades(
         return cached
     if cached is not None and not cached.empty:
         logger.info("Оновлення aggTrades %s: було %d рядків до %s", symbol, len(cached), cached.index[-1])
-    logger.info("Завантаження aggTrades %s за %d днів", symbol, days)
+    logger.info("Завантаження aggTrades %s за %d днів (джерело: %s)", symbol, days, exchange_id or getattr(get_settings(), "data_exchange", "binanceusdm"))
     with _exclusive_fetch(f"aggtrades_{symbol}"):
         if not force:
             cached = store.load_trades(symbol)
@@ -996,7 +1031,7 @@ def download_funding(
             logger.info("Кеш funding %s покриває період і свіжий: %d рядків (до %s)", symbol, len(cached), newest)
             return cached
         logger.info("Оновлення funding %s: %d рядків (до %s, stale=%s)", symbol, len(cached), newest, stale)
-    logger.info("Завантаження funding %s за %d днів", symbol, days)
+    logger.info("Завантаження funding %s за %d днів (джерело: %s)", symbol, days, exchange_id or getattr(get_settings(), "data_exchange", "binanceusdm"))
     return Downloader(
         store=store,
         retries=retries,
@@ -1024,7 +1059,7 @@ def download_spot_klines(
     if coverage.complete and not force:
         return cached if cached is not None and not cached.empty else _empty_ohlcv()
     if force and coverage.complete:
-        logger.info("force: оновлюю хвіст spot %s %s", symbol, interval)
+        logger.info("force: оновлюю хвіст spot %s %s з джерела binance spot [LIVE - НЕ testnet ✓]", symbol, interval)
     return Downloader(
         store=store,
         retries=retries,
@@ -1043,7 +1078,7 @@ def download_oi(
     exchange_id: str | None = None,
 ) -> pd.DataFrame:
     store = get_store()
-    logger.info("Завантаження oi %s за %d днів", symbol, days)
+    logger.info("Завантаження oi %s за %d днів (джерело: %s)", symbol, days, exchange_id or getattr(get_settings(), "data_exchange", "binanceusdm"))
     return Downloader(
         store=store,
         retries=retries,
@@ -1061,5 +1096,11 @@ def download_liquidations(
 
     from scalper_hft.data.binance_vision import download_liquidations_vision
 
+    logger.info(
+        "Завантаження ліквідацій %s за %d днів з офіційного архіву Binance Vision [LIVE - НЕ testnet ✓] (https://data.binance.vision/data/futures/um)",
+        symbol,
+        days,
+    )
     start = date.today() - timedelta(days=days)
     return download_liquidations_vision(symbol, start=start, freq="daily")
+

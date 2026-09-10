@@ -614,9 +614,16 @@ def main(argv: list[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
     import dataclasses
+    import logging
     import os
 
     from scalper_hft.config import get_settings, set_settings
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
 
     settings = get_settings()
     if hasattr(args, "exchange") and args.exchange:
@@ -625,3 +632,4 @@ def main(argv: list[str] | None = None) -> None:
         set_settings(settings)
     args.param_dict = _parse_param_dict(getattr(args, "param", []))
     args.func(args)
+

@@ -68,7 +68,16 @@ def _make_server(
 
 def _run(coro: object) -> object:
     """Синхронно виконати корутину."""
-    return asyncio.get_event_loop().run_until_complete(coro)  # type: ignore[arg-type]
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is not None and loop.is_running():
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, coro).result()  # type: ignore[arg-type]
+    return asyncio.run(coro)  # type: ignore[arg-type]
+
 
 
 # ─── Тести whitelist ───────────────────────────────────────────────────────────

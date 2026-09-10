@@ -166,8 +166,9 @@ def download_agg_trades_vision(
     if len(periods) > 12:
         preview += "…"
     logger.info(
-        "vision aggTrades %s: у кеші %s; качаю %d %s періодів%s",
+        "vision aggTrades %s: джерело Binance Vision Archives [LIVE (НЕ testnet ✓)] (%s) | у кеші %s; качаю %d %s періодів%s",
         symbol,
+        _BASE_URL,
         have,
         len(periods),
         freq,
@@ -266,8 +267,9 @@ def download_liquidations_vision(
     if len(periods) > 12:
         preview += "…"
     logger.info(
-        "vision liquidations %s: у кеші %s; качаю %d %s періодів%s",
+        "vision liquidations %s: джерело Binance Vision Archives [LIVE (НЕ testnet ✓)] (%s) | у кеші %s; качаю %d %s періодів%s",
         symbol,
+        _BASE_URL,
         have,
         len(periods),
         freq,

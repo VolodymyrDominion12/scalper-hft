@@ -58,7 +58,7 @@ def main() -> int:
 
     data_exchange = require_live_data_exchange(settings)
     logger.info(
-        "Джерело даних: %s | торговий EXCHANGE=%s | %d символів × %d днів (%s)",
+        "Джерело даних: %s [LIVE — НЕ testnet ✓] | торговий EXCHANGE=%s | %d символів × %d днів (%s)",
         data_exchange,
         settings.exchange,
         len(symbols),

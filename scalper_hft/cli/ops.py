@@ -31,6 +31,15 @@ def cmd_download(args: argparse.Namespace) -> None:
     # Ринкові дані: --exchange override, інакше DATA_EXCHANGE (не торговий EXCHANGE —
     # той може бути testnet і віддати синтетичну історію).
     exchange_id = getattr(args, "exchange", None) or settings.data_exchange
+    is_testnet = "testnet" in str(exchange_id).lower()
+    env_label = "УВАГА: TESTNET ⚠ (синтетичні дані)" if is_testnet else "LIVE (НЕ testnet ✓)"
+    logger.info(
+        "Джерело історичних даних: %s [%s] (налаштування: DATA_EXCHANGE=%s, торговий EXCHANGE=%s)",
+        exchange_id,
+        env_label,
+        settings.data_exchange,
+        settings.exchange,
+    )
 
     logger.info("Спочатку звірю кеш: докачаю лише відсутні дні/вікна (--force оновлює хвіст)")
     for sym in symbols:
@@ -185,15 +194,25 @@ def cmd_macro_recorder(args: argparse.Namespace) -> None:
 def cmd_download_liquidations(args: argparse.Namespace) -> None:
     from scalper_hft.data.downloader import download_liquidations
 
+    logger.info(
+        "Джерело ліквідацій: Binance Vision Archives [LIVE (НЕ testnet ✓)] (https://data.binance.vision/data/futures/um)"
+    )
     for sym in (args.symbol or "BTCUSDT").split(","):
         download_liquidations(sym, args.days)
 
 
 def cmd_download_oi(args: argparse.Namespace) -> None:
+    from scalper_hft.config import get_settings
     from scalper_hft.data.downloader import download_oi
 
+    settings = get_settings()
+    exchange_id = getattr(args, "exchange", None) or settings.data_exchange
+    is_testnet = "testnet" in str(exchange_id).lower()
+    env_label = "УВАГА: TESTNET ⚠ (синтетичні дані)" if is_testnet else "LIVE (НЕ testnet ✓)"
+    logger.info("Джерело Open Interest: %s [%s]", exchange_id, env_label)
+
     for sym in (args.symbol or "BTCUSDT").split(","):
-        download_oi(sym, args.days)
+        download_oi(sym, args.days, exchange_id=exchange_id)
 
 
 def cmd_data_audit(args: argparse.Namespace) -> None:

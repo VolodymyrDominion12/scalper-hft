@@ -650,3 +650,78 @@ def test_with_retry_sets_shared_cooldown_on_429(tmp_path, monkeypatch) -> None:
     Downloader(client=_Once429(), retries=3, store=store, batch_delay=0.0).klines("BTCUSDT", "1m", days=1)
     assert sleeps
     assert sleeps[0] >= 10.0
+
+
+def test_downloader_describe_source() -> None:
+    dl_inst = Downloader(exchange_id="binanceusdm", client=_FakeKlines([]))
+    desc = dl_inst.describe_source()
+    assert "binanceusdm" in desc
+    assert "LIVE (НЕ testnet ✓)" in desc
+
+
+def test_downloader_logs_source_on_klines_download(monkeypatch, caplog) -> None:
+    import logging
+    from scalper_hft.data import downloader as dl
+
+    now = pd.Timestamp("2024-01-10 12:00:00")
+    monkeypatch.setattr(dl, "_utc_now", lambda: now)
+    prefix = _bars_df("2024-01-09 12:00", 24 * 60)
+    client = _FakeKlines(_rows_from_df(prefix))
+    store = _MemStore()
+
+    with caplog.at_level(logging.INFO):
+        Downloader(client=client, retries=1, store=store, exchange_id="binanceusdm").klines("BTCUSDT", "1m", days=1)
+
+    assert any(
+        "Докачую klines BTCUSDT 1m з джерела" in record.message and "LIVE (НЕ testnet" in record.message
+        for record in caplog.records
+    )
+
+
+def test_downloader_logs_source_on_agg_trades_download(monkeypatch, caplog) -> None:
+    import logging
+    from scalper_hft.data import downloader as dl
+
+    now = pd.Timestamp("2024-01-10 12:00:00")
+    monkeypatch.setattr(dl, "_utc_now", lambda: now)
+    store = _MemStore()
+
+    class _FakeTrades:
+        def fetch_agg_trades(self, symbol: str, since: int, limit: int = 1000):
+            return []
+
+    with caplog.at_level(logging.INFO):
+        Downloader(client=_FakeTrades(), retries=1, store=store, exchange_id="binanceusdm").agg_trades("BTCUSDT", days=1)
+
+    assert any(
+        "aggTrades BTCUSDT: докачую з REST" in record.message and "LIVE (НЕ testnet" in record.message
+        for record in caplog.records
+    )
+
+
+def test_downloader_logs_source_on_funding_download(monkeypatch, caplog) -> None:
+    import logging
+    from scalper_hft.data import downloader as dl
+
+    now = pd.Timestamp("2024-01-10 12:00:00")
+    monkeypatch.setattr(dl, "_utc_now", lambda: now)
+    store = _MemStore()
+
+    class _FakeFunding:
+        def fetch_funding_rate_history(self, symbol: str, since: int, limit: int = 1000):
+            return [{"timestamp": since, "fundingRate": 0.0001}]
+
+    with caplog.at_level(logging.INFO):
+        Downloader(
+            client=_FakeFunding(),
+            retries=1,
+            store=store,
+            exchange_id="binanceusdm",
+            strict_funding_coverage=False,
+        ).funding("BTCUSDT", days=1)
+
+    assert any(
+        "funding BTCUSDT: докачую з REST" in record.message and "LIVE (НЕ testnet" in record.message
+        for record in caplog.records
+    )
+
