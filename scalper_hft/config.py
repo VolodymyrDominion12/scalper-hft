@@ -80,6 +80,17 @@ class Settings:
     exchange: str = field(default_factory=lambda: os.getenv("EXCHANGE", "binance-testnet"))
     dry_run: bool = field(default_factory=lambda: _env_bool("DRY_RUN", True))
 
+    # Біржа для РИНКОВИХ ДАНИХ (klines/aggTrades/funding/OI) — окремо від
+    # `exchange` (торгівля), бо testnet віддає СИНТЕТИЧНУ історію: ціни
+    # розходяться з реальним ринком на 1–17%, трапляються рухи +27% за 1m,
+    # «плити» O=H=L=C з нульовим обсягом, а історія funding обрізана ~13 міс.
+    # Прогін sweep/аудиту на таких даних дає фальшивий «edge» (ml_strategy
+    # Sharpe 57 на BNBUSDT). Тому дані качаємо ТІЛЬКИ з live.
+    data_exchange: str = field(default_factory=lambda: os.getenv("DATA_EXCHANGE", "binanceusdm"))
+    # Аварійний вимикач: дозволити testnet для даних (лише для unit-тестів і
+    # свідомого відтворення старих прогонів — результатів не використовувати).
+    allow_testnet_data: bool = field(default_factory=lambda: _env_bool("ALLOW_TESTNET_DATA", False))
+
     # Transaction cost model (книга, гл. 5: комісії + slippage + market impact)
     maker_fee: float = field(default_factory=lambda: _env_float("MAKER_FEE", 0.0002))
     taker_fee: float = field(default_factory=lambda: _env_float("TAKER_FEE", 0.0005))
@@ -232,8 +243,32 @@ class Settings:
         p.mkdir(parents=True, exist_ok=True)
         return p
 
+    @property
+    def is_data_exchange_testnet(self) -> bool:
+        return "testnet" in (self.data_exchange or "").lower()
+
 
 _settings: Settings | None = None
+
+
+def require_live_data_exchange(settings: Settings, exchange_id: str | None = None) -> str:
+    """Fail-closed: ринкові дані НЕ можна качати з testnet/sandbox.
+
+    Testnet віддає синтетичну історію (див. коментар до `data_exchange`), тому
+    завантаження klines/aggTrades/funding з нього — джерело фальшивого edge.
+    Повертає валідний id біржі або кидає RuntimeError.
+    """
+    ex = (exchange_id or settings.data_exchange or "").strip()
+    if not ex:
+        raise RuntimeError("DATA_EXCHANGE не задано (порожнє значення)")
+    if "testnet" in ex.lower() and not settings.allow_testnet_data:
+        raise RuntimeError(
+            f"Відмова качати ринкові дані з '{ex}': testnet віддає синтетичну історію "
+            f"(ціни розходяться з реальним ринком на 1–17%, історія funding обрізана). "
+            f"Задайте DATA_EXCHANGE=binanceusdm у .env. "
+            f"Свідомий обхід (лише для тестів): ALLOW_TESTNET_DATA=true."
+        )
+    return ex
 
 
 def require_live_credentials(settings: Settings) -> None:

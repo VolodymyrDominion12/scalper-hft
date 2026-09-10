@@ -229,11 +229,18 @@ _client: ExchangeClient | None = None
 
 
 def _default_client(exchange_id: str | None = None) -> ExchangeClient:
-    """Спільний клієнт на процес (глобальний кеш для кожного exchange)."""
+    """Спільний клієнт на процес (глобальний кеш для кожного exchange).
+
+    Біржа за замовчуванням — `settings.data_exchange` (live), НЕ `settings.exchange`
+    (торгова). Fail-closed: testnet для ринкових даних заборонено
+    (`require_live_data_exchange`), бо він віддає синтетичну історію.
+    """
     global _client
-    if _client is None or getattr(_client, "exchange_id", None) != exchange_id:
-        settings = get_settings()
-        ex = exchange_id or settings.exchange
+    from scalper_hft.config import require_live_data_exchange
+
+    settings = get_settings()
+    ex = require_live_data_exchange(settings, exchange_id)
+    if _client is None or getattr(_client, "exchange_id", None) != ex:
         _client = ExchangeClient(settings.binance_api_key, settings.binance_api_secret, ex)
     return _client
 
@@ -375,7 +382,13 @@ class Downloader:
         exchange_id: str | None = None,
     ) -> None:
         settings = get_settings()
-        self.exchange_id = exchange_id or settings.exchange
+        from scalper_hft.config import require_live_data_exchange
+
+        # Fail-closed: testnet/sandbox для ринкових даних заборонено (див.
+        # `Settings.data_exchange`). `client=` (тести) обходить цю перевірку.
+        self.exchange_id = require_live_data_exchange(settings, exchange_id) if client is None else (
+            exchange_id or settings.data_exchange
+        )
         self.client = client or _default_client(self.exchange_id)
         self.retries = int(retries if retries is not None else settings.download_retries)
         self.batch_delay = float(batch_delay if batch_delay is not None else settings.download_batch_delay)
