@@ -433,8 +433,24 @@ def test_jobs_bulk_actions_logic(tmp_path: Path) -> None:
     store.close()
 
 
-def test_jobs_page_apptest_selection() -> None:
+def test_jobs_page_apptest_selection(tmp_path, monkeypatch) -> None:
     from streamlit.testing.v1 import AppTest
+
+    from scalper_hft.research import jobs as jobs_mod
+    from scalper_hft.research.jobs import JobStore
+
+    # Сторінка читає РЕАЛЬНИЙ results/jobs.sqlite і при порожній черзі робить
+    # `return` до рендера кнопок — тест залежав від стану черги на машині.
+    # Підкладаємо ізольований store із двома задачами.
+    seed = tmp_path / "jobs.sqlite"
+    with JobStore(seed) as js:
+        js.submit("backtest", {"strategy": "mean_reversion", "symbol": "BTCUSDT", "interval": "1h", "days": 30})
+        js.submit("backtest", {"strategy": "mean_reversion", "symbol": "ETHUSDT", "interval": "1h", "days": 30})
+    monkeypatch.setattr(jobs_mod, "DEFAULT_JOBS_PATH", seed)
+    # Без «живого» воркера сторінка малює st.page_link, який у standalone-AppTest
+    # падає з KeyError('url_pathname') (немає реєстру сторінок багатосторінкового
+    # застосунку). Тест перевіряє UI черги, тож фіксуємо воркера як активного.
+    monkeypatch.setattr(JobStore, "worker_is_alive", lambda self: True)
 
     script_path = Path(__file__).resolve().parent.parent / "scalper_hft" / "app_pages" / "jobs.py"
     at = AppTest.from_file(str(script_path)).run()

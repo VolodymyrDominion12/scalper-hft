@@ -147,9 +147,7 @@ def validate_bars(
             issues.append(f"довга серія однакових close: {flat} барів")
 
     ok = not issues
-    return BarQualityReport(
-        len(df), n_dup, n_ohlc, n_gaps, n_future, monotonic, ok, issues, n_spikes, spike_rate, flat
-    )
+    return BarQualityReport(len(df), n_dup, n_ohlc, n_gaps, n_future, monotonic, ok, issues, n_spikes, spike_rate, flat)
 
 
 def bars_are_critical(report: BarQualityReport) -> bool:

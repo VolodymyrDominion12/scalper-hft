@@ -20,8 +20,8 @@ from typing import Any
 
 import pandas as pd
 
-from scalper_hft.data.validate import SPIKE_RATE_CRITICAL, validate_bars
 from scalper_hft.data.downloader import funding_coverage_ratio
+from scalper_hft.data.validate import SPIKE_RATE_CRITICAL, validate_bars
 
 logger = logging.getLogger(__name__)
 
@@ -118,10 +118,8 @@ def audit_symbol(
     client: Any = None,
 ) -> SymbolAudit:
     """Перевірити кеш символу: неринкові бари + звірка з LIVE + покриття funding."""
-    from scalper_hft.config import get_settings
     from scalper_hft.data.store import get_store
 
-    settings = get_settings()
     store = store if store is not None else get_store()
     out = SymbolAudit(symbol=symbol, interval=interval)
     try:
@@ -233,7 +231,9 @@ def format_report(results: list[SymbolAudit], *, days: int) -> str:
         )
     bad = [r.symbol for r in results if not r.ok]
     lines.append("")
-    lines.append(f"Перевірено символів: {len(results)}, провалено: {len(bad)}" + (f" → {', '.join(bad)}" if bad else ""))
+    lines.append(
+        f"Перевірено символів: {len(results)}, провалено: {len(bad)}" + (f" → {', '.join(bad)}" if bad else "")
+    )
     lines.append(f"Вікно funding: {days} днів")
     return "\n".join(lines)
 

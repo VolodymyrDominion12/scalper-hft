@@ -53,15 +53,33 @@ def test_exploratory_pass_blocks_live_gate(tmp_path: Path) -> None:
 
 def test_ensure_trades_coverage_fail_fast(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from scalper_hft.data import access as acc
-    from scalper_hft.data import store as store_mod
 
     class _Store:
         def load_trades(self, symbol: str) -> pd.DataFrame | None:
-            idx = pd.date_range("2025-08-01", periods=10, freq="1min")
+            # Кеш починається 30 днів тому (запит — 90 днів) і хвіст свіжий:
+            # саме «кеш починається пізніше» і має впасти fail-fast.
+            end = pd.Timestamp.now(tz="UTC").tz_localize(None).normalize() - pd.Timedelta(days=30)
+            idx = pd.date_range(end=end, periods=10, freq="1min")
             return pd.DataFrame({"price": 1.0, "amount": 1.0, "side": "buy"}, index=idx)
 
-    monkeypatch.setattr(store_mod, "get_store", lambda: _Store())
+    # Патчимо САМЕ той символ, який використовує access.py (`from ... import
+    # get_store`): патч `store_mod.get_store` не діяв, і тест непомітно читав
+    # реальний data/BTCUSDT_aggTrades.parquet — тобто залежав від стану кеша.
+    monkeypatch.setattr(acc, "get_store", lambda: _Store())
     with pytest.raises(RuntimeError, match="починається"):
+        acc.ensure_trades_coverage("BTCUSDT", days=90)
+
+
+def test_ensure_trades_coverage_fail_fast_when_cache_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Порожній кеш aggTrades — теж fail-fast (з підказкою про download/vision)."""
+    from scalper_hft.data import access as acc
+
+    class _Store:
+        def load_trades(self, symbol: str) -> pd.DataFrame | None:
+            return None
+
+    monkeypatch.setattr(acc, "get_store", lambda: _Store())
+    with pytest.raises(RuntimeError, match="немає даних"):
         acc.ensure_trades_coverage("BTCUSDT", days=90)
 
 
