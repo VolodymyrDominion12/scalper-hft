@@ -54,6 +54,8 @@ class SweepRow:
     n_raw_signals: int = 0  # всього raw сигналів до фільтрів
     n_filtered: int = 0  # заблоковано фільтрами
     filter_attribution: str = ""  # JSON: {filter_name: n_blocked}
+    # Cache invalidation guard (Phase A5)
+    code_hash: str = ""  # SHA-256[:8] вихідного коду класу стратегії
     # Статус
     status: str = "ok"
     error: str = ""
@@ -100,6 +102,7 @@ CREATE TABLE IF NOT EXISTS sweep_results (
     n_raw_signals       INTEGER DEFAULT 0,
     n_filtered          INTEGER DEFAULT 0,
     filter_attribution  TEXT DEFAULT '',
+    code_hash           TEXT DEFAULT '',
     status              TEXT DEFAULT 'ok',
     error               TEXT DEFAULT '',
     run_ts              TEXT DEFAULT '',
@@ -113,13 +116,13 @@ INSERT INTO sweep_results
      total_return, sharpe, sortino, calmar, max_dd, win_rate, profit_factor,
      avg_trade, exposure, trades_per_day, avg_is_sharpe, avg_oos_sharpe,
      oos_positive_frac, n_raw_signals, n_filtered, filter_attribution,
-     status, error, run_ts)
+     code_hash, status, error, run_ts)
 VALUES
     (:strategy, :symbol, :interval, :days, :mode, :n_bars, :n_trades,
      :total_return, :sharpe, :sortino, :calmar, :max_dd, :win_rate, :profit_factor,
      :avg_trade, :exposure, :trades_per_day, :avg_is_sharpe, :avg_oos_sharpe,
      :oos_positive_frac, :n_raw_signals, :n_filtered, :filter_attribution,
-     :status, :error, :run_ts)
+     :code_hash, :status, :error, :run_ts)
 ON CONFLICT(strategy, symbol, interval, days, mode)
 DO UPDATE SET
     n_bars=excluded.n_bars, n_trades=excluded.n_trades,
@@ -132,6 +135,7 @@ DO UPDATE SET
     oos_positive_frac=excluded.oos_positive_frac,
     n_raw_signals=excluded.n_raw_signals, n_filtered=excluded.n_filtered,
     filter_attribution=excluded.filter_attribution,
+    code_hash=excluded.code_hash,
     status=excluded.status, error=excluded.error, run_ts=excluded.run_ts;
 """
 
@@ -159,6 +163,31 @@ _NUMERIC_COLUMNS: tuple[str, ...] = (
     "n_raw_signals",
     "n_filtered",
 )
+
+
+def strategy_code_hash(strategy_name: str) -> str:
+    """SHA-256[:8] вихідного коду класу стратегії.
+
+    Використовується як cache invalidation key у SweepStore.already_done().
+    При зміні коду стратегії хеш змінюється → --resume перераховує клітинку.
+
+    Повертає "" якщо стратегія не знайдена у реєстрі (fail-open: не блокує sweep).
+    """
+    import hashlib
+    import inspect
+
+    try:
+        from scalper_hft.strategies import REGISTRY
+
+        cls = REGISTRY.get(strategy_name)
+        if cls is None:
+            return ""
+        src = inspect.getsource(cls)
+        return hashlib.sha256(src.encode()).hexdigest()[:8]
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 
 
 class SweepStore:
@@ -193,14 +222,26 @@ class SweepStore:
         interval: str,
         days: int,
         mode: str = "backtest",
+        code_hash: str = "",
     ) -> bool:
-        """Чи вже є результат для цієї комбінації зі статусом 'ok'?"""
+        """Чи вже є результат для цієї комбінації зі статусом 'ok'?
+
+        Якщо code_hash не порожній — також перевіряє збіг хешу коду.
+        При зміні коду стратегії клітинка перераховується навіть при --resume.
+        Це захищає від пастки 'довгоживучий worker тримає старий код' (AGENTS.md).
+        """
         cur = self._conn.execute(
-            "SELECT status FROM sweep_results WHERE strategy=? AND symbol=? AND interval=? AND days=? AND mode=?",
+            "SELECT status, code_hash FROM sweep_results "
+            "WHERE strategy=? AND symbol=? AND interval=? AND days=? AND mode=?",
             (strategy, symbol, interval, days, mode),
         )
         row = cur.fetchone()
-        return row is not None and row[0] == "ok"
+        if row is None or row[0] != "ok":
+            return False
+        # Якщо code_hash переданий і не збігається — клітинка застаріла
+        if code_hash and row[1] and row[1] != code_hash:
+            return False
+        return True
 
     def load(self, **filters: Any) -> pd.DataFrame:
         """Завантажити всі результати у DataFrame.

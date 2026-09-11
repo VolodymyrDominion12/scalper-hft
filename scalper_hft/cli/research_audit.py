@@ -294,7 +294,9 @@ def cmd_report(args: argparse.Namespace) -> None:
             sens_md = f"\n## Sensitivity\n\nпомилка: {exc}"
 
     # ── Quintile study (Narang гл. 9) ────────────────────────────────────────
+    _QUINTILE_SPEARMAN_MIN = 0.7
     quintile_md = ""
+    q_res = None
     try:
         from scalper_hft.validation.quintile import quintile_spread_study
 
@@ -302,26 +304,46 @@ def cmd_report(args: argparse.Namespace) -> None:
         fwd_ret = df["close"].pct_change().shift(-1).fillna(0.0)
         if signals.abs().sum() > 5:
             q_res = quintile_spread_study(signals.astype(float), fwd_ret)
-            quintile_md = f"\n## Quintile Study (монотонність сигналу)\n\n```\n{q_res.summary()}\n```\n"
+            quintile_md = f"\n## Quintile Study (монотонність сигналу, Narang гл. 9)\n\n```\n{q_res.summary()}\n```\n"
+            if q_res.monotonic and abs(q_res.spearman) >= _QUINTILE_SPEARMAN_MIN:
+                quintile_md += f"\n✅ QUINTILE PASS: Spearman ρ={q_res.spearman:+.3f} ≥ {_QUINTILE_SPEARMAN_MIN}\n"
+            else:
+                quintile_md += (
+                    f"\n⚠ QUINTILE FAIL: Spearman ρ={q_res.spearman:+.3f}, "
+                    f"monotonic={q_res.monotonic} — сигнал не монотонний\n"
+                )
     except Exception as exc:  # noqa: BLE001
         quintile_md = f"\n## Quintile Study\n\nпомилка: {exc}\n"
 
     # ── Time-decay test (Narang гл. 9) ───────────────────────────────────────
     decay_md = ""
+    td_res = None
     try:
         from scalper_hft.validation.time_decay import time_decay_test
 
-        td_res = time_decay_test(df, strategy, max_lag=3, cost=cost, trades=trades, funding=funding)
-        decay_md = f"\n## Time-Decay Test (лаг входу)\n\n```\n{td_res.summary()}\n```\n"
-        if len(td_res.sharpes) >= 2 and td_res.sharpes[0] > 0 and td_res.sharpes[1] < td_res.sharpes[0] * 0.5:
-            decay_md += "\n> ⚠ Альфа різко втрачається при лазі 1 — бектест може переоцінювати edge!\n"
+        td_res = time_decay_test(
+            df, strategy, max_lag=3, cost=cost, trades=trades, funding=funding,
+            position_pct=settings.position_pct,
+        )
+        decay_md = f"\n## Time-Decay Test (лаг входу, Narang гл. 9)\n\n```\n{td_res.summary()}\n```\n"
+        if len(td_res.sharpes) >= 2:
+            lag0, lag1 = td_res.sharpes[0], td_res.sharpes[1]
+            if lag0 > 0 and lag1 < 0:
+                decay_md += "\n⚠ TIME-DECAY FAIL: Sharpe вмирає за 1 бар — edge execution-dependent!\n"
+            elif lag0 > 0 and lag1 < lag0 * 0.5:
+                decay_md += f"\n⚠ TIME-DECAY WARN: деградація {1 - lag1/lag0:.0%} за 1 бар — execution-sensitive\n"
+            else:
+                decay_md += f"\n✅ TIME-DECAY PASS: Sharpe зберігається при lag=1 ({lag1:+.3f})\n"
     except Exception as exc:  # noqa: BLE001
         decay_md = f"\n## Time-Decay Test\n\nпомилка: {exc}\n"
 
+    # ── Stress: cost_concentration + 4-scenario (Narang гл. 4, 10) ───────────
     stress_md = ""
+    stress_report_df = None
     try:
-        from scalper_hft.validation.stress import cost_concentration_stress
+        from scalper_hft.validation.stress import cost_concentration_stress, stress_report
 
+        # 1) Традиційний cost-concentration стрес (fees×2, drop top-5)
         stress_tbl = cost_concentration_stress(
             df,
             strategy,
@@ -332,6 +354,22 @@ def cmd_report(args: argparse.Namespace) -> None:
             baseline=res,
         )
         stress_md = "\n## Стрес (fees×2, slippage×2, без топ-5 угод)\n\n" + stress_tbl.to_markdown() + "\n"
+
+        # 2) 4-сценарний стрес (crash / liquidity / vol_spike / funding_shock)
+        if res.bar_returns is not None and len(res.bar_returns) > 10:
+            stress_report_df = stress_report(res.bar_returns)
+            stress_md += "\n## Стрес-сценарії (crash / liquidity / vol_spike / funding_shock)\n\n"
+            stress_md += stress_report_df.to_markdown() + "\n"
+            # pass/fail: maxDD при crash ≤ baseline × 2.5
+            baseline_dd = abs(float(res.metrics.max_drawdown))
+            crash_dd = abs(float(stress_report_df.loc["crash", "max_drawdown"])) if "crash" in stress_report_df.index else 0.0
+            liq_dd = abs(float(stress_report_df.loc["liquidity", "max_drawdown"])) if "liquidity" in stress_report_df.index else 0.0
+            if baseline_dd > 0 and crash_dd > baseline_dd * 2.5:
+                stress_md += f"\n⚠ STRESS WARN: crash maxDD={crash_dd:.1%} > {baseline_dd * 2.5:.1%} (baseline×2.5)\n"
+            elif baseline_dd > 0 and liq_dd > baseline_dd * 4.0:
+                stress_md += f"\n⚠ STRESS WARN: liquidity maxDD={liq_dd:.1%} > {baseline_dd * 4.0:.1%} (baseline×4)\n"
+            else:
+                stress_md += "\n✅ STRESS PASS: всі сценарії в межах допустимих порогів\n"
     except Exception as exc:  # noqa: BLE001
         stress_md = f"\n## Стрес\n\nпомилка: {exc}\n"
 
@@ -370,7 +408,55 @@ def cmd_report(args: argparse.Namespace) -> None:
     out_path = out_dir / f"{args.strategy}_{args.symbol}_{args.interval}.md"
     out_path.write_text(md, encoding="utf-8")
     print(md)
-    print(f"\nЗвіт збережено: {out_path}")
+
+    # ── Термінальний підсумок: pass/fail для quintile + time-decay + stress ───
+    print("═" * 60)
+    print("ПІДСУМОК ДОДАТКОВИХ ТЕСТІВ (Narang гл. 9, 4, 10)")
+    print("─" * 60)
+
+    # Quintile
+    if q_res is not None:
+        q_pass = q_res.monotonic and abs(q_res.spearman) >= _QUINTILE_SPEARMAN_MIN
+        flag = "✅ PASS" if q_pass else "⚠ FAIL"
+        print(f"  Quintile Study:   {flag} | Spearman ρ={q_res.spearman:+.3f} | monotonic={q_res.monotonic}")
+    else:
+        print("  Quintile Study:   — (недостатньо сигналів або помилка)")
+
+    # Time-decay
+    if td_res is not None and len(td_res.sharpes) >= 2:
+        lag0, lag1 = td_res.sharpes[0], td_res.sharpes[1]
+        if lag0 > 0 and lag1 < 0:
+            td_flag = "⚠ FAIL"
+        elif lag0 > 0 and lag1 < lag0 * 0.5:
+            td_flag = "⚠ WARN"
+        else:
+            td_flag = "✅ PASS"
+        sharpes_str = " | ".join(f"lag{i}={s:+.3f}" for i, s in zip(td_res.lags, td_res.sharpes))
+        print(f"  Time-Decay Test:  {td_flag} | {sharpes_str}")
+    else:
+        print("  Time-Decay Test:  — (помилка або недостатньо даних)")
+
+    # Stress
+    if stress_report_df is not None and res.bar_returns is not None:
+        baseline_dd = abs(float(res.metrics.max_drawdown))
+        crash_dd = (
+            abs(float(stress_report_df.loc["crash", "max_drawdown"]))
+            if "crash" in stress_report_df.index else 0.0
+        )
+        liq_dd = (
+            abs(float(stress_report_df.loc["liquidity", "max_drawdown"]))
+            if "liquidity" in stress_report_df.index else 0.0
+        )
+        stress_ok = baseline_dd <= 0 or (crash_dd <= baseline_dd * 2.5 and liq_dd <= baseline_dd * 4.0)
+        st_flag = "✅ PASS" if stress_ok else "⚠ WARN"
+        print(f"  Stress (4 сцен.): {st_flag} | crash maxDD={crash_dd:.1%} | liquidity maxDD={liq_dd:.1%}")
+    else:
+        print("  Stress (4 сцен.): — (помилка або немає bar_returns)")
+
+    print("─" * 60)
+    print(f"Звіт збережено: {out_path}")
+
+
 
 
 def cmd_cscv(args: argparse.Namespace) -> None:
