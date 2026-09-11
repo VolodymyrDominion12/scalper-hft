@@ -26,10 +26,12 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from scalper_hft.config import get_settings
 from scalper_hft.data.client import ExchangeClient
+from scalper_hft.data.storage import dedupe_trades
 from scalper_hft.data.store import get_store
 
 logger = logging.getLogger(__name__)
@@ -278,6 +280,23 @@ def _batch_to_ohlcv(batch: list[list[Any]]) -> pd.DataFrame:
     df = pd.DataFrame(batch, columns=["ts", *_OHLCV_COLS])
     df["ts"] = pd.to_datetime(df["ts"], unit="ms")
     return df.set_index("ts")
+
+
+def _supports_from_id(client: Any) -> bool:
+    """Чи приймає клієнт `fetch_agg_trades(..., from_id=…)`.
+
+    `Downloader(client=…)` — публічний шов для кастомних/тестових клієнтів, тому
+    перевіряємо сигнатуру, а не припускаємо.
+    """
+    import inspect
+
+    try:
+        params = inspect.signature(client.fetch_agg_trades).parameters
+    except (TypeError, ValueError):
+        return False
+    if "from_id" in params:
+        return True
+    return any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
 
 
 def _trade_id(t: dict[str, Any], fallback: int) -> int:
@@ -771,6 +790,16 @@ class Downloader:
         frames: list[pd.DataFrame] = [existing] if existing is not None and not existing.empty else []
         new_frames: list[pd.DataFrame] = []
         since = begin_ms
+        # Пагінація за id (fromId), якщо клієнт це підтримує і в кеші вже є
+        # справжні aggTrade id — інакше лишається часовий курсор.
+        next_from_id: int | None = None
+        last_trade_id = -1
+        if _supports_from_id(self.client):
+            if existing is not None and not existing.empty and (existing["trade_id"] > 0).all():
+                last_trade_id = int(existing["trade_id"].max())
+                next_from_id = last_trade_id + 1
+        else:
+            logger.info("aggTrades %s: клієнт без from_id — пагінація за часом", symbol)
         if end_ms - since > 60_000:
             logger.info(
                 "aggTrades %s: докачую з REST [%s] (від %s)",
@@ -786,8 +815,8 @@ class Downloader:
             all_f = [*frames, *new_frames]
             if not all_f:
                 return pd.DataFrame(columns=["trade_id", "price", "amount", "side"])
-            merged = pd.concat(all_f).sort_index()
-            return merged[~merged.index.duplicated(keep="last")]
+            # Дедуп за trade_id, НЕ за мілісекундним індексом (див. storage.dedupe_trades).
+            return dedupe_trades(pd.concat(all_f))
 
         try:
             while since < end_ms:
@@ -796,7 +825,10 @@ class Downloader:
                     raise RuntimeError("Забагато батчів aggTrades")
                 if self.batch_delay > 0:
                     time.sleep(self.batch_delay)
-                batch = self._with_retry(self.client.fetch_agg_trades, symbol, since)
+                if next_from_id is not None:
+                    batch = self._with_retry(self.client.fetch_agg_trades, symbol, None, from_id=next_from_id)
+                else:
+                    batch = self._with_retry(self.client.fetch_agg_trades, symbol, since)
                 if not batch:
                     break
                 rows = []
@@ -824,7 +856,20 @@ class Downloader:
                 df = df.set_index("ts").sort_index()
                 new_frames.append(df)
                 total_rows += len(df)
-                since = int(df.index[-1].value // 1_000_000) + 1
+                # Курсор: за id, якщо API віддав справжні aggTrade id. Пагінація за
+                # часом (`last_ts + 1`) пропускає угоди, що ділять мілісекунду на
+                # межі батча, — саме так кеш BTCUSDT втратив ~60% потоку.
+                batch_ids = df["trade_id"].to_numpy(dtype=np.int64)
+                if (batch_ids > 0).all():
+                    max_id = int(batch_ids.max())
+                    if max_id <= last_trade_id:
+                        break  # API не просунувся — не зациклюємось
+                    last_trade_id = max_id
+                    next_from_id = max_id + 1  # fromId ІНКЛЮЗИВНО
+                last_ts_ms = int(df.index[-1].value // 1_000_000)
+                since = last_ts_ms + 1
+                if df.index[-1] >= pd.Timestamp(end_ms, unit="ms"):
+                    break
                 if guard % 200 == 0:
                     logger.info("aggTrades %s: %d батчів, %d трейдів (до %s)", symbol, guard, total_rows, df.index[-1])
                 if self.checkpoint_batches > 0 and guard % (self.checkpoint_batches * 2) == 0:

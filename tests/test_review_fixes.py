@@ -238,8 +238,10 @@ class TestWalkForwardTradesSlicing:
         df = pd.DataFrame(
             {"open": close, "high": close + 0.1, "low": close - 0.1, "close": close, "volume": 10.0}, index=idx
         )
-        # aggTrades щільніше за бари: 3 трейди на хвилину
-        t_idx = pd.date_range("2024-01-01", periods=300 * 3, freq="20s")
+        # aggTrades щільніше за бари: 3 трейди на хвилину, І на весь період df
+        # (інакше run_walk_forward справедливо падає на require_stream_coverage:
+        # потік, що покриває 1.7% періоду, — це саме ті 20 клітинок iter7 зі Sharpe 0.0)
+        t_idx = pd.date_range(idx[0], idx[-1], freq="20s")
         trades = pd.DataFrame(
             {"trade_id": range(len(t_idx)), "price": 100.0, "amount": 1.0, "side": "buy"}, index=t_idx
         )

@@ -24,10 +24,64 @@ from scalper_hft.backtest.execution import CostModel
 # Роутер (а не run_backtest напряму): market_maker має аудитуватися на
 # подієвому рушії, інакше WF оцінює його як нуль-сигнальний векторний прогін.
 from scalper_hft.backtest.router import EVENT_STRATEGIES, run_strategy_backtest
-from scalper_hft.strategies.base import Strategy
+from scalper_hft.strategies.base import MissingDataError, Strategy
 
 if TYPE_CHECKING:
     from scalper_hft.overlay.policy import CellPolicy
+
+# Потік (trades/funding) має перекривати щонайменше цю частку періоду даних,
+# інакше стратегія тихо повертає нулі на більшій частині вікон.
+MIN_STREAM_COVERAGE = 0.5
+
+
+def _stream_coverage(stream: pd.DataFrame | None, df: pd.DataFrame) -> float:
+    """Частка періоду `df`, яку перекриває `stream` за часом."""
+    if stream is None or stream.empty or len(df) < 2:
+        return 0.0
+    lo, hi = df.index[0], df.index[-1]
+    span = hi - lo
+    if span <= pd.Timedelta(0):
+        return 1.0
+    covered = min(stream.index[-1], hi) - max(stream.index[0], lo)
+    if covered <= pd.Timedelta(0):
+        return 0.0
+    return float(covered / span)
+
+
+def require_stream_coverage(
+    strategy: Strategy,
+    df: pd.DataFrame,
+    trades: pd.DataFrame | None,
+    funding: pd.DataFrame | None,
+    *,
+    min_coverage: float = MIN_STREAM_COVERAGE,
+) -> None:
+    """Fail-fast: заявлені потоки даних мусять перекривати період бектесту.
+
+    Навіщо (аудит 2026-09-11, знахідка K2). `Strategy.validate_inputs` бачить
+    ПОВНИЙ переданий фрейм, тому перевірка «trades непорожній» проходить навіть
+    тоді, коли aggTrades покривають лише 2 доби з 3 років. Далі walk-forward
+    ріже trades за часом для кожного вікна, отримує порожні зрізи, і стратегія
+    мовчки повертає суцільні нулі — у `results/iter7_regime_rating.csv` так
+    з'явилося 20 клітинок зі `status="ok"` і Sharpe рівно 0.0.
+
+    Тут така ситуація стає помилкою з конкретними числами замість тихого нуля.
+    """
+    checks = (
+        ("trades", trades, getattr(strategy, "needs_trades", False)),
+        ("funding", funding, getattr(strategy, "needs_funding", False)),
+    )
+    for name, stream, needed in checks:
+        if not needed or stream is None or stream.empty:
+            continue
+        coverage = _stream_coverage(stream, df)
+        if coverage < min_coverage:
+            raise MissingDataError(
+                f"{strategy.name}: потік '{name}' перекриває лише {coverage:.1%} періоду даних "
+                f"({stream.index[0]} … {stream.index[-1]} проти {df.index[0]} … {df.index[-1]}); "
+                f"потрібно ≥{min_coverage:.0%}. Інакше walk-forward отримає порожні вікна і "
+                f"стратегія тихо повертатиме нулі. Завантажте дані за весь період."
+            )
 
 
 def _generate_signals(
@@ -133,6 +187,8 @@ def run_walk_forward(
     collect_oos_returns: bool = False,
     purge_bars: int = 0,
     embargo_bars: int = 0,
+    strict_data: bool = True,
+    min_stream_coverage: float = MIN_STREAM_COVERAGE,
 ) -> WalkForwardResult:
     """Walk-forward: параметри фіксовані (або оптимізовані вручну зовні),
     стратегія оцінюється на кожному OOS вікні.
@@ -151,6 +207,8 @@ def run_walk_forward(
         raise ValueError("purge_bars/embargo_bars мають бути ≥ 0")
     if len(df) < train_bars + purge_bars + test_bars:
         raise ValueError(f"Дані ({len(df)}) коротші за train+purge+test ({train_bars + purge_bars + test_bars})")
+    if strict_data:
+        require_stream_coverage(strategy, df, trades, funding, min_coverage=min_stream_coverage)
 
     windows: list[WalkForwardWindow] = []
     oos_ret_parts: list[pd.Series] = []
@@ -161,7 +219,7 @@ def run_walk_forward(
     if getattr(strategy, "name", "") not in EVENT_STRATEGIES:
         # Один виклик на повній історії: ML/ensemble не бачать Test=500,
         # індикатори зберігають warmup з train. Causal rolling не бере майбутнє.
-        precomputed = _generate_signals(strategy, df, trades, funding)
+        precomputed = _generate_signals(strategy, df, trades, funding, strict_data=strict_data)
 
     while start + train_bars + purge_bars + test_bars <= len(df):
         train_end = start + train_bars

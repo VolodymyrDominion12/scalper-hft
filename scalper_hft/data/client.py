@@ -21,6 +21,36 @@ from scalper_hft.data.exchange_registry import ExchangeRegistry
 logger = logging.getLogger(__name__)
 
 
+_INTERVAL_OFFSETS = {"s": "s", "m": "min", "h": "h", "d": "D"}
+
+
+def recent_since_ms(interval: str, limit: int, *, now: Any = None, pad: float = 2.0) -> int:
+    """`startTime` (мс) для запиту останніх `limit` барів таймфрейму `interval`.
+
+    Навіщо окрема функція (аудит 2026-09-11, знахідки K6/K7). У трьох
+    live/paper-шляхах стояло `since_ms=0`. ccxt перетворює це на
+    `request['startTime'] = 0` (умова — `since is not None`, а `0 is not None`
+    істинне), тож Binance повертав НАЙСТАРІШІ свічки лістингу (BTCUSDT perp —
+    вересень 2019) замість останніх N. Наслідки: paper-демони рахували сигнал
+    за 2019 рік і «виконували» його за ціною 2019 року (equity не рухалась),
+    `paper-run-pairs` назавжди застрягав на `hold:same_bar`, а
+    `pairs_live._fetch_last_price` гідратував реальні біржові позиції ціною
+    першої 1m-свічки (~10 300 USDT замість ~77 000).
+
+    `pad` — запас у барах, щоб гарантовано отримати `limit` закритих барів.
+    """
+    import pandas as pd
+
+    parts = str(interval).strip()
+    unit = parts[-1].lower()
+    if unit not in _INTERVAL_OFFSETS:
+        raise ValueError(f"Невідомий інтервал '{interval}' (очікую s/m/h/d)")
+    count = int(parts[:-1])
+    bar = pd.tseries.frequencies.to_offset(f"{count * int(int(limit) * float(pad))}{_INTERVAL_OFFSETS[unit]}")
+    now_ts = now if now is not None else pd.Timestamp.now("UTC").tz_localize(None)
+    return int((now_ts - bar).timestamp() * 1000)
+
+
 class ExchangeClient:
     """Тонка обгортка над ccxt для підтримуваних бірж."""
 
@@ -182,8 +212,24 @@ class ExchangeClient:
         """Один батч історичних свічок. Повертає сирі списки (у форматі ccxt)."""
         return self.exchange.fetch_ohlcv(symbol, timeframe, since=since_ms, limit=limit)
 
-    def fetch_agg_trades(self, symbol: str, since_ms: int, limit: int = 1000) -> list[dict[str, Any]]:
-        """Історичні агреговані трейди (aggTrades) з флагом buy/sell."""
+    def fetch_agg_trades(
+        self,
+        symbol: str,
+        since_ms: int | None,
+        limit: int = 1000,
+        *,
+        from_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Історичні агреговані трейди (aggTrades) з флагом buy/sell.
+
+        Пагінація за часом втрачає угоди, що ділять останню мілісекунду батча
+        (і, як показав аудит 2026-09-11, на активних символах — більшість
+        потоку). Тому підтримується `from_id`: Binance `/fapi/v1/aggTrades`
+        приймає `fromId` ІНКЛЮЗИВНО і не дозволяє передавати його разом із
+        `startTime`/`endTime`, тож у цьому режимі `since` має бути None.
+        """
+        if from_id is not None:
+            return self.exchange.fetch_trades(symbol, None, limit, {"fromId": int(from_id)})
         return self.exchange.fetch_trades(symbol, since=since_ms, limit=limit)
 
     def fetch_funding_rate_history(self, symbol: str, since_ms: int, limit: int = 1000) -> list[dict[str, Any]]:

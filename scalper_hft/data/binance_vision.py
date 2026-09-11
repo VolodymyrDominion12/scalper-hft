@@ -193,11 +193,14 @@ def download_agg_trades_vision(
             return existing
         raise FileNotFoundError(f"Жодного файлу не завантажено для {symbol} з {start} по {end}")
 
-    out = pd.concat(frames).sort_index()
-    out = out[~out.index.duplicated(keep="last")]
+    # Дедуп за trade_id, а не за мілісекундним індексом (див. storage.dedupe_trades):
+    # у дампах Binance Vision кілька aggTrades регулярно ділять одну мілісекунду,
+    # і дедуп за індексом знищував би більшість потоку на активних символах.
+    from scalper_hft.data.storage import dedupe_trades
+
+    out = dedupe_trades(pd.concat(frames))
     if existing is not None and not existing.empty:
-        out = pd.concat([out, existing[["trade_id", "price", "amount", "side"]]]).sort_index()
-        out = out[~out.index.duplicated(keep="last")]
+        out = dedupe_trades(pd.concat([out, existing[["trade_id", "price", "amount", "side"]]]))
 
     store.save_trades(symbol, out)
     return out

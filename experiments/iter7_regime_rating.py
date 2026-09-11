@@ -307,6 +307,21 @@ def run_cell(
         sub = frame.loc[frame["structure"] == lab, "ret"]
         row[f"sharpe_{tag}"] = round(_sharpe(sub, min_bars=50), 4)
         row[f"n_bars_{tag}"] = int(len(sub))
+
+    # Дегенерація (AGENTS.md; experiments/README.md: «Мінімум 30 угод за 3y на
+    # клітинку — інакше degenerate»). Без цього клітинки з 0 угод писались як
+    # `status="ok"` і Sharpe рівно 0.0, потрапляли в рейтинг як «нульовий edge»
+    # і в пул regime-селектора. Аудит 2026-09-11: так було 57 із 200 клітинок.
+    from scalper_hft.validation.cell_audit import min_trades_for
+
+    n_tr = int(row["n_trades_oos"])
+    min_tr = min_trades_for(INTERVAL)
+    if n_tr <= 0:
+        row["status"] = "degenerate"
+        row["error"] = "0 угод — стратегія не торгувала"
+    elif min_tr and n_tr < min_tr:
+        row["status"] = "degenerate"
+        row["error"] = f"угод {n_tr} < {min_tr} — статистично шум"
     return row
 
 

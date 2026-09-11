@@ -52,9 +52,16 @@ class PaperRunResult:
 
 
 def _fetch_recent(symbol: str, interval: str, limit: int = _RECENT_BARS) -> pd.DataFrame:
-    """Останні N свічок напряму через REST (швидко, без повного кешу)."""
+    """Останні N свічок напряму через REST (швидко, без повного кешу).
+
+    Увага: `since_ms` мусить бути реальним часом. Історично тут стояло `0`
+    (`0 is not None` → ccxt ставить `startTime=0`), і Binance віддавав
+    НАЙСТАРІШІ свічки лістингу — див. `recent_since_ms`.
+    """
+    from scalper_hft.data.client import recent_since_ms
+
     client = ExchangeClient()  # публічні дані, без ключів
-    batch = client.fetch_klines(symbol, interval, since_ms=0, limit=limit)
+    batch = client.fetch_klines(symbol, interval, since_ms=recent_since_ms(interval, limit), limit=limit)
     if not batch:
         raise RuntimeError(f"Немає даних для {symbol}")
     df = pd.DataFrame(batch, columns=["ts", "open", "high", "low", "close", "volume"])

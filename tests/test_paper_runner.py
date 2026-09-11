@@ -85,3 +85,34 @@ def test_fetch_recent_builds_index(monkeypatch: pytest.MonkeyPatch) -> None:
     df = _fetch_recent("BTCUSDT", "1m", limit=2)
     assert len(df) == 2
     assert "close" in df.columns
+
+
+def test_fetch_recent_asks_for_recent_candles_not_listing_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`since_ms=0` означав `startTime=0` → Binance віддавав свічки 2019 року.
+
+    Аудит 2026-09-11 (K6): через це paper-демони рахували сигнал за 2019 рік і
+    «виконували» його за ціною 2019 року, а equity не рухалась.
+    """
+    client = MagicMock()
+    client.fetch_klines.return_value = [[1_700_000_000_000, 100.0, 101.0, 99.0, 100.5, 10.0]]
+    monkeypatch.setattr("scalper_hft.live.paper_runner.ExchangeClient", lambda: client)
+
+    _fetch_recent("BTCUSDT", "1h", limit=600)
+
+    since_ms = client.fetch_klines.call_args.kwargs["since_ms"]
+    assert since_ms > 0, "нуль — це startTime=0, тобто найстаріші свічки лістингу"
+    age_hours = (pd.Timestamp.now("UTC").tz_localize(None).timestamp() * 1000 - since_ms) / 3_600_000
+    # 600 годинних барів + запас ×2 → трохи більше 1200 годин.
+    assert 1200 <= age_hours <= 1300, age_hours
+
+
+def test_recent_since_ms_is_timeframe_aware() -> None:
+    from scalper_hft.data.client import recent_since_ms
+
+    now = pd.Timestamp("2026-09-11 12:00:00")
+    assert recent_since_ms("1h", 600, now=now) == int((now - pd.Timedelta(hours=1200)).timestamp() * 1000)
+    assert recent_since_ms("5m", 600, now=now) == int((now - pd.Timedelta(minutes=6000)).timestamp() * 1000)
+    # limit=1 → кілька хвилин тому, а не 1970 рік.
+    assert recent_since_ms("1m", 1, now=now) == int((now - pd.Timedelta(minutes=2)).timestamp() * 1000)
+    with pytest.raises(ValueError):
+        recent_since_ms("1w", 10, now=now)

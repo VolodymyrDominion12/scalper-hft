@@ -155,3 +155,24 @@ def test_supervisor_unions_child_requires() -> None:
     assert "multi_symbol" in sup.requires
     with pytest.raises(MissingDataError, match="multi_symbol"):
         run_backtest(_ohlcv(), sup)
+
+
+def test_basis_reversion_requires_spot_perp_legs() -> None:
+    """Без колонок perp+spot — fail-fast, а не суцільні нулі.
+
+    До аудиту 2026-09-11 `basis_reversion` у звичайному klines-прогоні повертав
+    `pd.Series(0)` (гілка `if "perp" not in df.columns`), і 10 клітинок iter7
+    виглядали як «стратегія з нульовим edge» замість «стратегія без даних».
+    """
+    with pytest.raises(MissingDataError, match="spot_perp"):
+        run_backtest(_ohlcv(), get_strategy("basis_reversion"))
+
+
+def test_basis_reversion_with_both_legs_runs() -> None:
+    df = _ohlcv()
+    df["perp"] = df["close"]
+    df["spot"] = df["close"] * 0.999
+    funding = pd.DataFrame({"fundingRate": [0.0001] * 3}, index=df.index[:3])
+    res = run_backtest(df, get_strategy("basis_reversion", lookback=30), funding=funding)
+    assert len(res.equity) == len(df)
+    assert "spot_perp" in get_strategy("basis_reversion").requires

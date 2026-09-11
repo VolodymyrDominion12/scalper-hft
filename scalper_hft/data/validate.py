@@ -286,6 +286,20 @@ def validate_trades(
         if n_id_dup:
             issues.append(f"дублікати trade_id: {n_id_dup}")
             n_invalid += n_id_dup
+        # Покриття за aggTrade id: унікальний ключ угоди — `trade_id`, і він
+        # монотонний з кроком 1, тож розриви = угоди, яких у кеші немає. Саме
+        # так виявляється тиха втрата потоку (аудит 2026-09-11: BTCUSDT 39.3%,
+        # ETHUSDT 49.8% — дедуп за мілісекундним індексом + часовий курсор).
+        ids = pd.to_numeric(df["trade_id"], errors="coerce")
+        real = ids[ids > 0]
+        if len(real) > 1:
+            span = int(real.max() - real.min()) + 1
+            coverage = float(len(real)) / span if span > 0 else 1.0
+            if coverage < 0.99:
+                issues.append(
+                    f"розриви aggTrade id: покриття {coverage:.1%} "
+                    f"({len(real)} із {span}; втрачено ~{span - len(real)})"
+                )
     ok = not issues
     return StreamQualityReport("trades", len(df), n_dup, n_invalid, 0, n_future, monotonic, ok, issues)
 

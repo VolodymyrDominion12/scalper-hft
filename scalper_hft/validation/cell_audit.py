@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -17,9 +18,15 @@ import pandas as pd
 
 from scalper_hft.validation.walk_forward import WalkForwardWindow
 
+logger = logging.getLogger(__name__)
+
 VerdictLabel = Literal["PASS", "EXPLORATORY_PASS", "FAIL"]
 AuditMode = Literal["exploratory", "final"]
 AuditStatus = Literal["ok", "error"]
+
+# Явний holdout для mode="final", коли HOLDOUT_PCT не задано. Без відрізаного
+# holdout «фінальний сліпий тест» іде по даних, які вже бачили WF/DSR/sensitivity.
+FINAL_HOLDOUT_PCT = 0.20
 
 # Ті самі вікна, що у scripts/matrix_wf_sweeps.sh
 WF_TRAIN_TEST: dict[str, tuple[int, int]] = {
@@ -427,7 +434,18 @@ def audit_cell(
         from scalper_hft.validation.holdout import split_research_holdout
 
         holdout_pct = float(getattr(settings, "enforce_holdout_pct", 0.0))
-        df_full = df
+        if mode == "final" and holdout_pct <= 0:
+            # `explicit_holdout=True` дозволяв final при HOLDOUT_PCT=0, і тоді
+            # `ho_slice` брався як останні 20% ПОВНОГО df — того самого, що вже
+            # пройшов WF/DSR/sensitivity. Тобто «сліпий» тест був не сліпий, а
+            # cell_verdict у final перевіряє лише holdout_sharpe > 0.
+            # Тепер final завжди відрізає holdout ДО research-прогонів.
+            holdout_pct = FINAL_HOLDOUT_PCT
+            logger.info(
+                "final-режим без HOLDOUT_PCT: застосовано явний holdout %.0f%% "
+                "(research-частина обрізається, holdout не бачить WF/DSR/sensitivity)",
+                holdout_pct * 100,
+            )
         df, holdout_df = split_research_holdout(df, holdout_pct)
         if df.empty:
             return CellAudit(
@@ -596,8 +614,6 @@ def audit_cell(
         from scalper_hft.validation.audit_extensions import run_extended_audit
 
         ho_slice = holdout_df
-        if holdout_pct <= 0 and mode == "final":
-            _, ho_slice = split_research_holdout(df_full, 0.20)
         ext = run_extended_audit(
             df,
             strategy,

@@ -460,13 +460,19 @@ class RegimeSupervisor(Strategy):
         return pd.Series(result_vals, index=sig_df.index).clip(-1.0, 1.0)
 
     def _blend_exp3(self, sig_df: pd.DataFrame, close: pd.Series) -> pd.Series:
-        """Exp3 Bandit: вибирає одну найкращу стратегію per-bar (exploration)."""
-        from scalper_hft.strategies.bandit import exp3_select_signals
+        """Exp3 Bandit: вибирає одну найкращу стратегію per-bar (exploration).
+
+        Seed за замовчуванням — `Exp3Bandit.DEFAULT_SEED`, а не None: без фіксованого
+        seed комірка невідтворювана між прогонами (аудит 2026-09-11: `meta:sup_exp3`
+        давав Sharpe −0.583 і −0.499 у двох прогонах того самого коду). Явний
+        `exp3_seed=None` лишає попередню стохастичну поведінку.
+        """
+        from scalper_hft.strategies.bandit import Exp3Bandit, exp3_select_signals
 
         ret = close.pct_change().fillna(0.0)
         returns_df = sig_df.shift(1).fillna(0.0).mul(ret, axis=0)
         gamma = float(self.get("exp3_gamma", 0.05))
-        seed = self.get("exp3_seed", None)
+        seed = self.get("exp3_seed", Exp3Bandit.DEFAULT_SEED)
         seed = int(seed) if seed not in (None, "") else None
         # Turnover penalty (2C): net-PnL-свідоме навчання Exp3.
         turnover_penalty = float(self.get("turnover_penalty", 0.0))

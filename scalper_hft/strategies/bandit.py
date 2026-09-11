@@ -19,6 +19,12 @@ import pandas as pd
 class Exp3Bandit:
     """Multi-Armed Bandit на базі Exp3."""
 
+    # Дефолтний seed для бектест-шляхів. Аудит 2026-09-11 показав, що `seed=None`
+    # у `RegimeSupervisor(blend_mode="exp3")` робив комірку НЕВІДТВОРЮВАНОЮ: два
+    # прогони того самого скрипта дали `meta:sup_exp3` Sharpe −0.583 (5714 угод) і
+    # −0.499 (4490 угод). Артефакт, який змінюється між прогонами, не є доказом.
+    DEFAULT_SEED = 42
+
     def __init__(
         self,
         n_arms: int,
@@ -34,8 +40,9 @@ class Exp3Bandit:
         self._weights = np.ones(n_arms, dtype=float)
         self.history: list[dict[str, float]] = []
         # Seeded RNG для відтворюваності (1D): однаковий seed → однаковий вибір рук.
-        # Без seed Exp3 стохастичний і невідтворюваний між прогонами — ускладнює
-        # дебаг і A/B-порівняння. Дефолт None = nondeterministic (як раніше).
+        # `seed=None` лишається явним opt-in у стохастичність (напр. для ансамблів
+        # різних шляхів); дефолт для продакшн-шляху задає `DEFAULT_SEED` через
+        # `RegimeSupervisor._blend_exp3`.
         self._rng = np.random.default_rng(seed)
 
     def probabilities(self) -> np.ndarray:

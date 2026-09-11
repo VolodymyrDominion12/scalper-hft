@@ -465,7 +465,9 @@ def switch_test(
         "oracle_single_sharpe": sharpe(oracle_ret, 100),
         "oracle_single_name": best_h2 or "-",
         "oracle_switch_sharpe": sharpe(oracle_switch, 100),
-        "flat_sharpe": 0.0,
+        # Внесок саме флет-режиму в селектор (раніше тут була захардкоджена 0.0,
+        # яка в CSV виглядала як виміряне значення).
+        "flat_sharpe": sharpe(switch_ret[reg_h2 == "range"], 100),
     }
 
 
@@ -492,6 +494,15 @@ def main() -> None:
     reg.to_csv(REGIME_CSV, index=False)
 
     singles = sorted({v for v in cells["variant"].unique() if v.startswith("single:")})
+    # Пул селектора — лише клітинки, що реально торгували. Дегенеративні
+    # (0 угод / < MIN_TRADES) не дають жодної дохідності й лише роздувають
+    # «нульову» базу для `mean_all`.
+    ok_singles = sorted(
+        {v for v in cells.loc[cells["status"] == "ok", "variant"].unique() if v.startswith("single:")}
+    )
+    if set(singles) - set(ok_singles):
+        print(f"пул селектора звужено: {sorted(set(singles) - set(ok_singles))} → degenerate/error")
+    singles = ok_singles
 
     rows = []
     for sym, (mat, lab, _v) in oos_by_symbol.items():

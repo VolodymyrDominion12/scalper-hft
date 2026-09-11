@@ -419,6 +419,13 @@ def test_funding_fetches_only_from_last_when_history_covers(monkeypatch) -> None
 
 
 def test_agg_trades_continues_from_last_cached_trade(monkeypatch) -> None:
+    """Докачка НЕ перекачує кеш: стартує від останньої закешованої угоди.
+
+    Після аудиту 2026-09-11 (знахідка K5) продовження йде за `fromId`, а не за
+    часом: часовий курсор `last_ts + 1` перестрибував цілу мілісекунду й губив
+    угоди, що ділять її з останньою закешованою. Тут перевіряються ОБИДВІ гілки:
+    клієнт без підтримки from_id (фолбек за часом) і з підтримкою.
+    """
     from scalper_hft.data import downloader as dl
 
     now = pd.Timestamp("2024-01-10 12:00:00")
@@ -431,7 +438,7 @@ def test_agg_trades_continues_from_last_cached_trade(monkeypatch) -> None:
     store = _MemStore()
     store.save_trades("BTCUSDT", existing)
 
-    class _Client:
+    class _ClientWithoutFromId:
         def __init__(self) -> None:
             self.calls: list[int] = []
 
@@ -439,10 +446,27 @@ def test_agg_trades_continues_from_last_cached_trade(monkeypatch) -> None:
             self.calls.append(int(since_ms))
             return []
 
-    client = _Client()
+    client = _ClientWithoutFromId()
     Downloader(client=client, retries=1, store=store, batch_delay=0.0).agg_trades("BTCUSDT", days=2)
     assert client.calls
     assert client.calls[0] >= _to_ms(last)
+
+    class _ClientWithFromId:
+        def __init__(self) -> None:
+            self.calls: list[tuple] = []
+
+        def fetch_agg_trades(
+            self, symbol: str, since_ms: int | None = None, limit: int = 1000, *, from_id: int | None = None
+        ) -> list[dict]:
+            self.calls.append((since_ms, from_id))
+            return []
+
+    client2 = _ClientWithFromId()
+    Downloader(client=client2, retries=1, store=store, batch_delay=0.0).agg_trades("BTCUSDT", days=2)
+    assert client2.calls
+    # Кеш містить реальний trade_id=1 → продовжуємо з 2 (fromId ІНКЛЮЗИВНО),
+    # без startTime (Binance забороняє передавати їх разом).
+    assert client2.calls[0] == (None, 2)
 
 
 def test_agg_trades_cache_fresh() -> None:

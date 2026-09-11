@@ -27,6 +27,10 @@ class BasisReversion(Strategy):
     family = "relative_value"
     preferred_regimes = frozenset()
     needs_funding = True  # для консистентності рушія; фандінг додається до PnL
+    # Потрібні ОБИДВІ ноги (колонки perp+spot). Без цієї декларації стратегія
+    # мовчки повертала нулі в будь-якому звичайному klines-прогоні — і 10 клітинок
+    # iter7 виглядали як «нульовий edge» замість «немає даних» (аудит 2026-09-11).
+    requires = frozenset({"spot_perp"})
 
     param_space = {
         "exit_bps": (0.0, 10.0, 0.5),

@@ -126,6 +126,41 @@ def load_trades(path: Path) -> pd.DataFrame | None:
     return out
 
 
+def dedupe_trades(df: pd.DataFrame) -> pd.DataFrame:
+    """Прибрати дублікати aggTrades за `trade_id` (НЕ за мілісекундним індексом).
+
+    Навіщо. Унікальний ключ aggTrade — `agg_trade_id` (колонка `trade_id`), а
+    `transact_time` має мілісекундну роздільність, у якій регулярно опиняється
+    кілька угод. Дедуп за індексом (`df.index.duplicated()`) знищує всі, крім
+    однієї, у кожній такій мілісекунді: на кеші BTCUSDT 2026-09-11 лише в парах
+    із Δt ≤ 1 мс так зникло ~0.6 млн id, а загальне покриття `trade_id` впало до
+    39.3% (ETHUSDT 49.8%, DOGEUSDT 95.2%). Дефект був повністю тихий:
+    `validate_trades` перевіряє дублікати індексу, а після дедупу їх немає.
+
+    Синтетичні id (`_trade_id` fallback, від'ємні) унікальні в межах одного
+    завантаження, але НЕ між завантаженнями — тому для них лишається дедуп за
+    індексом (інакше докачка плодила б дублікати).
+    """
+    if df is None or df.empty:
+        return df
+    if "trade_id" not in df.columns or df["trade_id"].isna().any():
+        logger.warning(
+            "dedupe_trades: немає валідного trade_id — фолбек на дедуп за індексом "
+            "(втрата угод у спільних мілісекундах неминуча)"
+        )
+        return df[~df.index.duplicated(keep="last")].sort_index()
+
+    real = df["trade_id"] > 0  # від'ємні id — синтетичні (див. downloader._trade_id)
+    real_part = df[real]
+    synth_part = df[~real]
+    if not real_part.empty:
+        real_part = real_part[~real_part["trade_id"].duplicated(keep="last")]
+    if not synth_part.empty and synth_part.index.duplicated().any():
+        synth_part = synth_part[~synth_part.index.duplicated(keep="last")]
+    out = pd.concat([real_part, synth_part]) if not synth_part.empty else real_part
+    return out.sort_index()
+
+
 def load_funding(path: Path) -> pd.DataFrame | None:
     df = _safe_load(path)
     if df is None or df.empty:

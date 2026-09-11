@@ -157,11 +157,19 @@ class PairsLiveAdapter(PairsEngine):
         logger.info("%s гідратовано з біржі: have=%d, позицій=%d", self.pid, self.have, len(self.account.positions))
 
     def _fetch_last_price(self, symbol: str) -> float:
-        """Остання ціна символу для mark-ціни при гідратації. Немає ціни → KillSwitch."""
+        """Остання ціна символу для mark-ціни при гідратації. Немає ціни → KillSwitch.
+
+        `since_ms` — реальний час, НЕ 0: з нулем Binance віддає найстаріші свічки
+        лістингу, і гідратація реальних біржових позицій отримувала ціну першої
+        1m-свічки (BTCUSDT ~10 300 замість ~77 000) — а від неї залежать
+        entry_price, UPNL, equity і всі ризик-гейти/сайзинг (аудит 2026-09-11, K6).
+        """
+        from scalper_hft.data.client import recent_since_ms
+
         try:
             if not hasattr(self.client, "fetch_klines"):
                 raise KillSwitch(f"{self.pid}: немає mark-ціни {symbol} (клієнт без fetch_klines)")
-            batch = self.client.fetch_klines(symbol, "1m", since_ms=0, limit=1)
+            batch = self.client.fetch_klines(symbol, "1m", since_ms=recent_since_ms("1m", 1), limit=1)
         except KillSwitch:
             raise
         except Exception as exc:

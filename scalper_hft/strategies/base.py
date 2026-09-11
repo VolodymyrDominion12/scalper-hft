@@ -43,13 +43,25 @@ class MissingDataError(ValueError):
 
 
 # Додаткові потоки поверх ohlcv/trades/funding (Strategy.requires).
-CAPABILITIES = frozenset({"basket", "l2", "multi_symbol"})
+CAPABILITIES = frozenset({"basket", "l2", "multi_symbol", "spot_perp"})
 _L2_COLUMNS = frozenset({"imbalance", "bid", "ask", "bid_qty", "ask_qty", "bid_px", "ask_px"})
 
 
 def close_wide_columns(df: pd.DataFrame) -> list[str]:
     """Колонки '{symbol}_close' для крос-секційних стратегій."""
     return [c for c in df.columns if str(c).endswith("_close")]
+
+
+def has_spot_perp(df: pd.DataFrame) -> bool:
+    """Обидві ноги delta-neutral пари: колонки `perp` і `spot`.
+
+    Додано за аудитом 2026-09-11: `basis_reversion` мовчки повертав суцільні
+    нулі, коли цих колонок не було (тобто в будь-якому звичайному klines-прогоні),
+    і в рейтингу виглядав як «стратегія з нульовим edge» замість «стратегія без
+    даних» — 10 клітинок iter7 зі `status="ok"`.
+    """
+    return {"perp", "spot"} <= {str(c) for c in df.columns}
+
 
 
 def has_basket(df: pd.DataFrame, basket_df: pd.DataFrame | None = None) -> bool:
@@ -146,6 +158,8 @@ class Strategy(abc.ABC):
             missing.append("multi_symbol (leg1+leg2 або ≥3 колонок {sym}_close)")
         if "l2" in req and not has_l2(df):
             missing.append("l2 (imbalance/bid/ask/depth)")
+        if "spot_perp" in req and not has_spot_perp(df):
+            missing.append("spot_perp (колонки perp+spot — delta-neutral пара)")
         if missing:
             raise MissingDataError(
                 f"{self.name}: заявлено {sorted(self.required_data())}, але відсутні: "
