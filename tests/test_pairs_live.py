@@ -63,7 +63,9 @@ class MockExchangeClient:
         self, symbol, order_type, side, amount, price=None, params=None, post_only=False, client_order_id=None
     ):
         if symbol in self.fail_place_symbols or (order_type == "market" and self.fail_market_orders):
-            raise RuntimeError(f"exchange down for {symbol}")
+            import ccxt
+
+            raise ccxt.NetworkError(f"exchange down for {symbol}")
         oid = f"ex{self._next_oid}"
         self._next_oid += 1
         reduce_only = bool((params or {}).get("reduceOnly", False))

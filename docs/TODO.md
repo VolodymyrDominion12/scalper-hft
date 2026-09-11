@@ -56,7 +56,7 @@ VPS: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
 - [ ] **R4 / W0-R4** Тест + docs `use_exit_ladders=false` (поле в Settings уже є)
 - [ ] **R5 / W0-R5** `scripts/sync_depth.sh` + quality-звіт
 - [x] **R6 / W0-R6** I/O геть з `application/use_cases.py` + `CostModel.from_settings`
-- [ ] **R7 / W0-R7** Тести `trader_loop` + вузькі except на fetch позицій
+- [x] **R7 / W0-R7** Тести `trader_loop` + вузькі except на fetch позицій
 - [x] **R8** Покажчики ROADMAP/TODO/DESIGN на CHANGE_PLAN_REVIEW
 - [x] **W0-TCA** IS: mid ≠ fill + opportunity cost unfilled + секція в `paper-audit`
 - [x] **W0-Q** Quintile/time-decay пар на −Δspread, не на `close` ноги

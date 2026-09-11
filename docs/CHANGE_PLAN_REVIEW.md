@@ -320,6 +320,8 @@ CLI як і раніше качає дані; pytest CLI/jobs зелений.
 **Готово коли:** є `tests/test_trader_loop.py`; немає голого `except Exception: pass`
 на fetch позицій; pytest зелений.
 
+**Статус:** зроблено.
+
 ---
 
 ## Фаза R8 — Документи вказують на цей цикл (P2)
@@ -387,7 +389,7 @@ LINK/BTC 1h maker + regime_scale(0.25) + vol-target + fill-parity.
 - [ ] R4: `use_exit_ladders` явне поле, дефолт false; немає getattr-магії
 - [ ] R5: `scripts/sync_depth.sh` + quality-звіт
 - [x] R6: `use_cases` без downloader
-- [ ] R7: `tests/test_trader_loop.py`; немає swallow на fetch позицій
+- [x] R7: `tests/test_trader_loop.py`; немає swallow на fetch позицій
 - [ ] R8: ROADMAP/TODO покажчик на цей файл — зроблено разом із публікацією плану; тримати в синхроні при зміні фаз
 - [ ] `uv run pytest tests/ -q` зелений після кожної кодової фази
 - [ ] Немає `DRY_RUN=false` у юнітах; немає live CLI

@@ -116,6 +116,9 @@ I/O лишився в CLI/`job_handlers`.
 **Готово коли:** є `tests/test_trader_loop.py`; немає голого `pass` на fetch
 позицій; pytest зелений.
 
+**Статус:** зроблено. `tests/test_trader_loop.py`; `_fill_symbols` більше не ковтає
+fetch; submit/poll — мережа fail-closed, інше проброс.
+
 ### W0-TCA — Чесний Implementation Shortfall [P0, ~2 д]
 
 **Навіщо.** `build_from_orders` ставить `mid_at_decision = fill_price = limit`
@@ -312,7 +315,7 @@ uv run python -m scalper_hft.cli backtest \
 | W0-R4 | Тест + docs `use_exit_ladders=false` | 0 | 0.5 | ні | ☐ код є |
 | W0-R5 | `sync_depth.sh` | 0 | 1 | ні | ☐ |
 | W0-R6 | I/O геть з use_cases + `from_settings` | 0 | 1 | бажано | ☑ |
-| W0-R7 | Тести `trader_loop` | 0 | 1–2 | ні | ☐ |
+| W0-R7 | Тести `trader_loop` | 0 | 1–2 | ні | ☑ |
 | W0-TCA | IS mid ≠ fill + miss-cost + paper-audit | 0 | 2 | **так** | ☑ |
 | W0-Q | Quintile/decay пар на −Δspread | 0 | 1 | ні | ☑ |
 | W0-COST | `cmd_pairs` → `from_settings` | 0 | у R6 | бажано | ☑ |

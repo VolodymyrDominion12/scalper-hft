@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from scalper_hft.live.account import PaperAccount
+from scalper_hft.live.orders import is_transient_exchange_error
 from scalper_hft.live.trader_bars import as_naive_utc, interval_seconds
 from scalper_hft.live.ws_user_stream import OrderTradeEvent
 
@@ -119,9 +120,11 @@ class PendingOrderManager:
         for coid, po in pending_snapshot:
             try:
                 info = fetch(po.order_id, po.symbol)
-            except Exception as exc:  # noqa: BLE001
-                logger.error("fetch_order %s: %s", po.order_id, exc)
-                continue
+            except Exception as exc:
+                if is_transient_exchange_error(exc):
+                    logger.error("fetch_order %s: %s", po.order_id, exc)
+                    continue
+                raise
             status = str((info or {}).get("status") or "").lower()
             filled = float((info or {}).get("filled") or 0.0)
             avg = float((info or {}).get("average") or (info or {}).get("price") or po.price)

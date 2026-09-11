@@ -27,7 +27,7 @@ import pandas as pd
 from scalper_hft.live.account import PaperAccount
 from scalper_hft.live.fills import FillDecision, resolve_legging
 from scalper_hft.live.intent_store import IntentStore
-from scalper_hft.live.orders import next_client_order_id
+from scalper_hft.live.orders import is_transient_exchange_error, next_client_order_id
 from scalper_hft.live.pairs_engine import PairsEngine, PendingOrder
 from scalper_hft.live.reconcile import KillSwitch, parse_exchange_positions, reconcile_positions
 from scalper_hft.strategies.base import Strategy
@@ -266,9 +266,11 @@ class PairsLiveAdapter(PairsEngine):
                 post_only=True,
                 client_order_id=coid,
             )
-        except Exception as exc:  # noqa: BLE001
-            logger.error("%s помилка розміщення %s %s: %s", self.pid, o.side, o.symbol, exc)
-            return None
+        except Exception as exc:
+            if is_transient_exchange_error(exc):
+                logger.error("%s помилка розміщення %s %s: %s", self.pid, o.side, o.symbol, exc)
+                return None
+            raise
         oid = str((resp or {}).get("id") or "")
         if not oid:
             logger.error("%s біржа не повернула order id для %s — відхиляю", self.pid, o.symbol)
@@ -390,9 +392,11 @@ class PairsLiveAdapter(PairsEngine):
         """Опитати статус ордера на біржі (REST). Повертає FillDecision."""
         try:
             resp = self.client.fetch_order(lo.exchange_order_id, lo.symbol)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("%s fetch_order %s: %s", self.pid, lo.client_order_id, exc)
-            return FillDecision(False, lo.limit_price, "poll_error")
+        except Exception as exc:
+            if is_transient_exchange_error(exc):
+                logger.warning("%s fetch_order %s: %s", self.pid, lo.client_order_id, exc)
+                return FillDecision(False, lo.limit_price, "poll_error")
+            raise
         status = str((resp or {}).get("status") or "").lower()
         filled_qty = float((resp or {}).get("filled") or (resp or {}).get("filledQty") or 0.0)
         if status in ("filled", "closed") or filled_qty >= lo.size * 0.999:

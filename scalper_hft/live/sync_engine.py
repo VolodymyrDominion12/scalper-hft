@@ -313,16 +313,10 @@ class SyncEngine:
         """Символи для fetch_my_trades: scope, відкриті позиції або markets."""
         if self._scope:
             return [self._resolve_ccxt_symbol(exchange, s) for s in sorted(self._scope)]
-        try:
-            positions = exchange.fetch_positions()
-            syms = [
-                str(p.get("symbol", "")) for p in positions if float(p.get("contracts", 0) or 0) > 0 and p.get("symbol")
-            ]
-            if syms:
-                return syms
-        except Exception:
-            pass
-        return []
+        positions = exchange.fetch_positions()
+        return [
+            str(p.get("symbol", "")) for p in positions if float(p.get("contracts", 0) or 0) > 0 and p.get("symbol")
+        ]
 
     def _resolve_ccxt_symbol(self, exchange: Any, canonical: str) -> str:
         """BTCUSDT → unified ccxt symbol (BTC/USDT:USDT)."""
@@ -384,11 +378,8 @@ class SyncEngine:
 
     def _fetch_unrealized_pnl(self, exchange: Any) -> float:
         """Отримати загальний unrealized PnL з відкритих позицій."""
-        try:
-            positions = exchange.fetch_positions()
-            return sum(float(p.get("unrealizedPnl") or 0) for p in positions if float(p.get("contracts", 0) or 0) > 0)
-        except Exception:
-            return 0.0
+        positions = exchange.fetch_positions()
+        return sum(float(p.get("unrealizedPnl") or 0) for p in positions if float(p.get("contracts", 0) or 0) > 0)
 
 
 __all__ = ["SyncEngine"]
