@@ -12,10 +12,10 @@ DEFAULT_MAX_HALF_LIFE = 200.0
 DEFAULT_MIN_OBS = 80
 
 
-def pair_entry_allowed(
+def check_cointegration_health(
     spread: pd.Series,
     *,
-    adf_max_p: float = DEFAULT_ADF_MAX_P,
+    adf_max_p: float | None = None,
     max_half_life: float = DEFAULT_MAX_HALF_LIFE,
     min_obs: int = DEFAULT_MIN_OBS,
 ) -> tuple[bool, str]:
@@ -24,6 +24,10 @@ def pair_entry_allowed(
     False якщо мало спостережень, ADF p > порогу або half-life inf / занадто довгий.
     Виходи (flatten) цим гейтом не блокуються — лише нові входи.
     """
+    if adf_max_p is None:
+        from scalper_hft.config import get_settings
+        adf_max_p = get_settings().adf_pvalue_threshold
+
     s = spread.dropna()
     if len(s) < min_obs:
         return True, "ok:мало_спостережень"

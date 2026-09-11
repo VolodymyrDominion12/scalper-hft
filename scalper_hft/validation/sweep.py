@@ -415,6 +415,29 @@ def execute_sweep_cell(
     from scalper_hft.research.sweep_store import strategy_code_hash
     row.code_hash = strategy_code_hash(name)
     
+    if row.status != "error":
+        try:
+            from scalper_hft.config import get_settings as _get_settings
+            from scalper_hft.validation.trial_ledger import record_trial
+            _s = _get_settings()
+            raw_ledger = getattr(_s, "trial_ledger_path", None)
+            ledger_path = None
+            if raw_ledger is not None:
+                raw_s = str(raw_ledger).strip()
+                if raw_s and raw_s != ".":
+                    ledger_path = raw_ledger
+            
+            record_trial(
+                ledger_path,
+                strategy=name,
+                symbol=symbol,
+                purpose=f"sweep:{mode}",
+                n_trials=1,
+                score=float(row.sharpe)
+            )
+        except Exception as exc:
+            logger.warning("Не вдалось записати trial ledger: %s", exc)
+    
     flag_degenerate_row(row)
     if store_path:
         with SweepStore(store_path) as store:

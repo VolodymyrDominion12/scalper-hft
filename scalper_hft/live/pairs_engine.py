@@ -238,11 +238,11 @@ class PairsEngine:
         if self.losing_months >= self.max_losing_months:
             return False, "два збиткові місяці — пауза"
         if self.coint_kill and not self._spread_hist.empty:
-            from scalper_hft.live.pair_health import pair_entry_allowed
+            from scalper_hft.live.pair_health import check_cointegration_health
 
             lookback = int(self.strategy.get("lookback", 240))
             window = self._spread_hist.tail(max(lookback, 80))
-            ok, reason = pair_entry_allowed(window)
+            ok, reason = check_cointegration_health(window)
             if not ok:
                 return False, reason
         if self.account.equity <= self.account.day_start_equity * (1 - self.daily_loss_limit):

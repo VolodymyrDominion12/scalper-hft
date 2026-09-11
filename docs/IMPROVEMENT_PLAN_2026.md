@@ -494,15 +494,15 @@ A: Тільки після Phase A. Потребує ≥ 2 роки aggTrades д
 |---|---|---|---|---|---|
 | A1 | Quintile Study у `cmd_report` | A | S (1-2д) | 🔴 | ☐ |
 | A2 | Time-Decay Test у `cmd_report` | A | S (1д) | 🔴 | ☐ |
-| A3 | Stress scenarios у `cmd_report` + Paper Gate | A | S (1-2д) | 🟡 | ☐ |
+| A3 | Stress scenarios у `cmd_report` + Paper Gate | A | S (1-2д) | 🟡 | ☑ |
 | A4 | Cross-symbol sweep (BTC+ETH+LINK) | A | S (запуск) | 🟡 | ☐ |
-| A5 | Worker cache invalidation guard | A | M (2-3д) | 🔴 | ☐ |
-| B1 | Vol-aware slippage активація | B | S (1д) | 🟡 | ☐ |
-| B2 | IS feedback loop (`is_report.py`) | B | M (3д) | 🟡 | ☐ |
-| B3 | Market impact для pairs | B | M (2д) | 🟢 | ☐ |
+| A5 | Worker cache invalidation guard | A | M (2-3д) | 🔴 | ☑ |
+| B1 | Vol-aware slippage активація | B | S (1д) | 🟡 | ☑ |
+| B2 | IS feedback loop (`is_report.py`) | B | M (3д) | 🟡 | ☑ |
+| B3 | Market impact для pairs | B | M (2д) | 🟢 | ☑ |
 | C1 | Kalman vs OLS bake-off | C | M (3-4д) | 🔴 | ☐ |
-| C2 | Rolling ADF kill | C | M (2-3д) | 🔴 | ☐ |
-| C3 | ERC для portfolio runner | C | M (2д) | 🟡 | ☐ |
+| C2 | Rolling ADF kill | C | M (2-3д) | 🔴 | ☑ |
+| C3 | ERC для portfolio runner | C | M (2д) | 🟡 | ☑ |
 | C4 | Sparse basket OOS аудит | C | M (4д) | 🟡 | ☐ |
 
 **Складність**: S = 1–2 дні | M = 3–5 днів
