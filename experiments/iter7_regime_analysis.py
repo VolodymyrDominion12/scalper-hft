@@ -18,6 +18,12 @@
     Порівнюємо з (a) найкращою одиночною стратегією, обраною на H1 і
     застосованою до всього H2 (без перемикання — головний конкурент);
     (b) рівноважним усередненням усіх singles; (c) oracle на H2 (ex-post межа).
+
+КРИТИЧНО (виправлено 2026-09-11): лаг ставиться на ВИБІР, а не на серію
+дохідностей. `ret[t]` — дохідність інтервалу [t, t+1), а мітка режиму `reg[t]`
+рахується з `close[t]` (ціна на кінець того ж інтервалу), тож вони відомі
+одночасно і мітка не може вибирати «свою» дохідність. Реалізується у
+`apply_choice_map`; `out.shift(1)` на дохідностях цього НЕ лікує.
 """
 
 from __future__ import annotations
@@ -119,6 +125,38 @@ def regime_matrix(oos_by_symbol: dict[str, tuple[pd.DataFrame, pd.Series, pd.Ser
     return pd.DataFrame(rows)
 
 
+def apply_choice_map(
+    returns: pd.DataFrame,
+    regime: pd.Series,
+    mapping: dict[str, str | None],
+) -> pd.Series:
+    """Каузальне застосування карти режим→стратегія (ЛАГ НА ВИБОРІ).
+
+    Чому саме так. Індекс klines — open time, тому `ret[t]` — це дохідність
+    інтервалу [t, t+1), а мітка режиму `reg[t]` рахується з `close[t]`, тобто
+    з ціни на КІНЕЦЬ того ж інтервалу. Отже `reg[t]` і `ret[t]` стають відомі
+    одночасно, і мітка бару t фізично не може вибирати дохідність бару t.
+
+    Правильно: рішення за міткою t реалізується у дохідності бару t+1 —
+    `sel[t] = ret[m(reg[t-1])][t]`, тобто лагуємо ВИБІР.
+
+    Помилка, якої тут НЕМА: `out.shift(1)` на самій серії дохідностей. Він дає
+    `te[m(reg[t-1])][t-1]` — мітка й дохідність усе одно з одного бару, тому
+    lookahead лишається (перевірено: опубліковане «shift(1)» давало Sharpe
+    +2.58, «без лага взагалі» +2.59, а лаг вибору — +0.41).
+    """
+    r = returns
+    lagged_regime = pd.Series(regime).reindex(r.index).shift(1)
+    out = pd.Series(0.0, index=r.index, dtype=float)
+    for key, strat in mapping.items():
+        if strat is None or strat not in r.columns:
+            continue
+        pos = np.flatnonzero((lagged_regime == key).to_numpy())
+        if len(pos):
+            out.iloc[pos] = r[strat].to_numpy(dtype=float)[pos]
+    return out
+
+
 def _pick_best(sub: pd.DataFrame, cols: list[str], min_bars: int) -> tuple[str | None, float]:
     best_lab, best_sh = None, -np.inf
     for c in cols:
@@ -211,35 +249,27 @@ def rolling_switch(
         tax = {key: _taxonomy_choice(cols, key, priors) for key, _uk in REGIMES}
 
         def apply_map(m: dict[str, str | None]) -> pd.Series:
-            # Лаг 1 бар: рішення на барі t (режим_t відомий на закритті t)
-            # реалізується у дохідності бару t+1 — без lookahead.
-            out = pd.Series(0.0, index=te.index)
-            for key, _uk in REGIMES:
-                c = m.get(key)
-                if c is None:
-                    continue
-                pos = np.flatnonzero(reg_te == key)
-                if len(pos):
-                    out.iloc[pos] = te.loc[reg_te == key, c].to_numpy()
-            return out.shift(1).fillna(0.0)
+            # Лаг на ВИБОРІ (не на серії дохідностей) — див. apply_choice_map.
+            return apply_choice_map(te[cols], te["__regime"], m)
 
         emp_ret = apply_map(emp)
         emp_nc_ret = apply_map(emp_nc)
         emp_ch_ret = apply_map(emp_ch)
         tax_ret = apply_map(tax)
 
-        # bull_only: momentum лише в бичому режимі, інакше flat
+        # bull_only: momentum лише в бичому режимі, інакше flat.
+        # Вибір робиться ЗА МІТКОЮ, тому лаг на виборі (як в apply_choice_map).
         bull_pick, _ = _pick_best(tr.loc[reg_tr == "trend_up", cols], cols, 200)
-        bull_ret = pd.Series(0.0, index=te.index)
-        if bull_pick is not None:
-            pos = np.flatnonzero(reg_te == "trend_up")
-            if len(pos):
-                bull_ret.iloc[pos] = te.loc[reg_te == "trend_up", bull_pick].to_numpy()
-        bull_ret = bull_ret.shift(1).fillna(0.0)
+        bull_ret = apply_choice_map(te[cols], te["__regime"], {"trend_up": bull_pick})
 
+        # best_single: одна стратегія, вибрана на train. Вибір сталий (не
+        # залежить від поточної мітки), тому лаг НЕ потрібен: `ret[t]` — це вже
+        # P&L позиції, вирішеної на t-1. Раніше тут стояв `.shift(1)` — він
+        # штучно відставав базову лінію на бар і робив її несумісною з
+        # `mean_all` (який зсуву не мав).
         best_one, _ = _pick_best(tr, cols, 500)
-        bs_ret = te[best_one].set_axis(te.index).shift(1).fillna(0.0) if best_one is not None else pd.Series(0.0, index=te.index)
-        mean_ret = te[cols].mean(axis=1).set_axis(te.index)
+        bs_ret = te[best_one].astype(float) if best_one is not None else pd.Series(0.0, index=te.index)
+        mean_ret = te[cols].mean(axis=1)
 
         rows.append(
             {
@@ -285,6 +315,15 @@ def dsr_table(
     n_trials для селектора = 3 режими × N стратегій (стільки комбінацій реально
     перебрано); для best-single — N стратегій. DSR рахується на конкатенованих
     дохідностях rolling test-фолдів (уже OOS, без IS-забруднення).
+
+    PBO рахується у ДВОХ складах:
+        pbo_cscv            — лише реальні кандидати (N singles). Це чесне число:
+                              «чи вибір найкращої стратегії за Sharpe перенавчається».
+        pbo_with_selector   — той самий набір + каузальна серія селектора.
+                              Селектор похідний від цих самих singles, тому він не
+                              є незалежною спробою; колонка лишається для повноти.
+    Раніше в матрицю додавався LOOKAHEAD-селектор (той самий бар давав і мітку, і
+    дохідність), і саме тому PBO виходив 0.004 замість ~0.66.
     """
     from scalper_hft.validation.cscv import pbo_cscv
     from scalper_hft.validation.deflated_sharpe import deflated_sharpe_ratio
@@ -301,14 +340,17 @@ def dsr_table(
             r = series[col].dropna()
             rec[f"dsr_{name}"] = float(deflated_sharpe_ratio(r, n_trials=n_trials if name != "mean_all" else 1))
             rec[f"sharpe_{name}"] = sharpe(r, 300)
-        # PBO: наскільки «вибір найкращого варіанта» схильний до перенавчання
         sub = mat[cols].reindex(series.index).fillna(0.0)
-        arr = np.vstack([sub.to_numpy().T, series["empirical"].to_numpy()[None, :]])
-        try:
-            rec["pbo_cscv"] = float(pbo_cscv(arr, n_blocks=8, purge_bars=0).pbo)
-        except Exception as exc:  # noqa: BLE001
-            rec["pbo_cscv"] = float("nan")
-            rec["pbo_error"] = str(exc)[:120]
+        base = sub.to_numpy().T
+        for tag, arr in (
+            ("pbo_cscv", base),
+            ("pbo_with_selector", np.vstack([base, series["empirical"].to_numpy()[None, :]])),
+        ):
+            try:
+                rec[tag] = float(pbo_cscv(arr, n_blocks=8, purge_bars=0).pbo)
+            except Exception as exc:  # noqa: BLE001
+                rec[tag] = float("nan")
+                rec[f"{tag}_error"] = str(exc)[:120]
         rows.append(rec)
     return pd.DataFrame(rows)
 
@@ -346,14 +388,8 @@ def switch_test(
                 best_lab, best_sh = c, sh
         choice[key] = best_lab if (best_lab is not None and best_sh > 0) else None
 
-    # ── H2: перемикання за режимом ─────────────────────────────────────────
-    switch_ret = pd.Series(0.0, index=idx_h2)
-    for key, _uk in REGIMES:
-        c = choice[key]
-        if c is None:
-            continue
-        mask = reg_h2 == key
-        switch_ret.iloc[np.flatnonzero(mask)] = h2.loc[mask, c].to_numpy()
+    # ── H2: перемикання за режимом (лаг на ВИБОРІ, не на дохідностях) ──────
+    switch_ret = apply_choice_map(h2[cols], h2["__regime"], choice)
 
     # базова лінія: одна стратегія на весь H2, обрана на H1 (без перемикання)
     best_one, best_one_sh = None, -np.inf
@@ -376,8 +412,10 @@ def switch_test(
         if not np.isnan(sh) and sh > best_h2_sh:
             best_h2, best_h2_sh = c, sh
     oracle_ret = h2[best_h2].set_axis(idx_h2)
-    # oracle-перемикання: у кожному режимі ex-post найкраща на H2
-    oracle_switch = pd.Series(0.0, index=idx_h2)
+    # oracle-перемикання: у кожному режимі ex-post найкраща на H2.
+    # Застосовується ТИМ САМИМ каузальним способом (лаг на виборі), інакше це
+    # не верхня межа для досяжного селектора, а ще один lookahead-ряд.
+    oracle_map: dict[str, str | None] = {}
     for key, _uk in REGIMES:
         mask = reg_h2 == key
         sub = h2.loc[mask, cols]
@@ -386,8 +424,8 @@ def switch_test(
             sh = sharpe(sub[c], 30)
             if not np.isnan(sh) and sh > bsh:
                 buk, bsh = c, sh
-        if buk is not None and bsh > 0:
-            oracle_switch.iloc[np.flatnonzero(mask)] = sub[buk].to_numpy()
+        oracle_map[key] = buk if (buk is not None and bsh > 0) else None
+    oracle_switch = apply_choice_map(h2[cols], h2["__regime"], oracle_map)
 
     # чи збігається вибір H1 з найкращим на H2 (стабільність режимної карти)
     stable = []

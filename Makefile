@@ -23,6 +23,12 @@ VPS_PORT      ?= 22
 SSH_KEY       ?=
 FILE          ?=
 DRY           ?= 0
+MAKEFILE_DIR  := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+# --whole-file: parquet на VPS атомарно підміняється рекордером; delta-xfer
+# mmap дає ENODATA (61) і rsync 23. Обгортка повторює 23/24.
+RSYNC_RETRY   := bash $(MAKEFILE_DIR)scripts/rsync_retry.sh
+RSYNC_FLAGS    = -avzP --whole-file $(if $(filter 1 true,$(DRY)),--dry-run,)
+RSYNC_SSH      = ssh -p $(VPS_PORT)$(if $(SSH_KEY), -i $(SSH_KEY),)
 
 # ==============================================================================
 # Допомога
@@ -126,16 +132,16 @@ sync-data: ## Підтягнути ринкові дані з VPS у локал�
 	@mkdir -p data
 	@if [ -n "$(FILE)" ]; then \
 		echo "==> Синхронізація $(FILE) з $(VPS_USER)@$(VPS_HOST):$(VPS_DIR)/..."; \
-		rsync -avzP $(if $(filter 1 true,$(DRY)),--dry-run,) -e "ssh -p $(VPS_PORT)$(if $(SSH_KEY), -i $(SSH_KEY),)" $(VPS_USER)@$(VPS_HOST):$(VPS_DIR)/$(FILE) data/; \
+		$(RSYNC_RETRY) $(RSYNC_FLAGS) -e "$(RSYNC_SSH)" $(VPS_USER)@$(VPS_HOST):$(VPS_DIR)/$(FILE) data/; \
 	else \
 		echo "==> Синхронізація всіх даних з $(VPS_USER)@$(VPS_HOST):$(VPS_DIR)/..."; \
-		rsync -avzP $(if $(filter 1 true,$(DRY)),--dry-run,) -e "ssh -p $(VPS_PORT)$(if $(SSH_KEY), -i $(SSH_KEY),)" $(VPS_USER)@$(VPS_HOST):$(VPS_DIR)/ data/; \
+		$(RSYNC_RETRY) $(RSYNC_FLAGS) -e "$(RSYNC_SSH)" $(VPS_USER)@$(VPS_HOST):$(VPS_DIR)/ data/; \
 	fi
 
 sync-depth5: ## Підтягнути лише depth5 Parquet файли з VPS у data/
 	@mkdir -p data
 	@echo "==> Синхронізація *_depth5.parquet з $(VPS_USER)@$(VPS_HOST):$(VPS_DIR)/..."; \
-	rsync -avzP $(if $(filter 1 true,$(DRY)),--dry-run,) -e "ssh -p $(VPS_PORT)$(if $(SSH_KEY), -i $(SSH_KEY),)" '$(VPS_USER)@$(VPS_HOST):$(VPS_DIR)/*depth5.parquet' data/
+	$(RSYNC_RETRY) $(RSYNC_FLAGS) -e "$(RSYNC_SSH)" '$(VPS_USER)@$(VPS_HOST):$(VPS_DIR)/*depth5.parquet' data/
 
 ls-vps-data: ## Показати список файлів даних на VPS
 	ssh -p $(VPS_PORT)$(if $(SSH_KEY), -i $(SSH_KEY),) $(VPS_USER)@$(VPS_HOST) "ls -lh $(VPS_DIR)/"

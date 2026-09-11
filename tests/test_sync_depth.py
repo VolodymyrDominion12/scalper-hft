@@ -50,5 +50,6 @@ def test_sync_depth_dry_run_skips_audit(tmp_path: Path) -> None:
     combined = r.stdout + r.stderr
     assert "--dry-run" in combined
     assert "--partial" in combined
+    assert "--whole-file" in combined
     assert "пропуск validate" in combined
     assert not Path(env["QUALITY_OUT"]).exists()

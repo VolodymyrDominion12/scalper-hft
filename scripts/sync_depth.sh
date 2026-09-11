@@ -10,7 +10,7 @@ usage() {
   cat >&2 <<'EOF'
 usage: scripts/sync_depth.sh [--dry-run] [user@host:path]
 
-  rsync -avz --partial  *depth5*.parquet *bookTicker*
+  rsync -avz --partial --whole-file  *depth5*.parquet *bookTicker*
   validate_depth / validate_bookticker → results/quality_depth.md
   exit ≠ 0 якщо quality_ok=false
 
@@ -76,6 +76,7 @@ mkdir -p "$LOCAL_DIR"
 RSYNC_OPTS=(
   -avz
   --partial
+  --whole-file
   --include='*depth5*.parquet'
   --include='*bookTicker*.parquet'
   --include='*bookticker*.parquet'
@@ -86,7 +87,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
 fi
 
 echo "rsync ${REMOTE_DATA}/ → ${LOCAL_DIR}/"
-rsync "${RSYNC_OPTS[@]}" "${REMOTE_DATA}/" "${LOCAL_DIR}/"
+"$ROOT/scripts/rsync_retry.sh" "${RSYNC_OPTS[@]}" "${REMOTE_DATA}/" "${LOCAL_DIR}/"
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "dry-run: пропуск validate_depth / validate_bookticker"
