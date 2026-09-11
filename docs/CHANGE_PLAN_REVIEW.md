@@ -362,8 +362,8 @@ CLI як і раніше качає дані; pytest CLI/jobs зелений.
 5. Клас C hotfix (z/lb/regime_scale) заборонений під час 8 тижнів.
 
 Деталі операцій: [DEPLOY_PLAN.md](DEPLOY_PLAN.md) фаза 2,
-[reports/paper_v0.1.0_vps_runbook.md](reports/paper_v0.1.0_vps_runbook.md)
-(оновити тег у ранбуку окремим комітом після R1).
+[reports/paper_v0.2.0_ops_checklist.md](reports/paper_v0.2.0_ops_checklist.md)
+(замінює ранбук v0.1.0 для цього тегу).
 
 **Готово коли:** 8 тижнів журналу без обнулення sqlite на конфігурації
 LINK/BTC 1h maker + regime_scale(0.25) + vol-target + fill-parity.

@@ -199,6 +199,7 @@ unfilled збільшує blended TCA; `paper-audit` друкує IS; pytest з�
 5. Клас C hotfix (z/lb/regime_scale) заборонений під час 8 тижнів.
 
 Деталі: [DEPLOY_PLAN.md](DEPLOY_PLAN.md) фаза 2.
+Чекліст: [reports/paper_v0.2.0_ops_checklist.md](reports/paper_v0.2.0_ops_checklist.md).
 
 **Готово коли:** 8 тижнів журналу без обнулення sqlite. Це **не** дозвіл на live.
 
