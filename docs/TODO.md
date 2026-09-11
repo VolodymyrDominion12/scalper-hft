@@ -41,21 +41,26 @@
 
 ## ⏳ Відкриті задачі (актуальний backlog)
 
-Поточний цикл коду (R1–R8): [CHANGE_PLAN_REVIEW.md](CHANGE_PLAN_REVIEW.md).
-H1–H8 закриті: [CHANGE_PLAN_HEALTH.md](CHANGE_PLAN_HEALTH.md).
-Архів A–E: [CHANGE_PLAN.md](CHANGE_PLAN.md). VPS: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
+**Поточний цикл:** [IMPROVEMENT_PLAN_2026.md](IMPROVEMENT_PLAN_2026.md) (Wave 0 → paper-v0.2.0).
+R1–R8: [CHANGE_PLAN_REVIEW.md](CHANGE_PLAN_REVIEW.md). H1–H8:
+[CHANGE_PLAN_HEALTH.md](CHANGE_PLAN_HEALTH.md). Архів A–E: [CHANGE_PLAN.md](CHANGE_PLAN.md).
+VPS: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
 
-### 0. Цикл R1–R8 (до рестарту Paper-Gate)
-Деталі: [CHANGE_PLAN_REVIEW.md](CHANGE_PLAN_REVIEW.md). R1 змінює модель філу —
+### 0. Цикл R1–R8 (хвіст) + Wave 0
+Деталі R: [CHANGE_PLAN_REVIEW.md](CHANGE_PLAN_REVIEW.md). Wave 0 (TCA, quintile пар):
+[IMPROVEMENT_PLAN_2026.md](IMPROVEMENT_PLAN_2026.md). R1 змінює модель філу —
 не котити на живий `paper-v0.1.0` без нового тегу і скидання 8-тижневого годинника.
 - [x] **R1** Fill-parity paper ↔ backtest (mid + `MAKER_FILL_SEED`, snapshot rng)
 - [x] **R2** `scalper-api.service` localhost + lifespan `require_safe_api_bind`
 - [x] **R3** Профілі `docs/env/vps-paper.env.example` і `research.env.example`
-- [ ] **R4** Явне `use_exit_ladders=false` (не вмикати в циклі)
-- [ ] **R5** `scripts/sync_depth.sh` + quality-звіт
-- [ ] **R6** I/O геть з `application/use_cases.py`
-- [ ] **R7** Тести `trader_loop` + вузькі except на fetch позицій
-- [x] **R8** Покажчики ROADMAP/TODO/DESIGN на цей план
+- [ ] **R4 / W0-R4** Тест + docs `use_exit_ladders=false` (поле в Settings уже є)
+- [ ] **R5 / W0-R5** `scripts/sync_depth.sh` + quality-звіт
+- [ ] **R6 / W0-R6** I/O геть з `application/use_cases.py` + `CostModel.from_settings`
+- [ ] **R7 / W0-R7** Тести `trader_loop` + вузькі except на fetch позицій
+- [x] **R8** Покажчики ROADMAP/TODO/DESIGN на CHANGE_PLAN_REVIEW
+- [ ] **W0-TCA** IS: mid ≠ fill + opportunity cost unfilled + секція в `paper-audit`
+- [ ] **W0-Q** Quintile/time-decay пар на −Δspread, не на `close` ноги
+- [ ] **W0-OPS** Тег `paper-v0.2.0` + 8 тижнів paper LINK/BTC
 
 ### 1. Paper-валідація та моніторинг (Phase 1 Gate)
 - [ ] Безперервний моніторинг paper pairs (`results/paper_pairs.sqlite`) протягом **≥8 тижнів** без розходження з бектестом — **після тегу з R1+R3**.

@@ -1,514 +1,330 @@
-# План покращень scalper-hft: Research Pipeline & Production Hardening (2026)
+# План: Paper-Gate і MFT-hardening (2026-09-11)
 
-> Статус: **Active** | Створено: 2026-09-11 | На основі аналізу vs кращих практик HFT/MFT 2026
-> Пов'язані документи: [ROADMAP.md](ROADMAP.md) · [STRATEGY_STATUS.md](STRATEGY_STATUS.md) · [CHANGE_PLAN.md](CHANGE_PLAN.md)
+> Статус: **Active — поточний цикл** | Замінює попередню версію цього файлу
+> (quintile/time-decay/stress у `cmd_report` уже зроблені).
+> Пов’язані: [CHANGE_PLAN_REVIEW.md](CHANGE_PLAN_REVIEW.md) (R1–R8) ·
+> [DEPLOY_PLAN.md](DEPLOY_PLAN.md) · [STRATEGY_STATUS.md](STRATEGY_STATUS.md) ·
+> [ROADMAP.md](ROADMAP.md)
 
----
+Продукт — **MFT pairs_arb LINK/BTC 1h maker**, не субмілісекундний HFT.
+Жодних нових стратегій і жодного live з реальними коштами, доки Wave 0 +
+Ops (8 тижнів paper) не закриті.
 
-## Контекст та мотивація
-
-Аналіз кодової бази (вересень 2026) підтвердив: платформа архітектурно правильна, але
-реалізація кожного шару — «перша версія». Три системних проблеми вимагають вирішення
-до будь-якого розширення списку стратегій:
-
-1. **Research pipeline має сліпі зони**: `quintile.py` і `time_decay.py` існують, але
-   не вбудовані у стандартний `cmd_report`. Стратегії проходять WF/DSR/CSCV, але
-   не перевіряються на монотонність сигналу та залежність від швидкості виконання.
-
-2. **CostModel не має зворотного зв'язку**: `fills.py` логує Implementation Shortfall,
-   але ці дані не агрегуються і не повертаються у модель. `vol_aware_slippage` і
-   `sqrt_law_impact` реалізовані у `CostModel`, але **не активовані за замовчуванням**.
-
-3. **Символьна упередженість sweep**: всі стратегії тестувались переважно на AAVEUSDT
-   (15m). Відхилені стратегії потребують верифікації на BTCUSDT/ETHUSDT/LINKUSDT.
-
-**Головне правило цього плану**: жодних нових стратегій до завершення Phase A.
-`pairs_arb LINK/BTC` — валідований кандидат. Пріоритет: Paper Gate + pipeline hardening.
-
----
-
-## Phase A — Research Pipeline Hardening (2 тижні)
-
-> **Мета**: Автоматизувати критичні тести (quintile + time-decay + stress) у `cmd_report`
-> так, щоб будь-яка нова стратегія проходила повний 10-кроковий протокол без ручного
-> виклику окремих команд.
-
-### A1 — Quintile Study у `cmd_report` [🔴 КРИТИЧНО]
-
-**Що робити**: Вбудувати `quintile_spread_study()` з `validation/quintile.py` у
-`cmd_report` як обов'язковий розділ звіту.
-
-**Файли**:
-- Читати: `scalper_hft/validation/quintile.py` L22–45
-- Редагувати: `scalper_hft/cli/research_audit.py` → функція `cmd_report`
-
-**Детальна специфікація**:
-
-```python
-# У cmd_report, після секції [3] SENSITIVITY — додати:
-
-print("\n[4] QUINTILE STUDY (Narang гл. 9 — monotonicity)")
-print("─" * 50)
-
-from scalper_hft.validation.quintile import quintile_spread_study
-
-full_signals = strategy.generate_signals(df, ...)
-fwd_returns = df["close"].pct_change().shift(-1).fillna(0.0)
-
-try:
-    q_result = quintile_spread_study(z=full_signals, forward=fwd_returns, n_bins=5)
-    print(q_result.summary())
-
-    QUINTILE_SPEARMAN_MIN = 0.7
-    if not q_result.monotonic or abs(q_result.spearman) < QUINTILE_SPEARMAN_MIN:
-        print(f"⚠ QUINTILE FAIL: Spearman ρ={q_result.spearman:+.3f} — сигнал не монотонний")
-    else:
-        print(f"✅ QUINTILE PASS: Spearman ρ={q_result.spearman:+.3f}")
-except ValueError as e:
-    print(f"  quintile: {e}")
+```text
+W0  код-блокери + чесний TCA     ← цей тиждень, 4–6 роб. днів
+Ops paper-v0.2.0 на VPS          ← 8 тижнів календаря після тегу
+W1  bake-off / cross-symbol      ← паралельно з paper, демон не чіпати
+W2  друга пара + ERC/VaR         ← лише після Gate
+W3  L2 / Nautilus / MM           ← окремий продукт, не цей цикл
 ```
 
-**Критерій PASS**: `|Spearman ρ| ≥ 0.7` та `monotonic = True`.
+---
 
-**Важливо для pairs**: Для `pairs_arb` сигнал = z-score спреду; forward = `-Δspread`.
-Адаптувати виклик у `cmd_pairs_report` аналогічно.
+## Принципи
+
+1. Один PR = одна задача з таблиці нижче. Не змішувати TCA з systemd.
+2. Кожна кодова задача: червоний тест → фікс → `uv run pytest tests/ -q` →
+   `uv run ruff check --fix && uv run ruff format`.
+3. `use_kalman`, `legging_mode=chase`, `USE_EXIT_LADDERS`, ERC у циклі —
+   не дефолт, поки окремий bake-off / друга PASS-пара не скажуть інакше.
+4. Без lookahead. Без зміни z / lookback / `regime_scale` на повній вибірці.
+5. Зміна моделі філу або TCA під час живого paper — **скидання 8-тижневого
+   годинника** і новий sqlite.
+
+## Поза скоупом
+
+- Нові 1m/5m taker-скальпи, VWAP/EMA/ORB.
+- Revival `market_maker` / `ob_imbalance` у paper без `quality_ok` L2.
+- Увімкнення відхилених: `mean_reversion`, `cvd_momentum`, `funding_*`,
+  `basis_reversion`, `hmm_reversion`, `supertrend` як directional.
+- Kalman / chase / ERC / ladders як дефолт.
+- Повний rewrite `domain/` + Decimal у numpy-бектесті.
+- Перейменування репо. Rust/Nautilus «для швидкості» 1h-пари.
+- RL / funding-aware MM, multi-venue, `live-v*`.
+- Повернення XRP/BTC у `VALIDATED_PAIRS` без нового pair-PASS + ADF у paper.
 
 ---
 
-### A2 — Time-Decay Test у `cmd_report` [🔴 КРИТИЧНО]
+## Wave 0 — блокери чесного Paper-Gate
 
-**Що робити**: Вбудувати `time_decay_test()` / `pairs_time_decay()` у `cmd_report`
-як розділ після quintile study.
+Мета: один CostModel, чесний IS, закриті R5–R7, тег `paper-v0.2.0`.
+R1–R3 і R8 уже в коді. R4 (поле `use_exit_ladders=false`) майже закрите.
 
-**Файли**:
-- Читати: `scalper_hft/validation/time_decay.py` L76–115
-- Редагувати: `scalper_hft/cli/research_audit.py`
+### W0-R4 — Closeout exit_ladders [P2, ~0.5 д]
 
-**Детальна специфікація**:
+Код уже читає `Settings.use_exit_ladders` (дефолт false). Бракує тесту і
+чесних документів.
 
-```python
-# Після [4] QUINTILE STUDY — додати:
+**Файли:** `tests/test_trader_notional_cap.py` (або вузький новий тест) ·
+`docs/DESIGN.md` §3.5 · `docs/TODO.md` · `docs/CHANGE_PLAN_REVIEW.md`
 
-print("\n[5] TIME-DECAY TEST (Narang гл. 9 — execution dependency)")
-print("─" * 50)
+**Готово коли:** `trader.use_exit_ladders is False` за замовчуванням покрито
+тестом; DESIGN каже «вимкнено прапорцем»; немає `getattr(..., False)` на
+неіснуючому полі; чекбокс R4 у TODO закритий.
 
-from scalper_hft.validation.time_decay import time_decay_test, pairs_time_decay
+### W0-R5 — `scripts/sync_depth.sh` [P1, ~1 д]
 
-if not is_pairs_strategy:
-    td = time_decay_test(df, strategy, max_lag=3, cost=cost, trades=trades,
-                         funding=funding, position_pct=position_pct)
-else:
-    td = pairs_time_decay(signals=signals, spread=spread, max_lag=3)
+**Навіщо.** Depth5 пишеться на VPS; на research-машині архіву немає.
+Paper-pairs не залежить; робимо паралельно.
 
-print(td.summary())
+**Файли:** `scripts/sync_depth.sh` (новий) · `docs/OB_RECORDER_RUNBOOK.md` ·
+`docs/L2_DATA_PLAN.md` Фаза 2
 
-lag0_sr, lag1_sr = td.sharpes[0], td.sharpes[1]
-if lag0_sr > 0 and lag1_sr < 0:
-    print("⚠ TIME-DECAY FAIL: Sharpe вмирає за 1 бар — execution-dependent!")
-elif lag0_sr > 0 and lag1_sr / lag0_sr < 0.5:
-    print(f"⚠ TIME-DECAY WARN: Деградація {1 - lag1_sr/lag0_sr:.0%} за 1 бар")
-else:
-    print(f"✅ TIME-DECAY PASS: Sharpe зберігається при lag=1 ({lag1_sr:+.3f})")
+**Поведінка:**
+
+```text
+sync_depth.sh [--dry-run] [user@host:path]
+  rsync -avz --partial data/*depth5*.parquet *bookTicker*
+  validate_depth / validate_bookticker → results/quality_depth.md
+  exit ≠ 0 якщо quality_ok=false
 ```
 
-**Критерій PASS для pairs 1h**: Sharpe при lag=1 ≥ 50% від lag=0.
+Не комітити parquet. **Готово коли:** скрипт у репо; ранбук — одна команда;
+`bash -n scripts/sync_depth.sh` проходить.
+
+### W0-R6 — Use-cases без завантаження ринку [P2, ~1 д]
+
+**Навіщо.** `run_backtest()` качає klines/trades і будує **плоский**
+`CostModel(...)`, тоді як `cmd_report` / `audit_cell` беруть
+`CostModel.from_settings(settings, df=df)`. Два світи витрат.
+
+**Файли:** `scalper_hft/application/use_cases.py` ·
+`scalper_hft/cli/research_backtest.py` · `scalper_hft/research/job_handlers.py` ·
+`tests/test_health_contracts.py`
+
+**Поведінка:** `run_backtest(req, df, trades=, funding=)` не імпортує
+`data.downloader` / `data.access`. Cost завжди `CostModel.from_settings`.
+CLI як і раніше качає дані.
+
+**Готово коли:** `use_cases.py` не імпортує downloader; pytest CLI/jobs зелений.
+
+### W0-R7 — Тести `trader_loop` [P1, ~1–2 д]
+
+**Файли:** `tests/test_trader_loop.py` (новий) · точково `trader_loop.py` /
+`sync_engine.py` / `pairs_live.py` / `pending_orders.py`
+
+**Тести (мінімум):**
+
+1. `pause` → немає submit.
+2. DD-breaker flatten через `trader_loop` (не дублювати всю логіку, якщо вже є).
+3. Мок fetch позицій кидає → не `except Exception: pass`.
+4. Мережевий збій klines у paper **не** ставить KillSwitch (контракт H1).
+
+**Готово коли:** є `tests/test_trader_loop.py`; немає голого `pass` на fetch
+позицій; pytest зелений.
+
+### W0-TCA — Чесний Implementation Shortfall [P0, ~2 д]
+
+**Навіщо.** `build_from_orders` ставить `mid_at_decision = fill_price = limit`
+→ maker IS ≈ 0. Unfilled не мають opportunity cost. Калібровка CostModel з
+такого звіту бреше.
+
+**Файли:**
+
+- `scalper_hft/live/is_log.py` — already has `markout_bps`; додати unfilled
+- `scalper_hft/live/is_report.py` — mid з book/bar close рішення, не з limit
+- `scalper_hft/live/pairs_engine.py` — логувати unfilled з mid і причиною
+- `scalper_hft/validation/paper_audit.py` — секція IS + miss-cost
+- `scalper_hft/cli/ops.py` → `cmd_is_report`
+- `tests/test_is_report.py` (новий)
+
+**Метрики в звіті:**
+
+| Метрика | Формула |
+|---|---|
+| Fill IS (bps) | `(fill − mid_decision) / mid` зі знаком сторони |
+| Next-bar markout | уже є `apply_next_bar_markout` |
+| Opportunity cost | для unfilled: adverse move mid_decision → mid_cancel/timeout |
+| Blended TCA | `fill_rate × IS + (1 − fill_rate) × miss_cost` |
+
+**Не робити:** авто-запис `SLIPPAGE_BPS` у `.env` з IS. Лише друк рекомендації,
+як зараз, і лише якщо `coverage_ok` (≥20 fills) **і** mid ≠ fill.
+
+**Готово коли:** тест з limit=100, fill=100, mid=99.8 дає ненульовий buy IS;
+unfilled збільшує blended TCA; `paper-audit` друкує IS; pytest зелений.
+
+### W0-Q — Quintile / time-decay для пар на спред [P1, ~1 д]
+
+**Навіщо.** `cmd_report` рахує `fwd = close.pct_change()`. `pairs_arb` торгує
+−Δspread. Тест дивиться не ту альфу. CLI `quintile` для пар уже правильний
+окремо — треба той самий forward у звіті пар.
+
+**Файли:** `scalper_hft/cli/research_audit.py` · `scalper_hft/cli/pairs.py` ·
+`scalper_hft/validation/audit_extensions.py` · `tests/test_improvements.py`
+
+**Поведінка:** для `pairs_arb` / `cmd_pairs` з `--walkforward` або окремий
+блок у pairs-звіті: `z` + `forward = −Δspread` (як `quintile_spread_study`
+у `test_roadmap.py`). Time-decay — `pairs_time_decay`, не одноногий
+`time_decay_test`.
+
+**Готово коли:** тест на синтетичному монотонному спреді PASS; на
+`close.pct_change` тієї ж ноги — не обов’язково PASS.
+
+### W0-COST — Один CostModel на всіх шляхах [P1, частина R6]
+
+Після R6: `cmd_pairs` теж `CostModel.from_settings(settings, df=df1)` (не
+плоский конструктор). `IMPACT_K` лишається 0, доки Wave 1 не відкалібрує.
+
+**Готово коли:** grep `CostModel(` у `cli/` і `application/` показує лише
+`from_settings` або явні тестові фікстури.
+
+### W0-OPS — Тег і старт paper [операції, не код]
+
+Після злиття **мінімум W0-TCA + R1+R3** (R5–R7 бажано в тому ж тегу).
+
+1. Тег `paper-v0.2.0`. Не котити на живий `paper-v0.1.0` без скидання годинника.
+2. VPS: `scripts/deploy_paper.sh paper-v0.2.0`, профіль
+   `docs/env/vps-paper.env.example`, `DRY_RUN=true`, новий sqlite.
+3. Конфіг: LINK/BTC 1h maker, `lookback=120`, `regime_scale=0.25`, той самий
+   `MAKER_FILL_SEED`.
+4. Щотижня `paper-audit` + `is-report --days 7`.
+5. Клас C hotfix (z/lb/regime_scale) заборонений під час 8 тижнів.
+
+Деталі: [DEPLOY_PLAN.md](DEPLOY_PLAN.md) фаза 2.
+
+**Готово коли:** 8 тижнів журналу без обнулення sqlite. Це **не** дозвіл на live.
 
 ---
 
-### A3 — Stress Scenarios у `cmd_report` та Paper Gate [🟡 ВАЖЛИВО]
+## Критерії виходу з Paper-Gate
 
-**Що робити**: Вбудувати 4 стандартних стрес-сценарії у `cmd_report` і додати
-stress-поріг до критеріїв Paper Gate у `validation/pairs_gate.py`.
-
-**Файли**:
-- Читати: `scalper_hft/validation/stress.py` L24–29
-- Редагувати: `scalper_hft/cli/research_audit.py`
-- Редагувати: `scalper_hft/validation/pairs_gate.py`
-
-```python
-# Розширити вже наявну stress-секцію [M4]:
-
-from scalper_hft.validation.stress import run_stress_suite, SCENARIOS
-
-stress_results = run_stress_suite(
-    returns=result.bar_returns,
-    scenarios=SCENARIOS,
-    cost_frac=cost.round_trip_maker() / 2,
-)
-
-for name, metrics in stress_results.items():
-    ok = metrics["max_dd"] <= result.metrics.max_dd * 2.5
-    print(f"  {'✅' if ok else '⚠'} {name:15s}: maxDD={metrics['max_dd']:.1%}")
+```
+LINK/BTC 1h maker, regime_scale=0.25, один git-тег
+────────────────────────────────────────────────────
+≥ 8 тижнів безперервного paper на VPS
+Tracking error (paper vs BT equity) < 3% на тиждень
+Fill rate post-only ≥ 70%
+maxDD paper ≤ backtest maxDD × 1.5
+MAE/MFE forensics: без аномалій
+Rolling ADF p-value спреду < 0.05 (входи не вбиті kill >1 раз/міс)
+Blended TCA maker (IS + miss) < 3 bps  ← після W0-TCA
 ```
 
-**Paper Gate критерії** (додати у `pairs_gate.py`):
-- `stress_crash_max_dd ≤ backtest_max_dd × 2.5`
-- `stress_liquidity_max_dd ≤ backtest_max_dd × 4.0`
+Live — лише після Gate **і** явного запиту користувача. Немає `DRY_RUN=false`
+у юнітах цього плану.
 
 ---
 
-### A4 — Cross-Symbol Validation Sweep [🟡 ВАЖЛИВО]
+## Wave 1 — дослідження паралельно з paper
 
-**Що робити**: Запустити sweep на BTCUSDT, ETHUSDT, LINKUSDT для стратегій що
-раніше тестувались лише на AAVEUSDT.
+Демон на VPS не чіпати. Результати — звіти в `docs/reports/`, не зміна дефолтів.
+
+### W1-K — Kalman vs OLS bake-off [M, 3–4 д]
 
 ```bash
-# 0) Аудит кешу (обов'язково)
 uv run python -m scalper_hft.cli data-audit --days 1095
-
-# 1) Cross-symbol sweep
-uv run python -m scalper_hft.cli backtest \
-  --strategy cvd_momentum,ob_imbalance,cross_momentum \
-  --symbol BTCUSDT,ETHUSDT,LINKUSDT \
-  --interval 1h --days 1095 \
-  --mode walkforward --workers 4 --enqueue
-
-# 2) Перегляд результатів
-uv run python -m scalper_hft.cli sweep-report \
-  --filter "strategy in ['cvd_momentum','ob_imbalance','cross_momentum']"
+uv run python -m scalper_hft.cli pairs --strategy pairs_arb \
+  --leg1 LINKUSDT --leg2 BTCUSDT --interval 1h --days 1095 --maker
+uv run python -m scalper_hft.cli pairs --strategy pairs_arb \
+  --leg1 LINKUSDT --leg2 BTCUSDT --interval 1h --days 1095 --maker --use-kalman
 ```
 
-**Мета**: Верифікація чи відхилені на AAVE стратегії мають edge на BTC/ETH/LINK.
-**Результат**: `docs/reports/cross_symbol_sweep_2026.md`
-
----
-
-### A5 — Worker Cache Invalidation Guard [🔴 КРИТИЧНО]
-
-**Проблема**: Задокументована пастка в AGENTS.md — 1259 клітинок з AttributeError
-записались як `succeeded` через застарілий код у довгоживучому worker.
-
-**Файли**:
-- Редагувати: `scalper_hft/validation/sweep.py`
-- Редагувати: `scalper_hft/research/sweep_store.py`
-
-```python
-# sweep.py — додати хеш коду стратегії:
-import hashlib, inspect
-
-def _strategy_code_hash(strategy_name: str) -> str:
-    from scalper_hft.strategies import REGISTRY
-    cls = REGISTRY.get(strategy_name)
-    if cls is None:
-        return "unknown"
-    return hashlib.sha256(inspect.getsource(cls).encode()).hexdigest()[:8]
-
-# SweepStore.row_exists() — перевіряти code_hash:
-def row_exists(self, key: str, code_hash: str | None = None) -> bool:
-    """Клітинка вважається виконаною тільки якщо code_hash збігається."""
-    ...
-```
-
----
-
-## Phase B — Cost Model Evolution (1 тиждень)
-
-> **Мета**: Активувати вже реалізовані `vol_aware_slippage` і `sqrt_law_impact`,
-> підключити IS feedback loop з `fills.py`.
-
-### B1 — Vol-Aware Slippage активація [🟡 ВАЖЛИВО]
-
-**Контекст**: `execution.py` L72–81 вже містить `vol_aware_slippage(vol_frac)`.
-Але `vol_ref = 0.0` за замовчуванням → завжди повертає базовий `slippage_frac`.
-
-**Файли**: `scalper_hft/backtest/execution.py`, `scalper_hft/config.py`
-
-**Конфігурація** (додати у `.env.example`):
-```bash
-# Vol-aware slippage: 0 = вимкнено (flat), > 0 = калібровочна vol
-VOL_AWARE_SLIPPAGE_REF=0.0
-VOL_AWARE_SLIPPAGE_EXP=1.0
-```
-
-**Фабричний метод**:
-```python
-@classmethod
-def from_settings(cls, settings=None, df: pd.DataFrame | None = None) -> "CostModel":
-    """Авто-калібровка vol_ref з Parkinson-vol якщо не задано."""
-    s = settings or get_settings()
-    vol_ref = _env_float("VOL_AWARE_SLIPPAGE_REF", 0.0)
-    if vol_ref <= 0 and df is not None:
-        from scalper_hft.features.microstructure import parkinson_vol
-        pv = parkinson_vol(df["high"], df["low"], window=20)
-        vol_ref = float(pv.dropna().median()) if not pv.dropna().empty else 0.0
-    return cls(maker_fee=s.maker_fee, taker_fee=s.taker_fee,
-               slippage_frac=s.slippage_bps / 10_000.0, vol_ref=vol_ref,
-               vol_exp=_env_float("VOL_AWARE_SLIPPAGE_EXP", 1.0))
-```
-
----
-
-### B2 — Implementation Shortfall Feedback Loop [🟡 ВАЖЛИВО]
-
-**Контекст**: `calibrate_from_is()` і `with_is_slippage()` вже реалізовані у
-`execution.py`. Потрібно парсити IS з fills і агрегувати щоденно.
-
-**Новий файл**: `scalper_hft/live/is_report.py`
-
-```python
-"""Implementation Shortfall агрегатор (Phase B2)."""
-from __future__ import annotations
-from dataclasses import dataclass
-import pandas as pd
-
-
-@dataclass
-class ISReport:
-    n_fills: int
-    median_is_bps: float
-    maker_is_bps: float
-    taker_is_bps: float
-    model_slippage_bps: float
-    coverage_ok: bool   # ≥ 20 fills для калібровки
-
-    def summary(self) -> str:
-        delta = self.median_is_bps - self.model_slippage_bps
-        arrow = "↑" if delta > 0.5 else ("↓" if delta < -0.5 else "≈")
-        return (
-            f"IS Report: {self.n_fills} fills | "
-            f"Realized={self.median_is_bps:.1f} bps {arrow} Model={self.model_slippage_bps:.1f} bps\n"
-            f"  Maker={self.maker_is_bps:.1f} bps | Taker={self.taker_is_bps:.1f} bps"
-        )
-```
-
-**CLI команда** (додати у `cli/ops.py`):
-```bash
-uv run python -m scalper_hft.cli is-report --days 7
-```
-
----
-
-### B3 — Market Impact для pairs [🟢 ДОВГОСТРОКОВЕ]
-
-**Контекст**: `sqrt_law_impact()` реалізована (L83–98). Активувати для pairs де
-ноціонал > 5% ADV.
-
-```bash
-# .env.example:
-IMPACT_K=0.0         # 0 = вимкнено; > 0 = увімкнено (починати з 0.05)
-```
-
-**Замітка**: При `PAIR_NOTIONAL_PCT=0.05–0.10` impact ≈ 0.1–0.3 bps (незначний).
-Активувати коли портфель зросте до 5+ пар.
-
----
-
-## Phase C — Portfolio & Live Upgrades (2 тижні)
-
-> **Мета**: Підключити вже реалізовані модулі у live-цикл, запустити Kalman bake-off.
-
-### C1 — Kalman vs OLS Bake-off [🔴 КРИТИЧНО]
-
-**Дослідницький протокол**:
-
-```bash
-# Step 1: OLS baseline (зафіксувати метрики)
-uv run python -m scalper_hft.cli pairs \
-  --strategy pairs_arb --leg1 LINKUSDT --leg2 BTCUSDT \
-  --interval 1h --days 1095 --maker
-
-# Step 2: Kalman run
-uv run python -m scalper_hft.cli pairs \
-  --strategy pairs_arb --leg1 LINKUSDT --leg2 BTCUSDT \
-  --interval 1h --days 1095 --maker --use-kalman
-
-# Step 3: Kalman sensitivity sweep (delta і Ve параметри)
-uv run python -m scalper_hft.cli backtest \
-  --strategy pairs_arb --leg1 LINKUSDT --leg2 BTCUSDT \
-  --interval 1h --days 1095 \
-  --params "kalman_delta=0.0001,0.001,0.01;kalman_ve=0.001,0.01,0.1" \
-  --use-kalman --enqueue
-```
-
-**Критерії вибору Kalman**:
-
-| Метрика | OLS (baseline) | Kalman (target) |
+| Метрика | OLS (baseline) | Kalman (прийняти якщо) |
 |---|---|---|
-| WF avg OOS Sharpe | +0.0064 | ≥ +0.0064 |
-| WF pos_windows | 65% | ≥ 60% |
-| maxDD (3y) | −27% | ≤ −30% |
-| n_trades (3y) | ~46 | ≥ 35 |
-| Sensitivity plateau | ✅ | ✅ |
+| WF avg OOS Sharpe | зафіксувати | ≥ baseline |
+| WF pos_windows | ~65% | ≥ 60% |
+| maxDD 3y | ~−27% з regime_scale | ≤ −30% |
+| n_trades 3y | ~46 | ≥ 35 |
 
-**Результат**: `docs/reports/kalman_ols_bakeoff_2026.md`
+**Результат:** `docs/reports/kalman_ols_bakeoff_2026.md`. Дефолт `use_kalman=False`,
+поки звіт не PASS.
 
----
+### W1-X — Cross-symbol перевірка відхилених [S, запуск]
 
-### C2 — Rolling ADF Kill [🔴 КРИТИЧНО]
-
-**Проблема**: XRP/BTC: −63% на 3y але +3.49% на 400д = симптом втрати коінтеграції.
-
-**Файли**: `scalper_hft/live/pairs_engine.py`, `scalper_hft/live/pair_health.py`
-
-```python
-# pair_health.py — додати:
-from statsmodels.tsa.stattools import adfuller
-
-def check_cointegration_health(
-    spread: pd.Series,
-    window: int = 90 * 24,   # 90 днів для 1h
-    pvalue_threshold: float = 0.05,
-) -> tuple[bool, float]:
-    """Rolling ADF на spread[-window:].
-    Returns: (is_healthy, p_value)
-    Блокує входи (не flatten) при p_value > threshold.
-    """
-    if len(spread) < window // 2:
-        return True, 0.0   # warmup — дозволяємо
-    sample = spread.iloc[-window:].dropna()
-    if len(sample) < 50:
-        return True, 0.0
-    try:
-        result = adfuller(sample, maxlag=12, autolag="AIC")
-        p = float(result[1])
-        return p <= pvalue_threshold, p
-    except Exception:
-        return True, 0.0   # fail-open: не блокуємо при помилці ADF
-```
-
-**Конфігурація**:
-```bash
-ADF_PVALUE_THRESHOLD=0.05
-ADF_WINDOW_DAYS=90
-```
-
----
-
-### C3 — ERC для Portfolio Runner [🟡 ВАЖЛИВО]
-
-**Контекст**: `portfolio/risk_budget.py` (ERC) вже реалізований, але не у live-циклі.
-
-**Файли**: `scalper_hft/live/pairs_runner.py`
-
-```python
-# Замість equal-weight:
-if self.allocation_method == "erc":
-    from scalper_hft.portfolio.risk_budget import erc_vol_target_sizes
-    realized_vols = self._compute_pair_vols(window_days=7)
-    sizes = erc_vol_target_sizes(
-        pair_ids=list(self._open_pairs.keys()),
-        realized_vols=realized_vols,
-        total_notional=self._equity * self._portfolio_notional_pct,
-        min_size=self._min_notional,
-    )
-else:
-    sizes = {pid: equal_size for pid in self._open_pairs}
-```
-
-**Конфігурація**:
-```bash
-PORTFOLIO_ALLOCATION_METHOD=equal   # equal | erc
-ERC_VOL_WINDOW_DAYS=7
-```
-
----
-
-### C4 — Sparse Basket OOS Аудит [🟡 ВАЖЛИВО]
+Закрити AAVE 15m bias. Не «шукати нову альфу».
 
 ```bash
-# Sweep на кошику (10 символів)
+uv run python -m scalper_hft.cli data-audit --days 1095
 uv run python -m scalper_hft.cli backtest \
-  --strategy sparse_basket \
-  --symbol BTCUSDT,ETHUSDT,SOLUSDT,LINKUSDT,BNBUSDT,XRPUSDT,ADAUSDT,DOTUSDT,AVAXUSDT,MATICUSDT \
-  --interval 1h,4h --days 1095 --mode walkforward --workers 4 --enqueue
-
-# Overfit аудит кращого кандидата
-uv run python -m scalper_hft.cli overfit \
-  --strategy sparse_basket --symbol BTCUSDT --interval 1h --days 1095
+  --strategy cvd_momentum,ob_imbalance,hmm_reversion \
+  --symbol BTCUSDT,ETHUSDT,LINKUSDT \
+  --interval 1h --days 1095 --mode walkforward --enqueue
 ```
 
-**Критерій прийняття**: WF pos_windows ≥ 0.55, PBO < 0.5, n_trades ≥ 20.
-**Перевірити**: correlation(`sparse_basket`, `pairs_arb LINK/BTC`) < 0.3.
+**Результат:** `docs/reports/cross_symbol_sweep_2026.md`. Увімкнення в paper —
+лише якщо комірка проходить `cell_audit` **і** W1-VA.
+
+### W1-VA — Value-added тест [S, 1–2 д]
+
+**Навіщо.** Narang гл. 9: нова ідея в портфель, якщо ΔSharpe портфеля > 0,
+не якщо її власний Sharpe > 0.
+
+**Файли:** `scalper_hft/validation/benchmark.py` (або новий
+`validation/value_added.py`) · CLI секція в `report` · тести
+
+**Поведінка:** `Sharpe(LINK/BTC + candidate)` vs `Sharpe(LINK/BTC)`;
+кореляція барних returns < 0.3.
+
+**Готово коли:** є функція + тест на двох штучних рядах; CLI друкує ΔSharpe.
+
+### W1-IMP — Калібровка `IMPACT_K` з depth5 [M, 2 д, після R5]
+
+Не вмикати `0.1` «з стелі». Оцінити k на BTC/LINK depth5: taker walk по
+5 рівнях vs mid. Для `PAIR_NOTIONAL_PCT=0.05–0.10` очікуваний impact
+0.1–0.3 bps — можна лишити 0, якщо емпірика це підтвердить.
+
+**Готово коли:** звіт з оцінкою k; `.env.example` коментар «коли вмикати».
 
 ---
 
-## Протокол дослідження нових стратегій (v2.0, вересень 2026)
+## Wave 2 — портфель (після Paper-Gate)
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  ПРОТОКОЛ НОВОЇ СТРАТЕГІЇ scalper-hft (v2.0)                            │
-├────┬──────────────────────────────────────────────┬────────────┬────────┤
-│  # │ Крок                                         │ Команда    │ Статус │
-├────┼──────────────────────────────────────────────┼────────────┼────────┤
-│  1 │ Формулювання гіпотези (spec YAML)            │ manual     │ ✅     │
-│  2 │ IS backtest (60% даних, перевірка механіки)  │ backtest   │ ✅     │
-│  3 │ Quintile Study (монотонність сигналу) [NEW]  │ report     │ 🆕 A1  │
-│  4 │ Time-Decay Test (лаг 0→3 бари) [NEW]        │ report     │ 🆕 A2  │
-│  5 │ Walk-forward (3y + purge/embargo)            │ overfit    │ ✅     │
-│  6 │ DSR на конкатенованих OOS WF returns         │ overfit    │ ✅     │
-│  7 │ Stress Scenarios (4 сценарії) [NEW]          │ report     │ 🆕 A3  │
-│  8 │ Sensitivity (параметри — плато, не пік)      │ overfit    │ ✅     │
-│  9 │ CSCV/PBO (< 0.5)                            │ cscv       │ ✅     │
-│ 10 │ Paper Gate (≥ 8 тижнів on VPS)              │ paper-run  │ ✅     │
-└────┴──────────────────────────────────────────────┴────────────┴────────┘
-```
+Лише якщо Gate зелений.
 
-**Після Phase A** — кроки 3,4,7 виконуються автоматично у `cmd_report`:
-```bash
-uv run python -m scalper_hft.cli overfit --strategy <name> \
-  --symbol <SYM>USDT --interval 1h --days 1095
-# Звіт автоматично: WF + DSR + sensitivity + quintile + time-decay + stress
-```
+1. Друга пара — свіжий pair-PASS (`pairs_gate`: WF pos ≥ 0.55, PBO < 0.5,
+   n_trades ≥ 20) + rolling ADF у paper ≥ 4 тижні без щомісячного kill.
+2. XRP/BTC: не в `VALIDATED_PAIRS` без цього. 3y −63% при +3.5% на 400д.
+3. Тоді `PORTFOLIO_ALLOCATION_METHOD=erc` у `PairsPortfolioRunner`
+   (`portfolio/sizing.py` уже є).
+4. Portfolio VaR halt з `portfolio/risk_budget.py` (денний/тижневий уже
+   частково в runner — перевірити, що VaR не мертвий дріт).
+5. Turnover tax: ребаланс лише якщо Σ|Δw| > поріг.
+
+Не вмикати `USE_EXIT_LADDERS` для pairs.
 
 ---
 
-## Оновлені критерії Paper Gate
+## Wave 3 — шлях HFT (не цей квартал)
 
-```
-Критерії виходу з Paper Gate (pairs_arb LINK/BTC, 1h, maker):
-─────────────────────────────────────────────────────────────
-✅ ≥ 8 тижнів безперервного paper-трейдингу на VPS
-✅ Tracking error (paper vs backtest equity) < 3% на тиждень
-✅ Fill rate post-only ≥ 70%
-✅ maxDD paper ≤ backtest maxDD × 1.5
-✅ MAE/MFE forensics: без аномалій
-✅ Rolling ADF p-value LINK/BTC spread < 0.05        [NEW — Phase C2]
-✅ IS report: realized_slippage_maker < 3 bps         [NEW — Phase B2]
-✅ Stress crash maxDD ≤ backtest crash maxDD × 2      [NEW — Phase A3]
-```
+Окреме рішення «робимо MM як продукт»:
+
+1. Місяці `quality_ok` depth5 (R5 + VPS recorder уже пише).
+2. Queue-position з L2, не з OHLC `event_engine`.
+3. Nautilus як **незалежний** fill-engine, не обгортка `generate_signals(df)`.
+4. Окремий OOS / Paper-Gate для MM. `scalper_core` Rust — лише якщо профілер
+   покаже гарячий шлях; для 1h pairs не потрібно.
 
 ---
 
-## Відповіді на типові питання
+## Зведена таблиця
 
-**Q: Чи варто запускати sweep на нових стратегіях зараз?**
-A: Ні. Пріоритет — Phase A (2 тижні) + C1/C2 (1 тиждень) + Paper Gate.
-
-**Q: Чи потрібно переробити `CostModel` повністю?**
-A: Ні. `vol_aware_slippage` і `sqrt_law_impact` вже є — потрібно лише активувати
-через `VOL_AWARE_SLIPPAGE_REF > 0` і `IMPACT_K > 0`.
-
-**Q: XRP/BTC — відновлювати чи відхиляти?**
-A: Умовно відновити після C2. Запустити paper з rolling ADF kill. Якщо ADF спрацьовує
-частіше ніж раз на місяць → остаточно відхилити.
-
-**Q: Коли активувати `ml_strategy`?**
-A: Тільки після Phase A. Потребує ≥ 2 роки aggTrades для надійності. Не вмикати
-до завершення Paper Gate.
-
----
-
-## Зведена таблиця завдань
-
-| ID | Завдання | Phase | Складність | Вплив | Статус |
+| ID | Завдання | Хвиля | Дні | Блокує paper-тег? | Статус |
 |---|---|---|---|---|---|
-| A1 | Quintile Study у `cmd_report` | A | S (1-2д) | 🔴 | ☐ |
-| A2 | Time-Decay Test у `cmd_report` | A | S (1д) | 🔴 | ☐ |
-| A3 | Stress scenarios у `cmd_report` + Paper Gate | A | S (1-2д) | 🟡 | ☑ |
-| A4 | Cross-symbol sweep (BTC+ETH+LINK) | A | S (запуск) | 🟡 | ☐ |
-| A5 | Worker cache invalidation guard | A | M (2-3д) | 🔴 | ☑ |
-| B1 | Vol-aware slippage активація | B | S (1д) | 🟡 | ☑ |
-| B2 | IS feedback loop (`is_report.py`) | B | M (3д) | 🟡 | ☑ |
-| B3 | Market impact для pairs | B | M (2д) | 🟢 | ☑ |
-| C1 | Kalman vs OLS bake-off | C | M (3-4д) | 🔴 | ☐ |
-| C2 | Rolling ADF kill | C | M (2-3д) | 🔴 | ☑ |
-| C3 | ERC для portfolio runner | C | M (2д) | 🟡 | ☑ |
-| C4 | Sparse basket OOS аудит | C | M (4д) | 🟡 | ☐ |
+| R1–R3, R8 | Fill-parity, API bind, .env профілі, документи | — | — | так (уже в коді) | ☑ |
+| W0-R4 | Тест + docs `use_exit_ladders=false` | 0 | 0.5 | ні | ☐ код є |
+| W0-R5 | `sync_depth.sh` | 0 | 1 | ні | ☐ |
+| W0-R6 | I/O геть з use_cases + `from_settings` | 0 | 1 | бажано | ☐ |
+| W0-R7 | Тести `trader_loop` | 0 | 1–2 | ні | ☐ |
+| W0-TCA | IS mid ≠ fill + miss-cost + paper-audit | 0 | 2 | **так** | ☐ |
+| W0-Q | Quintile/decay пар на −Δspread | 0 | 1 | ні | ☐ |
+| W0-COST | `cmd_pairs` → `from_settings` | 0 | у R6 | бажано | ☐ |
+| W0-OPS | Тег `paper-v0.2.0` + 8 тижнів | Ops | 8 тиж. | — | ☐ |
+| W1-K | Kalman vs OLS | 1 | 3–4 | ні | ☐ |
+| W1-X | Cross-symbol BTC/ETH/LINK | 1 | запуск | ні | ☐ |
+| W1-VA | Value-added тест | 1 | 1–2 | ні | ☐ |
+| W1-IMP | Калібровка IMPACT_K | 1 | 2 | ні | ☐ |
+| W2 | Друга пара + ERC/VaR | 2 | після Gate | — | ☐ |
+| W3 | L2 queue + Nautilus MM | 3 | пізніше | — | ☐ |
 
-**Складність**: S = 1–2 дні | M = 3–5 днів
-**Вплив**: 🔴 критичний | 🟡 важливий | 🟢 довгострокове
+**Порядок коду Wave 0:** W0-TCA → W0-R6/COST → W0-Q → W0-R7 → W0-R5 → W0-R4 → тег.
 
 ---
 
-*Документ створено: 2026-09-11. Наступний перегляд: після завершення Phase A.*
-*Аналіз: Claude Sonnet 4.6 (Thinking) | Версія плану: 1.0*
+## Що не відкривати, поки Wave 0 відкрита
+
+- Sweep нових стратегій / iter8 альф.
+- Paper regime-selector з iter7 (OOS вікна спалені, DSR 0.666 при n_trials=270).
+- Зміна `VALIDATED_PAIRS`.
+- `DRY_RUN=false`.
+
+*Наступний перегляд: після тегу `paper-v0.2.0` або закриття всіх ☐ у Wave 0.*

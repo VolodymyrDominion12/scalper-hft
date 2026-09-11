@@ -1,6 +1,10 @@
 # Аналіз scalper-hft vs кращі практики HFT/MFT 2026
 
 > Дата аналізу: 11 вересня 2026 | Модель: Claude Sonnet 4.6 (Thinking)
+>
+> **Актуалізація того ж дня:** quintile/time-decay/stress уже в `cmd_report`.
+> Виконуваний план: [IMPROVEMENT_PLAN_2026.md](IMPROVEMENT_PLAN_2026.md).
+> Частина GAP-2/3 нижче — застаріла як «відсутні в пайплайні».
 
 ---
 

@@ -1,5 +1,8 @@
 # План змін: огляд 2026-09-09 → чесний paper-gate
 
+> **Наступний цикл (2026-09-11):** [IMPROVEMENT_PLAN_2026.md](IMPROVEMENT_PLAN_2026.md)
+> (Wave 0: TCA + R5–R7 + тег `paper-v0.2.0`). Цей файл — R1–R8; R1–R3 і R8 закриті.
+
 Стан на 2026-09-09. Попередні цикли закриті в коді:
 [CHANGE_PLAN.md](CHANGE_PLAN.md) (A–E), [CHANGE_PLAN_HEALTH.md](CHANGE_PLAN_HEALTH.md) (H1–H8).
 Деплой: [DEPLOY_PLAN.md](DEPLOY_PLAN.md). L2: [L2_DATA_PLAN.md](L2_DATA_PLAN.md).

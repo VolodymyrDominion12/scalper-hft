@@ -4,9 +4,9 @@
 аудиту коду, стратегій і live-шару. Детальний статус стратегій:
 [STRATEGY_STATUS.md](STRATEGY_STATUS.md), пари — [pairs_audit.md](pairs_audit.md), синтез підходів — [book_approaches_synthesis.md](book_approaches_synthesis.md).
 
-> 📋 **Новий план покращень (вересень 2026)**: [IMPROVEMENT_PLAN_2026.md](IMPROVEMENT_PLAN_2026.md)
-> Аналіз vs практик HFT/MFT 2026: 3 фази (Research Pipeline Hardening → Cost Model Evolution →
-> Portfolio & Live Upgrades). Пріоритет: Phase A до будь-яких нових стратегій.
+> **Поточний цикл (2026-09-11):** [IMPROVEMENT_PLAN_2026.md](IMPROVEMENT_PLAN_2026.md) —
+> Wave 0 (TCA + R5–R7) → тег `paper-v0.2.0` → 8 тижнів paper. Не нові альфи.
+> Попередній код-цикл R1–R8: [CHANGE_PLAN_REVIEW.md](CHANGE_PLAN_REVIEW.md) (R1–R3, R8 закриті).
 
 ## Чесний вердикт
 

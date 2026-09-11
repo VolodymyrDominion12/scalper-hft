@@ -95,8 +95,9 @@ Paper/testnet за замовчуванням (`DRY_RUN=true`).
 6. ✅ MCP-сервер для трейдінгу та Streamlit дашборд.
 
 ### Наступні кроки (Roadmap):
-1. **Цикл R1–R8** — fill-parity paper↔BT, bind API, профілі .env: [CHANGE_PLAN_REVIEW.md](CHANGE_PLAN_REVIEW.md). Потім тег `paper-v0.2.0`.
-2. **Paper-Gate**: 8 тижнів безперервного paper LINK/BTC 1h maker на тому тегу (`paper-audit` vs та сама модель філу).
-3. **VPS / research split**: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
-4. **L2 Order Book**: [L2_DATA_PLAN.md](L2_DATA_PLAN.md) + R5 sync; Tardis лише для ретроспективи MM.
-5. **Live Execution**: лише за явним запитом після Paper-Gate (фаза L3 плану).
+1. **Wave 0** — чесний TCA, R5–R7, тег `paper-v0.2.0`: [IMPROVEMENT_PLAN_2026.md](IMPROVEMENT_PLAN_2026.md).
+2. **Цикл R1–R8** (R1–R3, R8 закриті): [CHANGE_PLAN_REVIEW.md](CHANGE_PLAN_REVIEW.md).
+3. **Paper-Gate**: 8 тижнів paper LINK/BTC 1h maker на тому тегу (`paper-audit` vs та сама модель філу).
+4. **VPS / research split**: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
+5. **L2 Order Book**: [L2_DATA_PLAN.md](L2_DATA_PLAN.md) + R5 sync; Tardis лише для ретроспективи MM (Wave 3).
+6. **Live Execution**: лише за явним запитом після Paper-Gate (фаза L3 плану).
