@@ -177,7 +177,33 @@ def _maybe_record_pair_verdict(args: argparse.Namespace) -> None:
     pos_frac = float(wf["positive_windows"])
     n_windows = int(wf["n_windows"])
     # PBO — опційно (дорого); залишимо як майбутнє розширення (CSCV на pairs)
-    label, reasons = evaluate_pair_wf_gate(pos_frac, n_windows)
+    
+    backtest_max_dd = None
+    stress_crash = None
+    stress_liq = None
+    try:
+        from scalper_hft.backtest.pairs import run_pairs_backtest
+        bt = run_pairs_backtest(
+            df1, df2, strategy, f1, f2,
+            position_pct=getattr(args, "position_pct", None) or 0.3,
+            maker_execution=getattr(args, "maker", False),
+        )
+        backtest_max_dd = abs(float(bt.metrics.max_drawdown))
+        if bt.equity is not None and len(bt.equity) > 10:
+            ret = bt.equity.pct_change().dropna()
+            from scalper_hft.validation.stress import stress_report
+            stress_df = stress_report(ret)
+            stress_crash = abs(float(stress_df.loc["crash", "max_drawdown"])) if "crash" in stress_df.index else None
+            stress_liq = abs(float(stress_df.loc["liquidity", "max_drawdown"])) if "liquidity" in stress_df.index else None
+    except Exception as exc:
+        print(f"  [PAIR-вердикт] помилка стрес-тесту: {exc}")
+
+    label, reasons = evaluate_pair_wf_gate(
+        pos_frac, n_windows,
+        stress_crash_max_dd=stress_crash,
+        stress_liquidity_max_dd=stress_liq,
+        backtest_max_dd=backtest_max_dd
+    )
     print(
         "\n[PAIR-вердикт] "
         + f"{leg1}/{leg2} {args.interval}: {label}"

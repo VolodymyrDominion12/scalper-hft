@@ -99,6 +99,13 @@ class Settings:
     taker_fee: float = field(default_factory=lambda: _env_float("TAKER_FEE", 0.0005))
     slippage_bps: float = field(default_factory=lambda: _env_float("SLIPPAGE_BPS", 2.0))
     maker_execution: bool = field(default_factory=lambda: _env_bool("MAKER_EXECUTION", True))
+    vol_aware_slippage_ref: float = field(default_factory=lambda: _env_float("VOL_AWARE_SLIPPAGE_REF", 0.0))
+    vol_aware_slippage_exp: float = field(default_factory=lambda: _env_float("VOL_AWARE_SLIPPAGE_EXP", 1.0))
+    impact_k: float = field(default_factory=lambda: _env_float("IMPACT_K", 0.0))
+    adf_pvalue_threshold: float = field(default_factory=lambda: _env_float("ADF_PVALUE_THRESHOLD", 0.05))
+    adf_window_days: int = field(default_factory=lambda: _env_int("ADF_WINDOW_DAYS", 90))
+    portfolio_allocation_method: str = field(default_factory=lambda: os.getenv("PORTFOLIO_ALLOCATION_METHOD", "equal"))
+    erc_vol_window_days: int = field(default_factory=lambda: _env_int("ERC_VOL_WINDOW_DAYS", 7))
 
     # Risk model
     position_pct: float = field(default_factory=lambda: _env_float("POSITION_PCT", 0.01))

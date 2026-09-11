@@ -411,6 +411,10 @@ def execute_sweep_cell(
     else:
         row.days = days
         row.mode = mode
+        
+    from scalper_hft.research.sweep_store import strategy_code_hash
+    row.code_hash = strategy_code_hash(name)
+    
     flag_degenerate_row(row)
     if store_path:
         with SweepStore(store_path) as store:
@@ -493,11 +497,19 @@ def run_sweep(
     all_cells = [(name, sym, iv) for sym in symbols for iv in intervals for name in strategies]
 
     # -- Resume: фільтрувати вже виконані клітинки ----------------------------
+    # A5: code_hash перевіряє чи не змінився код стратегії після попереднього прогону.
+    # Якщо змінився — клітинка перераховується навіть при --resume (AGENTS.md пастка).
     if resume and store is not None:
-        cells = [c for c in all_cells if not store.already_done(c[0], c[1], c[2], days, mode)]
+        from scalper_hft.research.sweep_store import strategy_code_hash
+
+        def _is_done(name: str, sym: str, iv: str) -> bool:
+            chash = strategy_code_hash(name)
+            return store.already_done(name, sym, iv, days, mode, code_hash=chash)
+
+        cells = [c for c in all_cells if not _is_done(c[0], c[1], c[2])]
         skipped = len(all_cells) - len(cells)
         if skipped:
-            logger.info("Resume: пропущено %d вже виконаних клітинок", skipped)
+            logger.info("Resume: пропущено %d вже виконаних клітинок (з перевіркою code_hash)", skipped)
     else:
         cells = all_cells
 
