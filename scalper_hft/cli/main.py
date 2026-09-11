@@ -490,6 +490,12 @@ def main(argv: list[str] | None = None) -> None:
     )
     p.add_argument("--interval", default="1h", help="Таймфрейм режиму/торгівлі")
     p.add_argument("--fit-days", type=int, default=365, help="Глибина fit-періоду (IS), днів")
+    p.add_argument(
+        "--fit-end",
+        default=None,
+        help="Кінець fit-вікна (ISO-дата). Default: останній бар кешу. "
+        "Задавайте для чесної валідації: карта діє лише на барах ПІСЛЯ fit_end",
+    )
     p.add_argument("--base", default="1m", help="Базовий ТФ для деривації з кешу")
     p.add_argument("--taker", action="store_true", help="Taker-модель витрат (default: maker)")
     p.add_argument("--min-bars", type=int, default=30, help="Мінімум барів у комірці (regime × strategy)")
@@ -516,6 +522,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--symbols", default="BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT,LINKUSDT")
     p.add_argument("--interval", default="1h")
     p.add_argument("--fit-days", type=int, default=365)
+    p.add_argument("--fit-end", default=None, help="Кінець fit-вікна (ISO-дата); default — кінець кешу")
     p.add_argument("--base", default="1m")
     p.add_argument("--taker", action="store_true")
     p.add_argument("--min-bars", type=int, default=30)

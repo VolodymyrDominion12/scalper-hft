@@ -55,6 +55,16 @@ class RegimeFitResult:
     per_symbol_returns: dict[str, pd.DataFrame] = field(default_factory=dict)
 
 
+def _resolve_fit_end(fit_end: str | pd.Timestamp | None) -> pd.Timestamp | None:
+    """Нормалізувати fit_end до tz-naive UTC (індекс кешу klines — tz-naive)."""
+    if fit_end in (None, ""):
+        return None
+    ts = pd.Timestamp(fit_end)
+    if ts.tzinfo is not None:
+        ts = ts.tz_convert("UTC").tz_localize(None)
+    return ts
+
+
 def _cell_table(rmap: RegimeStrategyMap) -> list[dict[str, Any]]:
     """Плоский список комірок карти (для логування/звіту)."""
     rows: list[dict[str, Any]] = []
@@ -78,6 +88,7 @@ def fit_regime_map(
     *,
     interval: str = "1h",
     fit_days: int = 365,
+    fit_end: str | pd.Timestamp | None = None,
     base_interval: str = "1m",
     is_maker: bool = True,
     min_bars: int = 30,
@@ -87,14 +98,17 @@ def fit_regime_map(
     position_pct: float | None = None,
     readonly: bool = True,
 ) -> RegimeFitResult:
-    """Побудувати карту «режим → стратегія» на IS-періоді (fit_days, останні N днів).
+    """Побудувати карту «режим → стратегія» на IS-періоді.
 
     Args:
         strategies: імена стратегій з REGISTRY (кандидати-слеви).
         symbols: символи, на яких пуляться дохідності (робастність по інструментах).
         interval: таймфрейм режиму/торгівлі.
-        fit_days: глибина fit-періоду. Застосовувати карту можна ЛИШЕ на барах
-            після ``meta["fit_end"]`` — інакше порушується no-lookahead контракт.
+        fit_days: глибина fit-періоду.
+        fit_end: кінець fit-вікна (ISO-дата або Timestamp). None = останній бар
+            кешу. Задавайте його для чесної валідації: карта будується на
+            [fit_end − fit_days, fit_end], а застосовується на барах ПІСЛЯ
+            ``meta["fit_end"]`` — інакше порушується no-lookahead контракт.
         base_interval: базовий ТФ для деривації (кеш).
         is_maker: maker-модель витрат (висновок проєкту: taker на суб-годинних барах не виживає).
         min_bars: мінімум барів у комірці (regime × strategy) для значущості.
@@ -123,6 +137,13 @@ def fit_regime_map(
         slippage_frac=settings.slippage_frac,
     )
     store = get_store()
+    cutoff = _resolve_fit_end(fit_end)
+    # Скільки днів історії вантажити: fit_days + «хвіст» до сьогодні, якщо
+    # fit_end у минулому (кеш завжди віддає ОСТАННІ N днів).
+    load_days = int(fit_days)
+    if cutoff is not None:
+        tail_days = int((pd.Timestamp.now(tz="UTC").tz_localize(None) - cutoff).days) + 1
+        load_days = int(fit_days) + max(0, tail_days)
     per_symbol: dict[str, tuple[pd.DataFrame, pd.DataFrame]] = {}
     returns_by_symbol: dict[str, pd.DataFrame] = {}
     windows: list[tuple[pd.Timestamp, pd.Timestamp]] = []
@@ -130,7 +151,7 @@ def fit_regime_map(
 
     for symbol in symbols:
         try:
-            df = ensure_klines(symbol, interval, fit_days, base_interval=base_interval, derive=True, readonly=readonly)
+            df = ensure_klines(symbol, interval, load_days, base_interval=base_interval, derive=True, readonly=readonly)
         except Exception as exc:  # noqa: BLE001
             logger.warning("regime-fit: %s — дані недоступні: %s", symbol, exc)
             skipped[symbol] = f"data: {exc}"[:160]
@@ -138,6 +159,11 @@ def fit_regime_map(
         if df is None or df.empty:
             skipped[symbol] = "порожній кеш"
             continue
+        if cutoff is not None:
+            df = df.loc[df.index <= cutoff]
+            if len(df) < min_bars:
+                skipped[symbol] = f"після fit_end={cutoff} лишилось {len(df)} барів"
+                continue
 
         regime = RegimeDetector().detect(df["close"])[["structure", "vol", "label"]]
         returns: dict[str, pd.Series] = {}
