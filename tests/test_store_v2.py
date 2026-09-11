@@ -100,13 +100,15 @@ def test_migration_adds_exchange_column(v1_store_path: Path) -> None:
 
 
 def test_migration_adds_orders_columns(v1_store_path: Path) -> None:
-    """Після міграції в orders є exchange і mode."""
+    """Після міграції в orders є exchange, mode, mid і decision_mid."""
     PaperStore(v1_store_path)
     conn = sqlite3.connect(v1_store_path)
     cols = [row[1] for row in conn.execute("PRAGMA table_info(orders)").fetchall()]
     conn.close()
     assert "exchange" in cols
     assert "mode" in cols
+    assert "mid" in cols
+    assert "decision_mid" in cols
 
 
 def test_migration_adds_trades_columns(v1_store_path: Path) -> None:

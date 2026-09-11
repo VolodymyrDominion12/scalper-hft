@@ -305,7 +305,7 @@ uv run python -m scalper_hft.cli backtest \
 | W0-R5 | `sync_depth.sh` | 0 | 1 | ні | ☐ |
 | W0-R6 | I/O геть з use_cases + `from_settings` | 0 | 1 | бажано | ☐ |
 | W0-R7 | Тести `trader_loop` | 0 | 1–2 | ні | ☐ |
-| W0-TCA | IS mid ≠ fill + miss-cost + paper-audit | 0 | 2 | **так** | ☐ |
+| W0-TCA | IS mid ≠ fill + miss-cost + paper-audit | 0 | 2 | **так** | ☑ |
 | W0-Q | Quintile/decay пар на −Δspread | 0 | 1 | ні | ☐ |
 | W0-COST | `cmd_pairs` → `from_settings` | 0 | у R6 | бажано | ☐ |
 | W0-OPS | Тег `paper-v0.2.0` + 8 тижнів | Ops | 8 тиж. | — | ☐ |

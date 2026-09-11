@@ -217,14 +217,16 @@ def cmd_paper_audit(args: argparse.Namespace) -> None:
     )
     print("\n" + audit.summary())
     from scalper_hft.config import get_settings
+    from scalper_hft.live.is_report import records_from_orders
     from scalper_hft.validation.paper_audit import format_cost_hint, is_cost_hint
 
     slip_frac = get_settings().slippage_bps / 10_000.0
-    print(format_cost_hint(is_cost_hint([], slip_frac)))
+    orders = store.all_orders()
+    recs = records_from_orders(orders)
+    print(format_cost_hint(is_cost_hint(recs, slip_frac)))
     from scalper_hft.research.session_analysis import hourly_fill_rate, session_breakdown
     from scalper_hft.validation.forensics import trades_from_paper_frames
 
-    orders = store.all_orders()
     fills = hourly_fill_rate(orders)
     if not fills.empty:
         print("\nFill-rate by hour UTC:")

@@ -2,7 +2,8 @@
 runtime snapshot, рахунки по біржах, відкриті позиції, реєстр ботів.
 
 v2 backward-compatible: існуючі SQLite файли мігрують автоматично
-через ALTER TABLE IF NOT EXISTS (SQLite ≥ 3.37 / Python 3.12).
+через ALTER TABLE (SQLite ≥ 3.37 / Python 3.12).
+v3: orders.mid / orders.decision_mid для чесного IS.
 """
 
 from __future__ import annotations
@@ -15,16 +16,17 @@ from typing import Any
 
 import pandas as pd
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class PaperStore:
     """Персистенція paper/live прогонів.
 
-    v2 — UnifiedTradeStore:
+        v2 — UnifiedTradeStore:
         - equity, orders, trades, months, meta, snapshots (v1)
         - accounts, positions, bots (нові в v2)
         - поля exchange і mode в equity/orders/trades (додаються міграцією)
+        v3 — orders.mid (ціна оцінки) і orders.decision_mid (arrival).
 
     Path за замовчуванням results/paper_pairs.sqlite.
     """
@@ -60,7 +62,9 @@ class PaperStore:
                 size REAL NOT NULL,
                 price REAL NOT NULL,
                 status TEXT NOT NULL,
-                reason TEXT NOT NULL
+                reason TEXT NOT NULL,
+                mid REAL,
+                decision_mid REAL
             );
             CREATE TABLE IF NOT EXISTS trades (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -145,6 +149,8 @@ class PaperStore:
             ("equity", "mode TEXT NOT NULL DEFAULT 'paper'"),
             ("orders", "exchange TEXT NOT NULL DEFAULT 'binance'"),
             ("orders", "mode TEXT NOT NULL DEFAULT 'paper'"),
+            ("orders", "mid REAL"),
+            ("orders", "decision_mid REAL"),
             ("trades", "exchange TEXT NOT NULL DEFAULT 'binance'"),
             ("trades", "mode TEXT NOT NULL DEFAULT 'paper'"),
         ]
@@ -228,10 +234,13 @@ class PaperStore:
         reason: str,
         exchange: str = "binance",
         mode: str = "paper",
+        mid: float | None = None,
+        decision_mid: float | None = None,
     ) -> None:
         self._write(
-            "INSERT INTO orders (ts, pair, symbol, side, size, price, status, reason, exchange, mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (str(ts), pair, symbol, side, size, price, status, reason, exchange, mode),
+            "INSERT INTO orders (ts, pair, symbol, side, size, price, status, reason, exchange, mode, mid, decision_mid) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (str(ts), pair, symbol, side, size, price, status, reason, exchange, mode, mid, decision_mid),
         )
 
     def log_trade(
@@ -281,7 +290,7 @@ class PaperStore:
 
     def recent_orders(self, limit: int = 200) -> pd.DataFrame:
         return self._read_sql(
-            "SELECT ts, pair, symbol, side, size, price, status, reason FROM orders ORDER BY id DESC LIMIT ?",
+            "SELECT ts, pair, symbol, side, size, price, status, reason, mid, decision_mid FROM orders ORDER BY id DESC LIMIT ?",
             params=(limit,),
         )
 
@@ -289,7 +298,9 @@ class PaperStore:
         return self._read_sql("SELECT ts, pair, equity, cash, realized_pnl FROM equity ORDER BY id")
 
     def all_orders(self) -> pd.DataFrame:
-        return self._read_sql("SELECT ts, pair, symbol, side, size, price, status, reason FROM orders ORDER BY id")
+        return self._read_sql(
+            "SELECT ts, pair, symbol, side, size, price, status, reason, mid, decision_mid FROM orders ORDER BY id"
+        )
 
     def all_trades(self) -> pd.DataFrame:
         return self._read_sql(

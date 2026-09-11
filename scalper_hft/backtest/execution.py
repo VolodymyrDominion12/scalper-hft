@@ -148,7 +148,7 @@ def calibrate_from_is(
     fallback: float = 0.0002,
 ) -> float:
     """Median IS (bps) → slippage_frac. kind: all | maker | chase."""
-    rows = list(records)
+    rows = [r for r in records if bool(getattr(r, "filled", True))]
     if kind == "maker":
         rows = [r for r in rows if bool(getattr(r, "is_maker", True))]
     elif kind == "chase":

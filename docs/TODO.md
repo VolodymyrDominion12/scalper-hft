@@ -58,7 +58,7 @@ VPS: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
 - [ ] **R6 / W0-R6** I/O геть з `application/use_cases.py` + `CostModel.from_settings`
 - [ ] **R7 / W0-R7** Тести `trader_loop` + вузькі except на fetch позицій
 - [x] **R8** Покажчики ROADMAP/TODO/DESIGN на CHANGE_PLAN_REVIEW
-- [ ] **W0-TCA** IS: mid ≠ fill + opportunity cost unfilled + секція в `paper-audit`
+- [x] **W0-TCA** IS: mid ≠ fill + opportunity cost unfilled + секція в `paper-audit`
 - [ ] **W0-Q** Quintile/time-decay пар на −Δspread, не на `close` ноги
 - [ ] **W0-OPS** Тег `paper-v0.2.0` + 8 тижнів paper LINK/BTC
 

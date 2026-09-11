@@ -597,5 +597,8 @@ def cmd_is_report(args: argparse.Namespace) -> None:
     if report.coverage_ok:
         rec = calibrate_slippage_bps(report)
         print(f"  Рекомендований SLIPPAGE_BPS (з IS): {rec:.2f}")
+        print("  Не записується в .env автоматично.")
+    elif not report.mid_distinct:
+        print("  Калібровка пропущена: mid=fill (немає чесного IS).")
     else:
         print(f"  Потрібно ≥20 fills для калібровки (зараз {report.n_fills})")

@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from scalper_hft.config import get_settings
+from scalper_hft.live.is_report import ISReport
 from scalper_hft.live.store import PaperStore
 from scalper_hft.validation.forensics import ForensicsReport, analyze_trades, trades_from_paper_frames
 
@@ -27,6 +28,7 @@ class PaperAudit:
     bt_fill_rate: float | None
     fill_gap: float | None
     forensics: ForensicsReport
+    is_report: ISReport | None = None
 
     def summary(self) -> str:
         te = "—" if self.tracking_error is None else f"{self.tracking_error:.4%}"
@@ -35,12 +37,15 @@ class PaperAudit:
         fill = "—" if self.fill_gap is None else f"{self.fill_gap:+.1%}"
 
         seed = get_settings().maker_fill_seed
-        return (
+        lines = (
             f"Paper audit: bars={self.n_bars} paper={self.paper_return:+.2%} bt={bt}\n"
             f"  tracking-error={te} maxDD paper={self.paper_max_dd:.2%} gate={dd}\n"
             f"  fill-rate paper={self.paper_fill_rate:.0%} gap={fill} MAKER_FILL_SEED={seed}\n"
             f"  {self.forensics.summary()}"
         )
+        if self.is_report is not None:
+            lines += "\n  " + self.is_report.summary().replace("\n", "\n  ")
+        return lines
 
 
 def max_drawdown(equity: pd.Series) -> float:
@@ -104,6 +109,7 @@ def audit_paper_vs_backtest(
     bt_fill_rate: float | None = None,
     trades: pd.DataFrame | None = None,
     dd_mult: float = DD_MULT_DEFAULT,
+    is_report: ISReport | None = None,
 ) -> PaperAudit:
     """Порівняння paper-кривої з бектестом за той самий (або вирівняний) період."""
     paper = _as_float_series(paper_equity) if paper_equity is not None else pd.Series(dtype=float)
@@ -134,6 +140,7 @@ def audit_paper_vs_backtest(
         bt_fill_rate=bt_fill_rate,
         fill_gap=fill_gap,
         forensics=analyze_trades(trades),
+        is_report=is_report,
     )
 
 
@@ -186,7 +193,11 @@ def audit_paper_store(
 ) -> PaperAudit:
     equity = equity_from_store(store.all_equity())
     stats = store.fill_stats()
-    trades = trades_from_paper_frames(store.all_trades(), store.all_orders())
+    orders = store.all_orders()
+    trades = trades_from_paper_frames(store.all_trades(), orders)
+    from scalper_hft.live.is_report import build_from_orders
+
+    is_rep = build_from_orders(orders, model_slippage_bps=get_settings().slippage_bps)
     return audit_paper_vs_backtest(
         equity,
         paper_fill_rate=fill_rate(stats),
@@ -194,6 +205,7 @@ def audit_paper_store(
         bt_fill_rate=bt_fill_rate,
         trades=trades,
         dd_mult=dd_mult,
+        is_report=is_rep,
     )
 
 

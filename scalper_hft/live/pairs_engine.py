@@ -44,6 +44,7 @@ class PendingOrder:
     reduce_only: bool
     placed_ts: pd.Timestamp
     bars_waited: int = 0
+    decision_mid: float = 0.0  # mid/close бару рішення (arrival)
 
     def to_snapshot(self) -> dict[str, Any]:
         return {
@@ -56,21 +57,27 @@ class PendingOrder:
             "reduce_only": bool(self.reduce_only),
             "placed_ts": str(self.placed_ts),
             "bars_waited": int(self.bars_waited),
+            "decision_mid": float(self.decision_mid),
         }
 
     @classmethod
     def from_snapshot(cls, data: dict[str, Any]) -> PendingOrder:
+        limit = float(data["limit_price"])
         return cls(
             symbol=str(data["symbol"]),
             key=str(data["key"]),
             side=str(data["side"]),
             pos_side=str(data["pos_side"]),
             size=float(data["size"]),
-            limit_price=float(data["limit_price"]),
+            limit_price=limit,
             reduce_only=bool(data["reduce_only"]),
             placed_ts=pd.Timestamp(data["placed_ts"]),
             bars_waited=int(data.get("bars_waited") or 0),
+            decision_mid=float(data.get("decision_mid") or limit),
         )
+
+    def arrival_mid(self) -> float:
+        return self.decision_mid if self.decision_mid > 0 else self.limit_price
 
 
 @dataclass
@@ -288,9 +295,39 @@ class PairsEngine:
             return
         self._vol_size_mult = float(np.clip(self.vol_target_ann / realized, 0.0, 1.0))
 
-    def _log_order(self, ts: pd.Timestamp, o: PendingOrder, status: str, reason: str) -> None:
+    def _log_order(
+        self,
+        ts: pd.Timestamp,
+        o: PendingOrder,
+        status: str,
+        reason: str,
+        *,
+        mid: float | None = None,
+    ) -> None:
         if self.store:
-            self.store.log_order(ts, self.pid, o.symbol, o.side, o.size, o.limit_price, status, reason)
+            self.store.log_order(
+                ts,
+                self.pid,
+                o.symbol,
+                o.side,
+                o.size,
+                o.limit_price,
+                status,
+                reason,
+                mid=mid,
+                decision_mid=o.arrival_mid(),
+            )
+
+    def _log_unfilled_is(
+        self,
+        ts: pd.Timestamp,
+        o: PendingOrder,
+        cancel_mid: float,
+        *,
+        is_maker: bool = True,
+    ) -> None:
+        if self.is_journal:
+            self.is_journal.log_unfilled(ts, self.pid, o.symbol, o.side, o.arrival_mid(), cancel_mid, is_maker=is_maker)
 
     def _resolve_pending(self, ts: pd.Timestamp, high1: float, low1: float, high2: float, low2: float) -> str:
         if self.pending is None:
@@ -304,9 +341,9 @@ class PairsEngine:
         if self.legging_mode == "strict_both":
             d1, d2 = both_or_neither(d1, d2)
             if d1.filled and d2.filled:
-                self._apply_fills(ts, o1, o2, d1.fill_price, d2.fill_price, True, True)
-                self._log_order(ts, o1, "filled", "filled")
-                self._log_order(ts, o2, "filled", "filled")
+                self._apply_fills(ts, o1, o2, d1.fill_price, d2.fill_price, True, True, mid1, mid2)
+                self._log_order(ts, o1, "filled", "filled", mid=mid1)
+                self._log_order(ts, o2, "filled", "filled", mid=mid2)
                 self.pending = None
                 self.n_filled += 1
                 return "filled"
@@ -334,9 +371,11 @@ class PairsEngine:
                     res.d2.fill_price,
                     res.leg1_maker,
                     res.leg2_maker,
+                    mid1,
+                    mid2,
                 )
-                self._log_order(ts, o1, "filled", res.d1.reason)
-                self._log_order(ts, o2, "filled", res.d2.reason)
+                self._log_order(ts, o1, "filled", res.d1.reason, mid=mid1)
+                self._log_order(ts, o2, "filled", res.d2.reason, mid=mid2)
                 self.pending = None
                 self.n_filled += 1
                 return f"filled:{res.action}"
@@ -344,8 +383,10 @@ class PairsEngine:
                 filled = o1 if res.action == "unwind_leg1" else o2
                 px = mid1 if res.action == "unwind_leg1" else mid2
                 self._unwind_filled_leg(ts, filled, px)
-                self._log_order(ts, o1, "unfilled", f"legging_unwound_{res.action}")
-                self._log_order(ts, o2, "unfilled", f"legging_unwound_{res.action}")
+                self._log_order(ts, o1, "unfilled", f"legging_unwound_{res.action}", mid=mid1)
+                self._log_order(ts, o2, "unfilled", f"legging_unwound_{res.action}", mid=mid2)
+                self._log_unfilled_is(ts, o1, mid1)
+                self._log_unfilled_is(ts, o2, mid2)
                 self.pending = None
                 self.n_unfilled += 1
                 logger.warning("%s legging risk triggered %s, drift=%.1f bps", self.pid, res.action, res.drift_bps)
@@ -355,8 +396,10 @@ class PairsEngine:
         o2.bars_waited += 1
         if o1.bars_waited >= self.wait_bars:
             reason = d1.reason
-            self._log_order(ts, o1, "unfilled", reason)
-            self._log_order(ts, o2, "unfilled", reason)
+            self._log_order(ts, o1, "unfilled", reason, mid=mid1)
+            self._log_order(ts, o2, "unfilled", reason, mid=mid2)
+            self._log_unfilled_is(ts, o1, mid1)
+            self._log_unfilled_is(ts, o2, mid2)
             self.pending = None
             self.n_unfilled += 1
             logger.info("%s unfilled %s/%s: %s", self.pid, o1.symbol, o2.symbol, reason)
@@ -438,6 +481,8 @@ class PairsEngine:
         px2: float,
         maker1: bool | None = None,
         maker2: bool | None = None,
+        mid1: float | None = None,
+        mid2: float | None = None,
     ) -> None:
         m1 = self.is_maker if maker1 is None else maker1
         m2 = self.is_maker if maker2 is None else maker2
@@ -457,13 +502,16 @@ class PairsEngine:
                     self.consecutive_pair_losses += 1
                 else:
                     self.consecutive_pair_losses = 0
+            if self.is_journal and mid1 is not None and mid2 is not None:
+                self.is_journal.log(ts, self.pid, o1.symbol, o1.side, mid1, px1, is_maker=m1)
+                self.is_journal.log(ts, self.pid, o2.symbol, o2.side, mid2, px2, is_maker=m2)
             return
         self.account.open_position(o1.key, o1.pos_side, o1.size, px1, ts, is_maker=m1)
         self.account.open_position(o2.key, o2.pos_side, o2.size, px2, ts, is_maker=m2)
         self.have = 1 if o1.pos_side == "short" else -1
-        if self.is_journal:
-            self.is_journal.log(ts, self.pid, o1.symbol, o1.side, o1.limit_price, px1, is_maker=m1)
-            self.is_journal.log(ts, self.pid, o2.symbol, o2.side, o2.limit_price, px2, is_maker=m2)
+        if self.is_journal and mid1 is not None and mid2 is not None:
+            self.is_journal.log(ts, self.pid, o1.symbol, o1.side, mid1, px1, is_maker=m1, arrival_mid=o1.arrival_mid())
+            self.is_journal.log(ts, self.pid, o2.symbol, o2.side, mid2, px2, is_maker=m2, arrival_mid=o2.arrival_mid())
 
     def _quote(self, ts: pd.Timestamp, want: int, p1: float, p2: float, size_mult: float = 1.0) -> str:
         if want == self.have:
@@ -513,6 +561,7 @@ class PairsEngine:
                 p1,
                 True,
                 ts,
+                decision_mid=p1,
             )
             o2 = PendingOrder(
                 self.leg2,
@@ -523,6 +572,7 @@ class PairsEngine:
                 p2,
                 True,
                 ts,
+                decision_mid=p2,
             )
         else:
             s1, s2 = legs_for_want(want)
@@ -537,6 +587,7 @@ class PairsEngine:
                 p1,
                 False,
                 ts,
+                decision_mid=p1,
             )
             o2 = PendingOrder(
                 self.leg2,
@@ -547,10 +598,11 @@ class PairsEngine:
                 p2,
                 False,
                 ts,
+                decision_mid=p2,
             )
         self.pending = (o1, o2)
-        self._log_order(ts, o1, "pending", f"want={want}")
-        self._log_order(ts, o2, "pending", f"want={want}")
+        self._log_order(ts, o1, "pending", f"want={want}", mid=p1)
+        self._log_order(ts, o2, "pending", f"want={want}", mid=p2)
         return f"quoted want={want}"
 
     def on_bar(
