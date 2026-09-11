@@ -1,0 +1,12 @@
+[package]
+name = "scalper_core"
+version = "0.1.0"
+edition = "2021"
+description = "High-performance execution core for scalper-hft"
+
+[lib]
+name = "scalper_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.21.0", features = ["extension-module"] }
