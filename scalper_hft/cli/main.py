@@ -331,10 +331,14 @@ def main(argv: list[str] | None = None) -> None:
 
     p = sub.add_parser("paper-audit", help="Tracking error paper SQLite vs бектест + MAE/MFE forensics")
     p.add_argument("--db", default="results/paper_pairs.sqlite", help="Шлях до paper SQLite")
+    p.add_argument("--limit", type=int, default=100, help="Кількість угод для аналізу")
     p.add_argument("--bt-equity", default=None, help="CSV ts,equity бектесту за той самий період")
     p.add_argument("--bt-fill-rate", type=float, default=None, dest="bt_fill_rate")
     p.add_argument("--dd-mult", type=float, default=1.5, dest="dd_mult", help="Paper maxDD ≤ BT×mult")
     p.set_defaults(func=_cli_pkg.cmd_paper_audit)
+
+    p = sub.add_parser("is-report", help="Implementation Shortfall (IS) звіт по paper-трейдах")
+    p.set_defaults(func=_cli_pkg.cmd_is_report)
 
     p = sub.add_parser("experiments", help="Каталог val→OOS експериментів (sparse_basket / ml_strategy)")
     p.add_argument("--catalog", default=None, help="Markdown каталог (за замовч. docs/reports/experiments.md)")

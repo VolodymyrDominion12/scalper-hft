@@ -28,6 +28,7 @@ from scalper_hft.cli.ops import (
     cmd_download,
     cmd_download_liquidations,
     cmd_download_oi,
+    cmd_is_report,
     cmd_job,
     cmd_macro_recorder,
     cmd_mcp,

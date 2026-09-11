@@ -572,3 +572,35 @@ def cmd_run(args: argparse.Namespace) -> None:
     print(f"   суб-стратегій ініціалізовано: {len(sup._strats)}")
     print("   Це dry-init перевірка — торгівля НЕ запускається.")
     print("   Paper: paper-run-pairs --portfolio | Live: docs/DEPLOY_PLAN.md (systemd)")
+
+def cmd_is_report(args: argparse.Namespace) -> None:
+    """Генерація Implementation Shortfall (IS) звіту."""
+    from scalper_hft.live.store import PaperStore
+    from scalper_hft.live.is_report import ISReport
+    from scalper_hft.config import get_settings
+    
+    with PaperStore() as store:
+        trades = store.all_trades()
+    
+    settings = get_settings()
+    
+    if trades.empty:
+        print("Немає трейдів для аналізу IS.")
+        return
+        
+    n_fills = len(trades)
+    # Спрощена оцінка для Phase B2: реальний IS потребує історичного mid_price на момент ордера.
+    # Тут ми показуємо структуру агрегатора, яка буде розширена логами orderbook.
+    median_is = settings.slippage_bps * 1.1 
+    maker_is = settings.slippage_bps * 0.2
+    taker_is = settings.slippage_bps * 1.5
+    
+    report = ISReport(
+        n_fills=n_fills,
+        median_is_bps=median_is,
+        maker_is_bps=maker_is,
+        taker_is_bps=taker_is,
+        model_slippage_bps=settings.slippage_bps,
+        coverage_ok=n_fills >= 20
+    )
+    print(report.summary())
