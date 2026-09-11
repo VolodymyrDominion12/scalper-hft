@@ -17,14 +17,11 @@ Handler = Callable[..., None]
 
 
 def handle_backtest(payload: dict[str, Any], job_dir: Path, **_: Any) -> None:
-    from scalper_hft.backtest.execution import CostModel
-    from scalper_hft.backtest.router import run_strategy_backtest
-    from scalper_hft.config import get_settings
+    from scalper_hft.application import RunBacktest, run_backtest
     from scalper_hft.data.access import ensure_klines
     from scalper_hft.data.downloader import download_agg_trades, download_funding
     from scalper_hft.strategies import get_strategy
 
-    settings = get_settings()
     name = str(payload["strategy"])
     symbol = str(payload["symbol"])
     interval = str(payload["interval"])
@@ -41,16 +38,20 @@ def handle_backtest(payload: dict[str, Any], job_dir: Path, **_: Any) -> None:
         raise RuntimeError(f"немає даних {symbol} {interval}")
     trades = download_agg_trades(symbol, days) if getattr(strategy, "needs_trades", False) else None
     funding = download_funding(symbol, days) if getattr(strategy, "needs_funding", False) else None
-    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
-    res = run_strategy_backtest(
+    res = run_backtest(
+        RunBacktest(
+            strategy=name,
+            symbol=symbol,
+            interval=interval,
+            days=days,
+            params=params,
+            maker=is_maker,
+            trace=trace,
+            base_interval=base,
+        ),
         df,
-        strategy,
-        cost=cost,
         trades=trades,
         funding=funding,
-        position_pct=settings.position_pct,
-        is_maker=is_maker,
-        trace=trace,
     )
     save_backtest_result(job_dir, res, extra={"symbol": symbol, "interval": interval, "days": days})
     logger.info("backtest %s %s %s: %s", name, symbol, interval, res.metrics.summary().splitlines()[0])
@@ -81,7 +82,7 @@ def handle_pairs(payload: dict[str, Any], job_dir: Path, **_: Any) -> None:
         raise RuntimeError(f"немає даних {leg1}/{leg2} {interval}")
     f1 = download_funding(leg1, days)
     f2 = download_funding(leg2, days)
-    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    cost = CostModel.from_settings(settings, df=d1)
     res = run_pairs_backtest(
         d1,
         d2,
@@ -195,7 +196,7 @@ def handle_capacity(payload: dict[str, Any], job_dir: Path, **_: Any) -> None:
         raise RuntimeError(f"немає даних {symbol} {interval}")
     trades = download_agg_trades(symbol, days) if getattr(strategy, "needs_trades", False) else None
     funding = download_funding(symbol, days) if getattr(strategy, "needs_funding", False) else None
-    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    cost = CostModel.from_settings(settings, df=df)
     curve = capacity_curve(
         df,
         strategy,

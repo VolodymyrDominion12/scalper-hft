@@ -98,6 +98,9 @@ CLI як і раніше качає дані.
 
 **Готово коли:** `use_cases.py` не імпортує downloader; pytest CLI/jobs зелений.
 
+**Статус:** зроблено. `run_backtest(req, df, trades=, funding=)` + `CostModel.from_settings`;
+I/O лишився в CLI/`job_handlers`.
+
 ### W0-R7 — Тести `trader_loop` [P1, ~1–2 д]
 
 **Файли:** `tests/test_trader_loop.py` (новий) · точково `trader_loop.py` /
@@ -160,6 +163,9 @@ unfilled збільшує blended TCA; `paper-audit` друкує IS; pytest з�
 **Готово коли:** тест на синтетичному монотонному спреді PASS; на
 `close.pct_change` тієї ж ноги — не обов’язково PASS.
 
+**Статус:** зроблено. `run_quintile_audit` / `run_time_decay_audit` на
+`leg1`/`leg2` беруть `z` і `−Δspread`; `cmd_pairs` друкує блок; `report --leg1 --leg2`.
+
 ### W0-COST — Один CostModel на всіх шляхах [P1, частина R6]
 
 Після R6: `cmd_pairs` теж `CostModel.from_settings(settings, df=df1)` (не
@@ -167,6 +173,8 @@ unfilled збільшує blended TCA; `paper-audit` друкує IS; pytest з�
 
 **Готово коли:** grep `CostModel(` у `cli/` і `application/` показує лише
 `from_settings` або явні тестові фікстури.
+
+**Статус:** зроблено. CLI (включно з `cmd_pairs`) і jobs — `from_settings`.
 
 ### W0-OPS — Тег і старт paper [операції, не код]
 
@@ -303,11 +311,11 @@ uv run python -m scalper_hft.cli backtest \
 | R1–R3, R8 | Fill-parity, API bind, .env профілі, документи | — | — | так (уже в коді) | ☑ |
 | W0-R4 | Тест + docs `use_exit_ladders=false` | 0 | 0.5 | ні | ☐ код є |
 | W0-R5 | `sync_depth.sh` | 0 | 1 | ні | ☐ |
-| W0-R6 | I/O геть з use_cases + `from_settings` | 0 | 1 | бажано | ☐ |
+| W0-R6 | I/O геть з use_cases + `from_settings` | 0 | 1 | бажано | ☑ |
 | W0-R7 | Тести `trader_loop` | 0 | 1–2 | ні | ☐ |
 | W0-TCA | IS mid ≠ fill + miss-cost + paper-audit | 0 | 2 | **так** | ☑ |
-| W0-Q | Quintile/decay пар на −Δspread | 0 | 1 | ні | ☐ |
-| W0-COST | `cmd_pairs` → `from_settings` | 0 | у R6 | бажано | ☐ |
+| W0-Q | Quintile/decay пар на −Δspread | 0 | 1 | ні | ☑ |
+| W0-COST | `cmd_pairs` → `from_settings` | 0 | у R6 | бажано | ☑ |
 | W0-OPS | Тег `paper-v0.2.0` + 8 тижнів | Ops | 8 тиж. | — | ☐ |
 | W1-K | Kalman vs OLS | 1 | 3–4 | ні | ☐ |
 | W1-X | Cross-symbol BTC/ETH/LINK | 1 | запуск | ні | ☐ |

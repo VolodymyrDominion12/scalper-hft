@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from scalper_hft.backtest.execution import CostModel
@@ -17,12 +18,47 @@ from scalper_hft.validation.benchmark import buy_and_hold_sharpe
 QUINTILE_SPEARMAN_MIN = 0.7
 
 
+def has_pair_legs(df: pd.DataFrame) -> bool:
+    return {"leg1", "leg2"}.issubset(df.columns)
+
+
+def pairs_spread(df: pd.DataFrame) -> pd.Series:
+    """log(leg1/leg2) — спред, на якому pairs_arb рахує PnL (−pos·Δspread)."""
+    ratio = np.log(df["leg1"].to_numpy(dtype=float) / df["leg2"].to_numpy(dtype=float))
+    return pd.Series(ratio, index=df.index, dtype=float)
+
+
+def pairs_z_and_forward(
+    df: pd.DataFrame,
+    lookback: int = 240,
+) -> tuple[pd.Series, pd.Series]:
+    """z спреду на закритті t і forward = −Δspread бару t+1 (без lookahead)."""
+    ratio = pairs_spread(df)
+    window = max(int(lookback), 2)
+    min_p = max(window // 2, 2)
+    mean = ratio.rolling(window, min_periods=min_p).mean()
+    std = ratio.rolling(window, min_periods=min_p).std(ddof=0).replace(0, np.nan)
+    z = (ratio - mean) / std
+    fwd = -ratio.diff().shift(-1)
+    return z, fwd
+
+
+def _pairs_lookback(strategy: Strategy) -> int:
+    raw = strategy.get("lookback", 240)
+    try:
+        return max(int(raw), 2)
+    except (TypeError, ValueError):
+        return 240
+
+
 @dataclass(frozen=True, slots=True)
 class QuintileAudit:
     spearman: float
     monotonic: bool
     pass_: bool
     error: str | None = None
+    summary: str = ""
+    on_spread: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +67,8 @@ class TimeDecayAudit:
     pass_: bool
     warn: bool
     error: str | None = None
+    summary: str = ""
+    on_spread: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,15 +99,39 @@ def run_quintile_audit(
     from scalper_hft.validation.quintile import quintile_spread_study
 
     try:
-        signals = strategy.generate_signals(df, trades=trades, funding=funding)
-        fwd_ret = df["close"].pct_change().shift(-1).fillna(0.0)
-        if signals.abs().sum() <= 5:
-            return QuintileAudit(0.0, False, False, error="недостатньо сигналів")
-        q_res = quintile_spread_study(signals.astype(float), fwd_ret)
+        if has_pair_legs(df):
+            z, fwd_ret = pairs_z_and_forward(df, lookback=_pairs_lookback(strategy))
+            on_spread = True
+        elif getattr(strategy, "name", "") == "pairs_arb":
+            return QuintileAudit(0.0, False, False, error="потрібні колонки leg1/leg2 (−Δspread)")
+        else:
+            z = strategy.generate_signals(df, trades=trades, funding=funding).astype(float)
+            fwd_ret = df["close"].pct_change().shift(-1).fillna(0.0)
+            on_spread = False
+            if z.abs().sum() <= 5:
+                return QuintileAudit(0.0, False, False, error="недостатньо сигналів")
+        q_res = quintile_spread_study(z.astype(float), fwd_ret)
         ok = q_res.monotonic and abs(q_res.spearman) >= QUINTILE_SPEARMAN_MIN
-        return QuintileAudit(float(q_res.spearman), bool(q_res.monotonic), ok)
+        return QuintileAudit(
+            float(q_res.spearman),
+            bool(q_res.monotonic),
+            ok,
+            summary=q_res.summary(),
+            on_spread=on_spread,
+        )
     except Exception as exc:  # noqa: BLE001
         return QuintileAudit(0.0, False, False, error=str(exc)[:120])
+
+
+def _time_decay_verdict(sharpes: tuple[float, ...], *, summary: str, on_spread: bool) -> TimeDecayAudit:
+    if len(sharpes) < 2:
+        return TimeDecayAudit(sharpes, False, False, error="мало лагів", summary=summary, on_spread=on_spread)
+    lag0, lag1 = sharpes[0], sharpes[1]
+    if lag0 > 0 and lag1 < 0:
+        return TimeDecayAudit(sharpes, False, True, summary=summary, on_spread=on_spread)
+    if lag0 > 0 and lag1 < lag0 * 0.5:
+        return TimeDecayAudit(sharpes, False, True, summary=summary, on_spread=on_spread)
+    return TimeDecayAudit(sharpes, True, False, summary=summary, on_spread=on_spread)
 
 
 def run_time_decay_audit(
@@ -82,9 +144,16 @@ def run_time_decay_audit(
     position_pct: float = 0.01,
     max_lag: int = 3,
 ) -> TimeDecayAudit:
-    from scalper_hft.validation.time_decay import time_decay_test
+    from scalper_hft.validation.time_decay import pairs_time_decay, time_decay_test
 
     try:
+        if has_pair_legs(df):
+            signals = strategy.generate_signals(df, trades=trades, funding=funding)
+            td = pairs_time_decay(signals, pairs_spread(df), max_lag=max_lag)
+            sharpes = tuple(float(x) for x in td.sharpes)
+            return _time_decay_verdict(sharpes, summary=td.summary(), on_spread=True)
+        if getattr(strategy, "name", "") == "pairs_arb":
+            return TimeDecayAudit((), False, False, error="потрібні колонки leg1/leg2 (−Δspread)")
         td = time_decay_test(
             df,
             strategy,
@@ -95,14 +164,7 @@ def run_time_decay_audit(
             position_pct=position_pct,
         )
         sharpes = tuple(float(x) for x in td.sharpes)
-        if len(sharpes) < 2:
-            return TimeDecayAudit(sharpes, False, False, error="мало лагів")
-        lag0, lag1 = sharpes[0], sharpes[1]
-        if lag0 > 0 and lag1 < 0:
-            return TimeDecayAudit(sharpes, False, True)
-        if lag0 > 0 and lag1 < lag0 * 0.5:
-            return TimeDecayAudit(sharpes, False, True)
-        return TimeDecayAudit(sharpes, True, False)
+        return _time_decay_verdict(sharpes, summary=td.summary(), on_spread=False)
     except Exception as exc:  # noqa: BLE001
         return TimeDecayAudit((), False, False, error=str(exc)[:120])
 
@@ -171,3 +233,38 @@ def run_extended_audit(
         benchmark_sharpe=benchmark,
         holdout_sharpe=holdout_sharpe,
     )
+
+
+def pair_frame_from_klines(leg1: pd.DataFrame, leg2: pd.DataFrame) -> pd.DataFrame:
+    """Спільний індекс close → колонки leg1/leg2 для quintile/decay пар."""
+    return (
+        leg1[["close"]]
+        .rename(columns={"close": "leg1"})
+        .join(leg2[["close"]].rename(columns={"close": "leg2"}), how="inner")
+        .dropna()
+    )
+
+
+def format_pairs_signal_quality(
+    df: pd.DataFrame,
+    strategy: Strategy,
+    *,
+    max_lag: int = 3,
+) -> str:
+    """Текстовий блок CLI: quintile + pairs_time_decay на −Δspread."""
+    q = run_quintile_audit(df, strategy)
+    td = run_time_decay_audit(df, strategy, cost=CostModel(), max_lag=max_lag)
+    lines = ["", "Quintile / time-decay на −Δspread (не close ноги):"]
+    if q.error:
+        lines.append(f"  Quintile: помилка: {q.error}")
+    else:
+        flag = "PASS" if q.pass_ else "FAIL"
+        lines.append(f"  Quintile: {flag} | ρ={q.spearman:+.3f} | monotonic={q.monotonic}")
+        if q.summary:
+            lines.append(q.summary)
+    if td.error:
+        lines.append(f"  Time-decay: помилка: {td.error}")
+    else:
+        flag = "PASS" if td.pass_ else "WARN/FAIL"
+        lines.append(f"  Time-decay: {flag} | {td.summary}")
+    return "\n".join(lines)

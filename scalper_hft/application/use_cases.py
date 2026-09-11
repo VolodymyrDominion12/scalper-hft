@@ -1,9 +1,9 @@
-"""Use-cases: делегують до router / cell_audit / pairs_runner без I/O в domain."""
+"""Use-cases: делегують до router / cell_audit / pairs_runner без I/O ринку."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -12,6 +12,11 @@ from scalper_hft.backtest.event_engine import EventBacktestResult
 from scalper_hft.validation.cell_audit import AuditMode, CellAudit
 
 if TYPE_CHECKING:
+    import pandas as pd
+
+    from scalper_hft.backtest.micro_price import QueuePositionModel
+    from scalper_hft.live.pairs_runner import PairsPaperRunner
+    from scalper_hft.overlay.policy import CellPolicy
     from scalper_hft.research.jobs import PruneStats
 
 
@@ -57,27 +62,29 @@ class RunPairsPaper:
     control_path: Path | None = None
 
 
-def run_backtest(req: RunBacktest) -> BacktestResult | EventBacktestResult:
-    """Завантажити дані та прогнати бектест через router."""
+def run_backtest(
+    req: RunBacktest,
+    df: pd.DataFrame,
+    *,
+    trades: pd.DataFrame | None = None,
+    funding: pd.DataFrame | None = None,
+    overlay: CellPolicy | None = None,
+    queue_model: QueuePositionModel | None = None,
+    spread_bps: float = 2.0,
+    intrabar_exits: bool = False,
+    vol_ref: float = 0.0,
+) -> BacktestResult | EventBacktestResult:
+    """Прогнати бектест через router. Ринкові дані вже завантажив caller (CLI/jobs)."""
     from scalper_hft.backtest.execution import CostModel
     from scalper_hft.backtest.router import run_strategy_backtest
     from scalper_hft.config import get_settings
-    from scalper_hft.data.access import ensure_klines, ensure_trades_coverage
-    from scalper_hft.data.downloader import download_agg_trades, download_funding
     from scalper_hft.strategies import get_strategy
 
     settings = get_settings()
     strategy = get_strategy(req.strategy, **req.params)
-    df = ensure_klines(req.symbol, req.interval, req.days, base_interval=req.base_interval, derive=True)
-    if strategy.needs_trades:
-        ensure_trades_coverage(req.symbol, req.days)
-    trades = download_agg_trades(req.symbol, req.days) if strategy.needs_trades else None
-    funding = download_funding(req.symbol, req.days) if strategy.needs_funding else None
-    cost = CostModel(
-        maker_fee=settings.maker_fee,
-        taker_fee=settings.taker_fee,
-        slippage_frac=settings.slippage_frac,
-    )
+    cost = CostModel.from_settings(settings, df=df)
+    if vol_ref > 0:
+        cost = replace(cost, vol_ref=float(vol_ref))
     return run_strategy_backtest(
         df,
         strategy,
@@ -87,7 +94,11 @@ def run_backtest(req: RunBacktest) -> BacktestResult | EventBacktestResult:
         position_pct=settings.position_pct,
         is_maker=req.maker,
         trace=req.trace,
+        overlay=overlay,
         interval=req.interval,
+        queue_model=queue_model,
+        spread_bps=spread_bps,
+        intrabar_exits=intrabar_exits,
     )
 
 
@@ -112,7 +123,7 @@ def run_cell_audit(req: RunCellAudit) -> CellAudit:
     )
 
 
-def run_pairs_paper(req: RunPairsPaper):
+def run_pairs_paper(req: RunPairsPaper) -> PairsPaperRunner:
     """Створити PairsPaperRunner (paper-only, DRY_RUN=true за замовчуванням)."""
     from scalper_hft.live.pairs_runner import PairsPaperRunner
     from scalper_hft.live.store import PaperStore
@@ -151,4 +162,3 @@ def prune_research_jobs(
 
     with JobStore(store_path) as js:
         return js.prune_jobs(days=days, status=status, keep_records=keep_records)
-

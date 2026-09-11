@@ -122,7 +122,7 @@ def cmd_plot(args: argparse.Namespace) -> None:
     df = bundle.klines
     if df is None or df.empty:
         fail("Немає даних %s %s — запустіть download спершу", args.symbol, args.interval)
-    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    cost = CostModel.from_settings(settings, df=df)
     res = run_strategy_backtest(
         df,
         strategy,

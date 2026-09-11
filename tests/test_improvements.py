@@ -316,6 +316,85 @@ class TestRealizedVolScaling:
         assert np.isclose(v2.iloc[0] / v1.iloc[0], 2.0, rtol=1e-3)
 
 
+class TestPairsSpreadAlpha:
+    """W0-Q: quintile/time-decay пар на −Δspread, не на close однієї ноги."""
+
+    @staticmethod
+    def _mr_pair(n: int = 900, phi: float = 0.75, seed: int = 7) -> pd.DataFrame:
+        rng = np.random.default_rng(seed)
+        idx = pd.date_range("2024-01-01", periods=n, freq="1h")
+        spread = np.zeros(n)
+        for i in range(1, n):
+            spread[i] = phi * spread[i - 1] + rng.normal(0.0, 0.02)
+        trend = np.linspace(0.0, 0.8, n)  # спільний drift ніг
+        log_leg2 = trend + np.cumsum(rng.normal(0.0, 0.003, n))
+        log_leg1 = log_leg2 + spread
+        leg1 = np.exp(log_leg1) * 100.0
+        leg2 = np.exp(log_leg2) * 100.0
+        return pd.DataFrame(
+            {"leg1": leg1, "leg2": leg2, "close": leg1, "open": leg1, "high": leg1, "low": leg1, "volume": 1.0},
+            index=idx,
+        )
+
+    def test_pairs_quintile_on_spread_passes(self) -> None:
+        from scalper_hft.strategies import get_strategy
+        from scalper_hft.validation.audit_extensions import run_quintile_audit
+
+        df = self._mr_pair()
+        strategy = get_strategy("pairs_arb", lookback=60, entry_z=1.0, regime_scale=False)
+        q = run_quintile_audit(df, strategy)
+        assert q.error is None, q.error
+        assert q.on_spread is True
+        assert q.pass_ is True, f"ρ={q.spearman:+.3f} monotonic={q.monotonic}"
+
+    def test_pairs_quintile_leg_close_not_required(self) -> None:
+        from scalper_hft.validation.audit_extensions import QUINTILE_SPEARMAN_MIN, pairs_z_and_forward
+        from scalper_hft.validation.quintile import quintile_spread_study
+
+        df = self._mr_pair()
+        z, spread_fwd = pairs_z_and_forward(df, lookback=60)
+        # close хедж-ноги не містить −Δspread — старий fwd у cmd_report.
+        hedge_fwd = df["leg2"].pct_change().shift(-1)
+        spread_q = quintile_spread_study(z, spread_fwd)
+        hedge_q = quintile_spread_study(z, hedge_fwd)
+        spread_pass = spread_q.monotonic and abs(spread_q.spearman) >= QUINTILE_SPEARMAN_MIN
+        hedge_pass = hedge_q.monotonic and abs(hedge_q.spearman) >= QUINTILE_SPEARMAN_MIN
+        assert spread_pass is True
+        assert hedge_pass is False
+
+    def test_pairs_time_decay_on_spread(self) -> None:
+        from scalper_hft.backtest.execution import CostModel
+        from scalper_hft.strategies import get_strategy
+        from scalper_hft.validation.audit_extensions import run_time_decay_audit
+
+        df = self._mr_pair()
+        strategy = get_strategy("pairs_arb", lookback=60, entry_z=1.0, regime_scale=False)
+        td = run_time_decay_audit(df, strategy, cost=CostModel(), max_lag=2)
+        assert td.error is None, td.error
+        assert td.on_spread is True
+        assert len(td.sharpes) == 3
+        assert td.sharpes[0] > 0
+
+    def test_pairs_arb_without_legs_errors(self) -> None:
+        from scalper_hft.backtest.execution import CostModel
+        from scalper_hft.strategies import get_strategy
+        from scalper_hft.validation.audit_extensions import run_quintile_audit, run_time_decay_audit
+
+        idx = pd.date_range("2024-01-01", periods=80, freq="1h")
+        close = pd.Series(100.0 + np.arange(80), index=idx)
+        df = pd.DataFrame(
+            {"open": close, "high": close, "low": close, "close": close, "volume": 1.0},
+            index=idx,
+        )
+        strategy = get_strategy("pairs_arb")
+        q = run_quintile_audit(df, strategy)
+        assert q.pass_ is False
+        assert q.error is not None and "leg1" in q.error
+        td = run_time_decay_audit(df, strategy, cost=CostModel())
+        assert td.pass_ is False
+        assert td.error is not None and "leg1" in td.error
+
+
 class TestPaperStoreWALMode:
     def test_wal_mode_enabled(self, tmp_path):
         from scalper_hft.live.store import PaperStore

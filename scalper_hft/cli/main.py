@@ -389,6 +389,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--train", type=int, default=2000)
     p.add_argument("--test", type=int, default=500)
     p.add_argument("--trials", type=int, default=50)
+    p.add_argument("--leg1", default=None, help="pairs_arb: перша нога для quintile/time-decay на −Δspread")
+    p.add_argument("--leg2", default=None, help="pairs_arb: друга нога для quintile/time-decay на −Δspread")
     p.set_defaults(func=_cli_pkg.cmd_report)
 
     p = sub.add_parser("cohort", help="Cohort analysis: деградація edge за когортами угод")

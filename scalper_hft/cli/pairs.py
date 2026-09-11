@@ -37,7 +37,7 @@ def cmd_pairs(args: argparse.Namespace) -> None:
     f2 = download_funding(leg2, args.days)
     strategy = get_strategy(args.strategy, **_apply_use_kalman(args, args.param_dict))
     settings = get_settings()
-    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    cost = CostModel.from_settings(settings, df=df1)
 
     res = run_pairs_backtest(
         df1,
@@ -52,6 +52,11 @@ def cmd_pairs(args: argparse.Namespace) -> None:
     print(f"\nПара: {leg1} / {leg2} ({args.interval}, {len(res.spread)} спільних барів)")
     print(res.summary())
     _plot_equity(res.equity, args.strategy, f"{leg1}_{leg2}")
+
+    from scalper_hft.validation.audit_extensions import format_pairs_signal_quality, pair_frame_from_klines
+
+    pair_df = pair_frame_from_klines(df1, df2)
+    print(format_pairs_signal_quality(pair_df, strategy))
 
     if args.walkforward:
         from scalper_hft.backtest.pairs import run_pairs_walk_forward
@@ -103,7 +108,8 @@ def cmd_pairs_portfolio(args: argparse.Namespace) -> None:
                 "funding2": funding[cfg["leg2"]],
             }
         )
-    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    first_df = next(iter(data.values()))
+    cost = CostModel.from_settings(settings, df=first_df)
     res = run_pairs_portfolio(
         data,
         configs,
@@ -133,7 +139,7 @@ def cmd_arb(args: argparse.Namespace) -> None:
     funding = download_funding(args.symbol, args.days)
     strategy = get_strategy(args.strategy, **args.param_dict)
     settings = get_settings()
-    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    cost = CostModel.from_settings(settings, df=perp)
 
     res = run_delta_neutral_backtest(
         perp,

@@ -286,6 +286,8 @@ CLI/jobs.
 **Готово коли:** `use_cases.py` не імпортує `data.downloader` / `data.access`;
 CLI як і раніше качає дані; pytest CLI/jobs зелений.
 
+**Статус:** зроблено. `run_backtest(req, df, …)` + `CostModel.from_settings`; I/O в CLI/jobs.
+
 ---
 
 ## Фаза R7 — Тести `trader_loop` і вузькі винятки (P1)
@@ -384,7 +386,7 @@ LINK/BTC 1h maker + regime_scale(0.25) + vol-target + fill-parity.
 - [ ] R3: `docs/env/vps-paper.env.example` + `research.env.example`; HOLDOUT у `.env.example`
 - [ ] R4: `use_exit_ladders` явне поле, дефолт false; немає getattr-магії
 - [ ] R5: `scripts/sync_depth.sh` + quality-звіт
-- [ ] R6: `use_cases` без downloader
+- [x] R6: `use_cases` без downloader
 - [ ] R7: `tests/test_trader_loop.py`; немає swallow на fetch позицій
 - [ ] R8: ROADMAP/TODO покажчик на цей файл — зроблено разом із публікацією плану; тримати в синхроні при зміні фаз
 - [ ] `uv run pytest tests/ -q` зелений після кожної кодової фази

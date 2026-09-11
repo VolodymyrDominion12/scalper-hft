@@ -168,6 +168,54 @@ def test_no_direct_run_backtest_outside_allowed_modules() -> None:
     assert not violations, "run_backtest imported outside allowlist:\n  " + "\n  ".join(sorted(violations))
 
 
+def _imported_modules(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    mods: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            mods.add(node.module)
+        elif isinstance(node, ast.Import):
+            mods.update(alias.name for alias in node.names)
+    return mods
+
+
+def _cost_model_constructor_lines(path: Path) -> list[int]:
+    """Line numbers of CostModel(...) calls, excluding CostModel.from_settings."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    lines: list[int] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name) and func.id == "CostModel":
+            lines.append(int(getattr(node, "lineno", 0)))
+        elif isinstance(func, ast.Attribute) and func.attr == "CostModel":
+            lines.append(int(getattr(node, "lineno", 0)))
+    return lines
+
+
+def test_use_cases_does_not_import_market_data_io() -> None:
+    """W0-R6: application.run_backtest must not load klines/trades itself."""
+    path = _REPO_ROOT / "scalper_hft" / "application" / "use_cases.py"
+    mods = _imported_modules(path)
+    forbidden = {"scalper_hft.data.downloader", "scalper_hft.data.access"}
+    assert not (mods & forbidden), f"use_cases imports market I/O: {sorted(mods & forbidden)}"
+
+
+def test_cli_and_application_cost_model_from_settings() -> None:
+    """W0-COST: CLI/application must not build a flat CostModel(...)."""
+    violations: list[str] = []
+    for root in (
+        _REPO_ROOT / "scalper_hft" / "cli",
+        _REPO_ROOT / "scalper_hft" / "application",
+    ):
+        for path in _python_files(root):
+            for lineno in _cost_model_constructor_lines(path):
+                rel = path.relative_to(_REPO_ROOT)
+                violations.append(f"{rel}:{lineno}")
+    assert not violations, "flat CostModel() in cli/application:\n  " + "\n  ".join(violations)
+
+
 def test_unit_tests_never_import_ccxt_production() -> None:
     """Unit tests may use ccxt exception types, not production exchange clients."""
     violations: list[str] = []

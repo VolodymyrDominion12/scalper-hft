@@ -55,11 +55,11 @@ VPS: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
 - [x] **R3** Профілі `docs/env/vps-paper.env.example` і `research.env.example`
 - [ ] **R4 / W0-R4** Тест + docs `use_exit_ladders=false` (поле в Settings уже є)
 - [ ] **R5 / W0-R5** `scripts/sync_depth.sh` + quality-звіт
-- [ ] **R6 / W0-R6** I/O геть з `application/use_cases.py` + `CostModel.from_settings`
+- [x] **R6 / W0-R6** I/O геть з `application/use_cases.py` + `CostModel.from_settings`
 - [ ] **R7 / W0-R7** Тести `trader_loop` + вузькі except на fetch позицій
 - [x] **R8** Покажчики ROADMAP/TODO/DESIGN на CHANGE_PLAN_REVIEW
 - [x] **W0-TCA** IS: mid ≠ fill + opportunity cost unfilled + секція в `paper-audit`
-- [ ] **W0-Q** Quintile/time-decay пар на −Δspread, не на `close` ноги
+- [x] **W0-Q** Quintile/time-decay пар на −Δspread, не на `close` ноги
 - [ ] **W0-OPS** Тег `paper-v0.2.0` + 8 тижнів paper LINK/BTC
 
 ### 1. Paper-валідація та моніторинг (Phase 1 Gate)

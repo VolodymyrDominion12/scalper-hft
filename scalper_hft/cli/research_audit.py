@@ -343,53 +343,62 @@ def cmd_report(args: argparse.Namespace) -> None:
             sens_md = f"\n## Sensitivity\n\nпомилка: {exc}"
 
     # ── Quintile study (Narang гл. 9) ────────────────────────────────────────
-    _QUINTILE_SPEARMAN_MIN = 0.7
-    quintile_md = ""
-    q_res = None
-    try:
-        from scalper_hft.validation.quintile import quintile_spread_study
+    from scalper_hft.validation.audit_extensions import (
+        QUINTILE_SPEARMAN_MIN,
+        pair_frame_from_klines,
+        run_quintile_audit,
+        run_time_decay_audit,
+    )
 
-        signals = strategy.generate_signals(df, trades=trades, funding=funding)
-        fwd_ret = df["close"].pct_change().shift(-1).fillna(0.0)
-        if signals.abs().sum() > 5:
-            q_res = quintile_spread_study(signals.astype(float), fwd_ret)
-            quintile_md = f"\n## Quintile Study (монотонність сигналу, Narang гл. 9)\n\n```\n{q_res.summary()}\n```\n"
-            if q_res.monotonic and abs(q_res.spearman) >= _QUINTILE_SPEARMAN_MIN:
-                quintile_md += f"\n✅ QUINTILE PASS: Spearman ρ={q_res.spearman:+.3f} ≥ {_QUINTILE_SPEARMAN_MIN}\n"
-            else:
-                quintile_md += (
-                    f"\n⚠ QUINTILE FAIL: Spearman ρ={q_res.spearman:+.3f}, "
-                    f"monotonic={q_res.monotonic} — сигнал не монотонний\n"
-                )
-    except Exception as exc:  # noqa: BLE001
-        quintile_md = f"\n## Quintile Study\n\nпомилка: {exc}\n"
+    audit_df = df
+    leg1, leg2 = getattr(args, "leg1", None), getattr(args, "leg2", None)
+    if getattr(strategy, "name", "") == "pairs_arb" and leg1 and leg2:
+        d1 = _load_klines(
+            leg1, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", True)
+        )
+        d2 = _load_klines(
+            leg2, args.interval, args.days, base=getattr(args, "base", None), derive=getattr(args, "derive", True)
+        )
+        audit_df = pair_frame_from_klines(d1, d2)
+
+    quintile_md = ""
+    q_res = run_quintile_audit(audit_df, strategy, trades=trades, funding=funding)
+    q_label = "−Δspread" if q_res.on_spread else "сигнал vs close"
+    if q_res.error:
+        quintile_md = f"\n## Quintile Study\n\nпомилка: {q_res.error}\n"
+    else:
+        quintile_md = f"\n## Quintile Study ({q_label}, Narang гл. 9)\n\n```\n{q_res.summary}\n```\n"
+        if q_res.pass_:
+            quintile_md += f"\n✅ QUINTILE PASS: Spearman ρ={q_res.spearman:+.3f} ≥ {QUINTILE_SPEARMAN_MIN}\n"
+        else:
+            quintile_md += (
+                f"\n⚠ QUINTILE FAIL: Spearman ρ={q_res.spearman:+.3f}, "
+                f"monotonic={q_res.monotonic} — сигнал не монотонний\n"
+            )
 
     # ── Time-decay test (Narang гл. 9) ───────────────────────────────────────
     decay_md = ""
-    td_res = None
-    try:
-        from scalper_hft.validation.time_decay import time_decay_test
-
-        td_res = time_decay_test(
-            df,
-            strategy,
-            max_lag=3,
-            cost=cost,
-            trades=trades,
-            funding=funding,
-            position_pct=settings.position_pct,
-        )
-        decay_md = f"\n## Time-Decay Test (лаг входу, Narang гл. 9)\n\n```\n{td_res.summary()}\n```\n"
+    td_res = run_time_decay_audit(
+        audit_df,
+        strategy,
+        cost=cost,
+        trades=trades,
+        funding=funding,
+        position_pct=settings.position_pct,
+    )
+    td_label = "pairs −Δspread" if td_res.on_spread else "лаг входу"
+    if td_res.error:
+        decay_md = f"\n## Time-Decay Test\n\nпомилка: {td_res.error}\n"
+    else:
+        decay_md = f"\n## Time-Decay Test ({td_label}, Narang гл. 9)\n\n```\n{td_res.summary}\n```\n"
         if len(td_res.sharpes) >= 2:
             lag0, lag1 = td_res.sharpes[0], td_res.sharpes[1]
-            if lag0 > 0 and lag1 < 0:
+            if td_res.warn and lag0 > 0 and lag1 < 0:
                 decay_md += "\n⚠ TIME-DECAY FAIL: Sharpe вмирає за 1 бар — edge execution-dependent!\n"
-            elif lag0 > 0 and lag1 < lag0 * 0.5:
+            elif td_res.warn:
                 decay_md += f"\n⚠ TIME-DECAY WARN: деградація {1 - lag1 / lag0:.0%} за 1 бар — execution-sensitive\n"
-            else:
+            elif td_res.pass_:
                 decay_md += f"\n✅ TIME-DECAY PASS: Sharpe зберігається при lag=1 ({lag1:+.3f})\n"
-    except Exception as exc:  # noqa: BLE001
-        decay_md = f"\n## Time-Decay Test\n\nпомилка: {exc}\n"
 
     # ── Stress: cost_concentration + 4-scenario (Narang гл. 4, 10) ───────────
     stress_md = ""
@@ -476,26 +485,30 @@ def cmd_report(args: argparse.Namespace) -> None:
     print("─" * 60)
 
     # Quintile
-    if q_res is not None:
-        q_pass = q_res.monotonic and abs(q_res.spearman) >= _QUINTILE_SPEARMAN_MIN
-        flag = "✅ PASS" if q_pass else "⚠ FAIL"
-        print(f"  Quintile Study:   {flag} | Spearman ρ={q_res.spearman:+.3f} | monotonic={q_res.monotonic}")
+    if q_res.error:
+        print(f"  Quintile Study:   — ({q_res.error})")
     else:
-        print("  Quintile Study:   — (недостатньо сигналів або помилка)")
+        flag = "✅ PASS" if q_res.pass_ else "⚠ FAIL"
+        spread_note = " −Δspread" if q_res.on_spread else ""
+        print(
+            f"  Quintile Study:   {flag}{spread_note} | Spearman ρ={q_res.spearman:+.3f} | monotonic={q_res.monotonic}"
+        )
 
     # Time-decay
-    if td_res is not None and len(td_res.sharpes) >= 2:
+    if td_res.error or len(td_res.sharpes) < 2:
+        reason = td_res.error or "недостатньо даних"
+        print(f"  Time-Decay Test:  — ({reason})")
+    else:
         lag0, lag1 = td_res.sharpes[0], td_res.sharpes[1]
-        if lag0 > 0 and lag1 < 0:
+        if td_res.warn and lag0 > 0 and lag1 < 0:
             td_flag = "⚠ FAIL"
-        elif lag0 > 0 and lag1 < lag0 * 0.5:
+        elif td_res.warn:
             td_flag = "⚠ WARN"
         else:
             td_flag = "✅ PASS"
-        sharpes_str = " | ".join(f"lag{i}={s:+.3f}" for i, s in zip(td_res.lags, td_res.sharpes))
-        print(f"  Time-Decay Test:  {td_flag} | {sharpes_str}")
-    else:
-        print("  Time-Decay Test:  — (помилка або недостатньо даних)")
+        sharpes_str = " | ".join(f"lag{i}={s:+.3f}" for i, s in enumerate(td_res.sharpes))
+        spread_note = " −Δspread" if td_res.on_spread else ""
+        print(f"  Time-Decay Test:  {td_flag}{spread_note} | {sharpes_str}")
 
     # Stress
     if stress_report_df is not None and res.bar_returns is not None:
@@ -531,7 +544,7 @@ def cmd_cscv(args: argparse.Namespace) -> None:
     )
     strategy = get_strategy(args.strategy, **args.param_dict)
     settings = get_settings()
-    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    cost = CostModel.from_settings(settings, df=df)
     from scalper_hft.cli._common import _load_optional_streams
 
     trades, funding = _load_optional_streams(strategy, args.symbol, args.days)
@@ -601,7 +614,7 @@ def cmd_cohort(args: argparse.Namespace) -> None:
     )
     strategy = get_strategy(args.strategy, **args.param_dict)
     settings = get_settings()
-    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    cost = CostModel.from_settings(settings, df=df)
     from scalper_hft.cli._common import _load_optional_streams
 
     trades, funding = _load_optional_streams(strategy, args.symbol, args.days)
@@ -629,7 +642,7 @@ def cmd_lift(args: argparse.Namespace) -> None:
     )
     strategy = get_strategy(args.strategy, **args.param_dict)
     settings = get_settings()
-    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    cost = CostModel.from_settings(settings, df=df)
     from scalper_hft.cli._common import _load_optional_streams
 
     trades, funding = _load_optional_streams(strategy, args.symbol, args.days)
@@ -782,7 +795,7 @@ def cmd_stress(args: argparse.Namespace) -> None:
     )
     strategy = get_strategy(args.strategy, **args.param_dict)
     settings = get_settings()
-    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    cost = CostModel.from_settings(settings, df=df)
     from scalper_hft.cli._common import _load_optional_streams
 
     trades, funding = _load_optional_streams(strategy, args.symbol, args.days)
@@ -815,7 +828,7 @@ def cmd_capacity(args: argparse.Namespace) -> None:
     )
     strategy = get_strategy(args.strategy, **args.param_dict)
     settings = get_settings()
-    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    cost = CostModel.from_settings(settings, df=df)
     from scalper_hft.cli._common import _load_optional_streams
 
     trades, funding = _load_optional_streams(strategy, args.symbol, args.days)
@@ -852,7 +865,7 @@ def cmd_survival(args: argparse.Namespace) -> None:
     )
     strategy = get_strategy(args.strategy, **args.param_dict)
     settings = get_settings()
-    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    cost = CostModel.from_settings(settings, df=df)
     from scalper_hft.cli._common import _load_optional_streams
 
     trades, funding = _load_optional_streams(strategy, args.symbol, args.days)
@@ -894,9 +907,7 @@ def cmd_time_decay(args: argparse.Namespace) -> None:
         bundle.klines,
         strategy,
         max_lag=args.max_lag,
-        cost=CostModel(
-            maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac
-        ),
+        cost=CostModel.from_settings(settings, df=bundle.klines),
         trades=bundle.trades,
         funding=bundle.funding,
         position_pct=settings.position_pct,
@@ -905,23 +916,14 @@ def cmd_time_decay(args: argparse.Namespace) -> None:
 
 
 def cmd_quintile(args: argparse.Namespace) -> None:
-    import numpy as np
-
     from scalper_hft.data.research import load_research_data
+    from scalper_hft.validation.audit_extensions import pair_frame_from_klines, pairs_z_and_forward
     from scalper_hft.validation.quintile import quintile_spread_study
 
     b1 = load_research_data(args.leg1, args.interval, args.days)
     b2 = load_research_data(args.leg2, args.interval, args.days)
-    common = (
-        b1.klines[["close"]]
-        .rename(columns={"close": "l1"})
-        .join(b2.klines[["close"]].rename(columns={"close": "l2"}), how="inner")
-        .dropna()
-    )
-    ratio = np.log(common["l1"] / common["l2"])
-    lb = int(args.lookback)
-    z = (ratio - ratio.rolling(lb).mean()) / ratio.rolling(lb).std(ddof=0)
-    fwd = -ratio.diff().shift(-1)
+    df = pair_frame_from_klines(b1.klines, b2.klines)
+    z, fwd = pairs_z_and_forward(df, lookback=int(args.lookback))
     print(quintile_spread_study(z, fwd).summary())
 
 

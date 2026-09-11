@@ -26,8 +26,7 @@ def cmd_backtest(args: argparse.Namespace) -> None:
 
         _enqueue_job("backtest", payload_from_backtest_cli(args))
         return
-    from scalper_hft.backtest.execution import CostModel
-    from scalper_hft.backtest.router import run_strategy_backtest
+    from scalper_hft.application import RunBacktest, run_backtest
     from scalper_hft.data.research import load_research_data
     from scalper_hft.strategies import get_strategy
 
@@ -66,29 +65,30 @@ def cmd_backtest(args: argparse.Namespace) -> None:
         logger.info("Згенеровано %d %s-барів", len(df), bar_type)
     if bundle.quality is not None and not bundle.quality.ok:
         logger.warning("Якість барів: %s", bundle.quality.summary())
-    cost = CostModel(
-        maker_fee=settings.maker_fee,
-        taker_fee=settings.taker_fee,
-        slippage_frac=settings.slippage_frac,
-        vol_ref=float(getattr(args, "vol_ref", 0.0) or 0.0),
-    )
     queue_model = None
     if getattr(args, "queue_model", False):
         from scalper_hft.backtest.micro_price import QueuePositionModel
 
         queue_model = QueuePositionModel()
-    res = run_strategy_backtest(
+    res = run_backtest(
+        RunBacktest(
+            strategy=args.strategy,
+            symbol=args.symbol,
+            interval=args.interval or settings.default_interval,
+            days=args.days,
+            params=params,
+            maker=bool(getattr(args, "maker", False)),
+            trace=bool(getattr(args, "trace", False)),
+            base_interval=str(getattr(args, "base", None) or "1m"),
+        ),
         df,
-        strategy,
-        cost=cost,
         trades=trades,
         funding=funding,
-        position_pct=settings.position_pct,
         overlay=overlay,
-        interval=args.interval or get_settings().default_interval,
         queue_model=queue_model,
         spread_bps=float(getattr(args, "spread_bps", 2.0)),
         intrabar_exits=bool(getattr(args, "intrabar", False)),
+        vol_ref=float(getattr(args, "vol_ref", 0.0) or 0.0),
     )
     print("\n" + res.summary())
     _plot_equity(res.equity, args.strategy, args.symbol)
@@ -155,7 +155,7 @@ def cmd_optimize(args: argparse.Namespace) -> None:
     )
     strategy = get_strategy(args.strategy)
     settings = get_settings()
-    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    cost = CostModel.from_settings(settings, df=df)
     from scalper_hft.validation.holdout import resolve_optuna_holdout_pct, split_research_holdout
 
     holdout_pct = resolve_optuna_holdout_pct(float(getattr(settings, "enforce_holdout_pct", 0.0)))
@@ -268,11 +268,7 @@ def cmd_regime_backtest(args: argparse.Namespace) -> None:
         derive=getattr(args, "derive", True),
     )
 
-    cost = CostModel(
-        maker_fee=settings.maker_fee,
-        taker_fee=settings.taker_fee,
-        slippage_frac=settings.slippage_frac,
-    )
+    cost = CostModel.from_settings(settings, df=df)
 
     strat_names = [s.strip() for s in args.strategies.split(",") if s.strip()]
     if not strat_names:
