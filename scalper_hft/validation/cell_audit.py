@@ -78,6 +78,12 @@ _SUMMARY_KEYS = (
     "bt_profit_factor",
     "bt_win_rate",
     "bt_trades_per_day",
+    "holdout_sharpe",
+    "benchmark_sharpe",
+    "quintile_spearman",
+    "quintile_pass",
+    "time_decay_pass",
+    "stress_pass",
 )
 
 
@@ -181,6 +187,12 @@ class CellAudit:
     bt_profit_factor: float | None = None
     bt_win_rate: float | None = None
     bt_trades_per_day: float | None = None
+    holdout_sharpe: float | None = None
+    benchmark_sharpe: float | None = None
+    quintile_spearman: float | None = None
+    quintile_pass: bool | None = None
+    time_decay_pass: bool | None = None
+    stress_pass: bool | None = None
     windows: tuple[dict[str, float | int], ...] = ()
     sensitivity_grid: tuple[dict[str, Any], ...] = field(default_factory=tuple)
 
@@ -226,6 +238,12 @@ class CellAudit:
             bt_profit_factor=_as_float(raw.get("bt_profit_factor")),
             bt_win_rate=_as_float(raw.get("bt_win_rate")),
             bt_trades_per_day=_as_float(raw.get("bt_trades_per_day")),
+            holdout_sharpe=_as_float(raw.get("holdout_sharpe")),
+            benchmark_sharpe=_as_float(raw.get("benchmark_sharpe")),
+            quintile_spearman=_as_float(raw.get("quintile_spearman")),
+            quintile_pass=raw.get("quintile_pass") if raw.get("quintile_pass") is not None else None,
+            time_decay_pass=raw.get("time_decay_pass") if raw.get("time_decay_pass") is not None else None,
+            stress_pass=raw.get("stress_pass") if raw.get("stress_pass") is not None else None,
             windows=tuple(windows),
             sensitivity_grid=tuple(grid),
         )
@@ -283,6 +301,33 @@ def cell_verdict(
     if pbo is not None and pbo > PBO_MAX:
         reasons.append(f"PBO={pbo:.2f}>{PBO_MAX}")
 
+    # Розширені тести (паритет з cmd_report)
+    q_pass = row.get("quintile_pass")
+    if q_pass is False:
+        qs = _as_float(row.get("quintile_spearman"))
+        shown = "nan" if qs is None else f"{qs:+.3f}"
+        reasons.append(f"quintile_fail ρ={shown}")
+
+    td_pass = row.get("time_decay_pass")
+    if td_pass is False:
+        reasons.append("time_decay_fail")
+
+    st_pass = row.get("stress_pass")
+    if st_pass is False:
+        reasons.append("stress_fail")
+
+    bt_sr = _as_float(row.get("bt_sharpe"))
+    bench = _as_float(row.get("benchmark_sharpe"))
+    if bt_sr is not None and bench is not None and bt_sr <= bench:
+        reasons.append(f"bt_sharpe={bt_sr:.3f}≤benchmark={bench:.3f}")
+
+    if mode == "final":
+        ho = _as_float(row.get("holdout_sharpe"))
+        if ho is None:
+            reasons.append("holdout_sharpe=missing")
+        elif ho <= 0:
+            reasons.append(f"holdout_sharpe={ho:.3f}≤0")
+
     if not reasons:
         if mode == "final":
             return "PASS", ""
@@ -324,9 +369,9 @@ def audit_cell(
         бере max(n_trials_floor, чесна оцінка з журналу/combos) — щоб явна
         вказівка дослідника (--trials) не занижувала DSR-корекцію.
     """
-    from scalper_hft.backtest.execution import CostModel
 
     # Роутер: market_maker аудитується подієвим рушієм, не zero-signal вектором
+    from scalper_hft.backtest.execution import CostModel
     from scalper_hft.backtest.router import run_strategy_backtest
     from scalper_hft.config import get_settings
     from scalper_hft.data.access import ensure_klines
@@ -357,11 +402,6 @@ def audit_cell(
                     error="final mode: потрібен OOS_ENFORCE_BURN=true",
                 )
             with_cscv = True
-        cost = CostModel(
-            maker_fee=settings.maker_fee,
-            taker_fee=settings.taker_fee,
-            slippage_frac=settings.slippage_frac,
-        )
         strategy = get_strategy(strategy_name, **(strategy_params or {}))
         df = ensure_klines(symbol, interval, days)
         if df is None or df.empty:
@@ -372,6 +412,7 @@ def audit_cell(
                 status="error",
                 error="немає даних",
             )
+        cost = CostModel.from_settings(settings, df=df)
         if strategy.needs_trades:
             from scalper_hft.data.access import ensure_trades_coverage
 
@@ -386,7 +427,8 @@ def audit_cell(
         from scalper_hft.validation.holdout import split_research_holdout
 
         holdout_pct = float(getattr(settings, "enforce_holdout_pct", 0.0))
-        df, _holdout = split_research_holdout(df, holdout_pct)
+        df_full = df
+        df, holdout_df = split_research_holdout(df, holdout_pct)
         if df.empty:
             return CellAudit(
                 symbol=symbol,
@@ -551,6 +593,24 @@ def audit_cell(
             except Exception:  # noqa: BLE001
                 pbo = None
 
+        from scalper_hft.validation.audit_extensions import run_extended_audit
+
+        ho_slice = holdout_df
+        if holdout_pct <= 0 and mode == "final":
+            _, ho_slice = split_research_holdout(df_full, 0.20)
+        ext = run_extended_audit(
+            df,
+            strategy,
+            cost=cost,
+            trades=trades,
+            funding=funding,
+            position_pct=settings.position_pct,
+            bar_returns=res_full.bar_returns,
+            baseline_max_dd=float(m.max_drawdown),
+            holdout_df=ho_slice if mode == "final" or holdout_pct > 0 else None,
+            strategy_params=strategy_params or {},
+        )
+
         return CellAudit(
             symbol=symbol,
             interval=interval,
@@ -576,6 +636,12 @@ def audit_cell(
             bt_profit_factor=float(m.profit_factor),
             bt_win_rate=float(m.win_rate),
             bt_trades_per_day=float(m.trades_per_day),
+            holdout_sharpe=ext.holdout_sharpe,
+            benchmark_sharpe=ext.benchmark_sharpe,
+            quintile_spearman=ext.quintile.spearman if ext.quintile else None,
+            quintile_pass=ext.quintile.pass_ if ext.quintile else None,
+            time_decay_pass=ext.time_decay.pass_ if ext.time_decay else None,
+            stress_pass=ext.stress.pass_ if ext.stress else None,
             windows=windows,
             sensitivity_grid=grid_rows,
         )

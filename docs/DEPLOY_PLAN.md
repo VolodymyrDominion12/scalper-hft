@@ -17,8 +17,10 @@ hotfix від running tag, drain між барами). Цей документ �
 1. Один репозиторій, два рантайми. Локально ніколи `DRY_RUN=false`. VPS ніколи
    не ганяє Optuna / walk-forward / нові альфи.
 2. На VPS — checkout **тегу**, не `git pull origin main` і не rsync робочого дерева.
-3. `.env` на VPS не в git і не перезаписується деплоєм. Ключі Binance: IP
-   whitelist лише VPS, futures trade, без withdraw. Локальні ключі — інші або відсутні.
+3. `.env` на VPS не в git і не перезаписується деплоєм. **Не копіюй `.env` з ноута**
+   — використовуй шаблон [`docs/env/vps-paper.env.example`](env/vps-paper.env.example).
+   Локальний research: [`docs/env/research.env.example`](env/research.env.example).
+   Ключі Binance: IP whitelist лише VPS, futures trade, без withdraw.
 4. Для 1h maker рестарт між барами нормальний. Hot-reload (`importlib`) і
    Kubernetes — поза скоупом.
 5. Один PR = одна фаза. Кожна фаза: тести → `uv run pytest tests/ -q` →

@@ -40,22 +40,25 @@ class CostModel:
     vol_exp: float = 1.0  # показник масштабування slippage волатильністю
 
     @classmethod
-    def from_settings(cls, settings=None, df: pd.DataFrame | None = None) -> "CostModel":
+    def from_settings(cls, settings=None, df: pd.DataFrame | None = None) -> CostModel:
         """Авто-калібровка vol_ref з Parkinson-vol якщо не задано."""
         from scalper_hft.config import get_settings
+
         s = settings or get_settings()
-        vol_ref = s.vol_aware_slippage_ref
-        if vol_ref <= 0 and df is not None:
+        slippage_bps = float(getattr(s, "slippage_bps", getattr(s, "slippage_frac", 0.0002) * 10_000))
+        vol_ref = float(getattr(s, "vol_aware_slippage_ref", 0.0))
+        if vol_ref <= 0 and df is not None and {"high", "low"}.issubset(df.columns):
             from scalper_hft.features.microstructure import parkinson_vol
+
             pv = parkinson_vol(df["high"], df["low"], window=20)
             vol_ref = float(pv.dropna().median()) if not pv.dropna().empty else 0.0
         return cls(
-            maker_fee=s.maker_fee, 
-            taker_fee=s.taker_fee,
-            slippage_frac=s.slippage_bps / 10_000.0, 
+            maker_fee=float(getattr(s, "maker_fee", 0.0002)),
+            taker_fee=float(getattr(s, "taker_fee", 0.0005)),
+            slippage_frac=slippage_bps / 10_000.0,
             vol_ref=vol_ref,
-            vol_exp=s.vol_aware_slippage_exp,
-            impact_k=s.impact_k
+            vol_exp=float(getattr(s, "vol_aware_slippage_exp", 1.0)),
+            impact_k=float(getattr(s, "impact_k", 0.0)),
         )
 
     def taker_cost_per_side(self) -> float:

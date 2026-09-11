@@ -17,7 +17,7 @@ Paper pairs крутиться як systemd **user**-юніт з git-тегу. �
 git clone --branch paper-v0.1.0 <repo-url> ~/PycharmProjects/scalper-hft
 cd ~/PycharmProjects/scalper-hft
 uv sync --frozen
-cp .env.example .env   # заповнити локально на сервері; DRY_RUN=true
+cp docs/env/vps-paper.env.example .env   # заповнити ключі локально; DRY_RUN=true
 mkdir -p ~/.config/systemd/user
 cp deploy/scalper-paper-pairs.service ~/.config/systemd/user/
 # за потреби поправ WorkingDirectory / EnvironmentFile у юніті
@@ -34,6 +34,16 @@ systemctl --user status scalper-paper-pairs
 ```
 
 `flatten` лише якщо явно `true`. Невалідний JSON → pause (fail-closed).
+
+## FastAPI (опційно)
+
+`scalper-api.service` біндиться на **localhost** (`API_HOST=127.0.0.1` у `.env`).
+Не відкривайте `0.0.0.0` без `API_SECRET_KEY` ≥32 символів — lifespan
+`require_safe_api_bind` зупинить процес. Доступ ззовні — лише SSH-тунель:
+
+```bash
+ssh -L 8000:127.0.0.1:8000 user@vps
+```
 
 ## Оновлення (hotfix)
 

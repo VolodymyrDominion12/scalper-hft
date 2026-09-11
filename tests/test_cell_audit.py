@@ -43,6 +43,12 @@ def _ok(**over: object) -> CellAudit:
         "smoothness": 0.40,
         "n_trades_oos": 40,
         "bt_n_trades": 55,
+        "bt_sharpe": 1.0,
+        "benchmark_sharpe": 0.0,
+        "holdout_sharpe": 0.5,
+        "quintile_pass": True,
+        "time_decay_pass": True,
+        "stress_pass": True,
     }
     base.update(over)
     return CellAudit(**base)  # type: ignore[arg-type]

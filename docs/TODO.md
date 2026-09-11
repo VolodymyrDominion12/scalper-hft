@@ -49,8 +49,8 @@ H1–H8 закриті: [CHANGE_PLAN_HEALTH.md](CHANGE_PLAN_HEALTH.md).
 Деталі: [CHANGE_PLAN_REVIEW.md](CHANGE_PLAN_REVIEW.md). R1 змінює модель філу —
 не котити на живий `paper-v0.1.0` без нового тегу і скидання 8-тижневого годинника.
 - [x] **R1** Fill-parity paper ↔ backtest (mid + `MAKER_FILL_SEED`, snapshot rng)
-- [ ] **R2** `scalper-api.service` localhost + lifespan `require_safe_api_bind`
-- [ ] **R3** Профілі `docs/env/vps-paper.env.example` і `research.env.example`
+- [x] **R2** `scalper-api.service` localhost + lifespan `require_safe_api_bind`
+- [x] **R3** Профілі `docs/env/vps-paper.env.example` і `research.env.example`
 - [ ] **R4** Явне `use_exit_ladders=false` (не вмикати в циклі)
 - [ ] **R5** `scripts/sync_depth.sh` + quality-звіт
 - [ ] **R6** I/O геть з `application/use_cases.py`

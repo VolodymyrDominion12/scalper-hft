@@ -182,8 +182,12 @@ async def sqlite_watcher() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _broadcast_task
+    from scalper_hft.config import get_settings, require_safe_api_bind
+
+    settings = get_settings()
+    require_safe_api_bind(settings.api_host, settings)
     _broadcast_task = asyncio.create_task(sqlite_watcher())
-    logger.info("FastAPI сервер запущено, SQLite watcher ініціалізовано.")
+    logger.info("FastAPI сервер запущено, SQLite watcher ініціалізовано (bind=%s).", settings.api_host)
     yield
     if _broadcast_task:
         _broadcast_task.cancel()

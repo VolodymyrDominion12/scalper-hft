@@ -338,6 +338,7 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(func=_cli_pkg.cmd_paper_audit)
 
     p = sub.add_parser("is-report", help="Implementation Shortfall (IS) звіт по paper-трейдах")
+    p.add_argument("--days", type=int, default=7, help="Скільки днів ордерів аналізувати (за ts)")
     p.set_defaults(func=_cli_pkg.cmd_is_report)
 
     p = sub.add_parser("experiments", help="Каталог val→OOS експериментів (sparse_basket / ml_strategy)")
@@ -636,4 +637,3 @@ def main(argv: list[str] | None = None) -> None:
         set_settings(settings)
     args.param_dict = _parse_param_dict(getattr(args, "param", []))
     args.func(args)
-

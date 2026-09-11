@@ -150,7 +150,17 @@ def worker_loop(
         os.environ[JOB_CPU_BUDGET_ENV] = str(max(1, int(cpu_budget)))
     elif JOB_CPU_BUDGET_ENV not in os.environ:
         os.environ[JOB_CPU_BUDGET_ENV] = str(cpu_count())
-    logger.info("job worker pid=%s db=%s budget=%s", os.getpid(), store.path, os.environ.get(JOB_CPU_BUDGET_ENV))
+    from scalper_hft.research.code_version import worker_code_hash
+
+    _code_hash = worker_code_hash()
+    os.environ["SCALPER_CODE_HASH"] = _code_hash
+    logger.info(
+        "job worker pid=%s db=%s budget=%s code_hash=%s",
+        os.getpid(),
+        store.path,
+        os.environ.get(JOB_CPU_BUDGET_ENV),
+        _code_hash,
+    )
     while stop is None or not stop[0]:
         store.touch_worker()
         job = store.claim(pid=os.getpid())

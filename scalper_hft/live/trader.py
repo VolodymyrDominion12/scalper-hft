@@ -181,7 +181,7 @@ class LiveTrader:
         self._live_equity_seeded = False
         self.last_live_equity: float | None = None
 
-        self.use_exit_ladders = getattr(self.settings, "use_exit_ladders", False)
+        self.use_exit_ladders = self.settings.use_exit_ladders
         self.ladder: OneWayTradingLadder | None = None
         self.ws_stream: BinanceUserDataStream | None = None
         # TTL-кеш довідкових даних live-кроку (funding/aggTrades): без нього

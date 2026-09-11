@@ -1,0 +1,31 @@
+{
+  "weights": {
+    "trend_up": {
+      "supertrend": 1.0,
+      "smc_fvg": 0.0,
+      "funding_carry": 0.0,
+      "pairs_arb": 0.0
+    },
+    "range": {
+      "funding_carry": 1.0,
+      "supertrend": 0.0,
+      "smc_fvg": 0.0,
+      "pairs_arb": 0.0
+    },
+    "trend_down": {
+      "funding_carry": 1.0,
+      "supertrend": 0.0,
+      "smc_fvg": 0.0,
+      "pairs_arb": 0.0
+    }
+  },
+  "policy": {
+    "trend_up": "best_prior",
+    "range": "best_prior",
+    "trend_down": "best_prior"
+  },
+  "meta": {
+    "source": "iter7_regime_rating",
+    "note": "Empirical OOS map; pairs_arb runs as separate core sleeve in paper"
+  }
+}

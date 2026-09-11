@@ -142,6 +142,8 @@ class Settings:
     # Seed моделі філу maker pairs (paper PairsEngine і run_pairs_backtest).
     # Той самий seed → той самий Bernoulli-потік; snapshot зберігає стан rng.
     maker_fill_seed: int = field(default_factory=lambda: _env_int("MAKER_FILL_SEED", 42))
+    # Exit ladders — бібліотечний модуль; дефолт false (не для pairs-gate).
+    use_exit_ladders: bool = field(default_factory=lambda: _env_bool("USE_EXIT_LADDERS", False))
     # Partial-fill політика для resting maker-ордерів (Phase 5.2):
     # "cancel" — зафіксувати частковий філ і скасувати залишок (історичний
     # дефолт); "wait" — зафіксувати дельту і ТРИМАТИ ордер до повного філу

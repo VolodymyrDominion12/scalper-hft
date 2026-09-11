@@ -114,6 +114,18 @@ def cmd_overfit(args: argparse.Namespace) -> None:
         f"угод {audit.bt_n_trades} | PF {audit.bt_profit_factor:.2f} | win {audit.bt_win_rate:.0%}"
     )
 
+    print("\n[6] BENCHMARK / HOLDOUT / РОЗШИРЕНІ ТЕСТИ")
+    bench_s = f"{audit.benchmark_sharpe:.3f}" if audit.benchmark_sharpe is not None else "n/a"
+    ho_s = f"{audit.holdout_sharpe:.3f}" if audit.holdout_sharpe is not None else "n/a"
+    print(f"  Buy&Hold Sharpe: {bench_s} | Holdout Sharpe: {ho_s}")
+    if audit.quintile_spearman is not None:
+        q_flag = "PASS" if audit.quintile_pass else "FAIL"
+        print(f"  Quintile: {q_flag} | ρ={audit.quintile_spearman:+.3f}")
+    if audit.time_decay_pass is not None:
+        print(f"  Time-decay: {'PASS' if audit.time_decay_pass else 'FAIL/WARN'}")
+    if audit.stress_pass is not None:
+        print(f"  Stress: {'PASS' if audit.stress_pass else 'FAIL'}")
+
     label, reasons = cell_verdict(audit, mode=audit_mode)
     print("\n" + "═" * 60)
     print(f"ВЕРДИКТ: {label}" + (f"\n  причини: {reasons}" if reasons else ""))
@@ -177,14 +189,19 @@ def _maybe_record_pair_verdict(args: argparse.Namespace) -> None:
     pos_frac = float(wf["positive_windows"])
     n_windows = int(wf["n_windows"])
     # PBO — опційно (дорого); залишимо як майбутнє розширення (CSCV на pairs)
-    
+
     backtest_max_dd = None
     stress_crash = None
     stress_liq = None
     try:
         from scalper_hft.backtest.pairs import run_pairs_backtest
+
         bt = run_pairs_backtest(
-            df1, df2, strategy, f1, f2,
+            df1,
+            df2,
+            strategy,
+            f1,
+            f2,
             position_pct=getattr(args, "position_pct", None) or 0.3,
             maker_execution=getattr(args, "maker", False),
         )
@@ -192,17 +209,21 @@ def _maybe_record_pair_verdict(args: argparse.Namespace) -> None:
         if bt.equity is not None and len(bt.equity) > 10:
             ret = bt.equity.pct_change().dropna()
             from scalper_hft.validation.stress import stress_report
+
             stress_df = stress_report(ret)
             stress_crash = abs(float(stress_df.loc["crash", "max_drawdown"])) if "crash" in stress_df.index else None
-            stress_liq = abs(float(stress_df.loc["liquidity", "max_drawdown"])) if "liquidity" in stress_df.index else None
+            stress_liq = (
+                abs(float(stress_df.loc["liquidity", "max_drawdown"])) if "liquidity" in stress_df.index else None
+            )
     except Exception as exc:
         print(f"  [PAIR-вердикт] помилка стрес-тесту: {exc}")
 
     label, reasons = evaluate_pair_wf_gate(
-        pos_frac, n_windows,
+        pos_frac,
+        n_windows,
         stress_crash_max_dd=stress_crash,
         stress_liquidity_max_dd=stress_liq,
-        backtest_max_dd=backtest_max_dd
+        backtest_max_dd=backtest_max_dd,
     )
     print(
         "\n[PAIR-вердикт] "
@@ -271,6 +292,7 @@ def cmd_report(args: argparse.Namespace) -> None:
     from scalper_hft.cli import _load_klines  # call-time (patchable)
     from scalper_hft.config import get_settings
     from scalper_hft.strategies import get_strategy
+    from scalper_hft.validation.benchmark import buy_and_hold_sharpe
     from scalper_hft.validation.deflated_sharpe import deflated_sharpe_ratio, estimate_n_trials
     from scalper_hft.validation.sensitivity import parameter_sensitivity
     from scalper_hft.validation.walk_forward import run_walk_forward
@@ -280,7 +302,8 @@ def cmd_report(args: argparse.Namespace) -> None:
     )
     strategy = get_strategy(args.strategy, **args.param_dict)
     settings = get_settings()
-    cost = CostModel(maker_fee=settings.maker_fee, taker_fee=settings.taker_fee, slippage_frac=settings.slippage_frac)
+    cost = CostModel.from_settings(settings, df=df)
+    bench_sr = buy_and_hold_sharpe(df)
     from scalper_hft.cli._common import _load_optional_streams
 
     trades, funding = _load_optional_streams(strategy, args.symbol, args.days)
@@ -348,7 +371,12 @@ def cmd_report(args: argparse.Namespace) -> None:
         from scalper_hft.validation.time_decay import time_decay_test
 
         td_res = time_decay_test(
-            df, strategy, max_lag=3, cost=cost, trades=trades, funding=funding,
+            df,
+            strategy,
+            max_lag=3,
+            cost=cost,
+            trades=trades,
+            funding=funding,
             position_pct=settings.position_pct,
         )
         decay_md = f"\n## Time-Decay Test (лаг входу, Narang гл. 9)\n\n```\n{td_res.summary()}\n```\n"
@@ -357,7 +385,7 @@ def cmd_report(args: argparse.Namespace) -> None:
             if lag0 > 0 and lag1 < 0:
                 decay_md += "\n⚠ TIME-DECAY FAIL: Sharpe вмирає за 1 бар — edge execution-dependent!\n"
             elif lag0 > 0 and lag1 < lag0 * 0.5:
-                decay_md += f"\n⚠ TIME-DECAY WARN: деградація {1 - lag1/lag0:.0%} за 1 бар — execution-sensitive\n"
+                decay_md += f"\n⚠ TIME-DECAY WARN: деградація {1 - lag1 / lag0:.0%} за 1 бар — execution-sensitive\n"
             else:
                 decay_md += f"\n✅ TIME-DECAY PASS: Sharpe зберігається при lag=1 ({lag1:+.3f})\n"
     except Exception as exc:  # noqa: BLE001
@@ -388,8 +416,14 @@ def cmd_report(args: argparse.Namespace) -> None:
             stress_md += stress_report_df.to_markdown() + "\n"
             # pass/fail: maxDD при crash ≤ baseline × 2.5
             baseline_dd = abs(float(res.metrics.max_drawdown))
-            crash_dd = abs(float(stress_report_df.loc["crash", "max_drawdown"])) if "crash" in stress_report_df.index else 0.0
-            liq_dd = abs(float(stress_report_df.loc["liquidity", "max_drawdown"])) if "liquidity" in stress_report_df.index else 0.0
+            crash_dd = (
+                abs(float(stress_report_df.loc["crash", "max_drawdown"])) if "crash" in stress_report_df.index else 0.0
+            )
+            liq_dd = (
+                abs(float(stress_report_df.loc["liquidity", "max_drawdown"]))
+                if "liquidity" in stress_report_df.index
+                else 0.0
+            )
             if baseline_dd > 0 and crash_dd > baseline_dd * 2.5:
                 stress_md += f"\n⚠ STRESS WARN: crash maxDD={crash_dd:.1%} > {baseline_dd * 2.5:.1%} (baseline×2.5)\n"
             elif baseline_dd > 0 and liq_dd > baseline_dd * 4.0:
@@ -419,6 +453,7 @@ def cmd_report(args: argparse.Namespace) -> None:
 ## Deflated Sharpe (на OOS-дохідностях WF, не full-sample)
 
 - raw Sharpe (full-sample, IS-забруднений): {res.metrics.sharpe:.3f}
+- Buy & Hold Sharpe: {bench_sr:.3f}
 - OOS спостережень: {len(oos_ret)}
 - trials: {n_trials}
 - **DSR: {dsr:.3f}** {"✅ edge значущий" if dsr > 0.95 else "⚠ edge не підтверджено"}
@@ -466,12 +501,12 @@ def cmd_report(args: argparse.Namespace) -> None:
     if stress_report_df is not None and res.bar_returns is not None:
         baseline_dd = abs(float(res.metrics.max_drawdown))
         crash_dd = (
-            abs(float(stress_report_df.loc["crash", "max_drawdown"]))
-            if "crash" in stress_report_df.index else 0.0
+            abs(float(stress_report_df.loc["crash", "max_drawdown"])) if "crash" in stress_report_df.index else 0.0
         )
         liq_dd = (
             abs(float(stress_report_df.loc["liquidity", "max_drawdown"]))
-            if "liquidity" in stress_report_df.index else 0.0
+            if "liquidity" in stress_report_df.index
+            else 0.0
         )
         stress_ok = baseline_dd <= 0 or (crash_dd <= baseline_dd * 2.5 and liq_dd <= baseline_dd * 4.0)
         st_flag = "✅ PASS" if stress_ok else "⚠ WARN"
@@ -481,8 +516,6 @@ def cmd_report(args: argparse.Namespace) -> None:
 
     print("─" * 60)
     print(f"Звіт збережено: {out_path}")
-
-
 
 
 def cmd_cscv(args: argparse.Namespace) -> None:

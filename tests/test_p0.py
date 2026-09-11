@@ -347,6 +347,14 @@ def test_require_safe_api_bind_custom_key_public_ok() -> None:
     require_safe_api_bind("0.0.0.0", settings)
 
 
+def test_api_lifespan_rejects_public_weak_key() -> None:
+    from scalper_hft.config import DEFAULT_API_SECRET_KEY, require_safe_api_bind
+
+    settings = SimpleNamespace(api_secret_key=DEFAULT_API_SECRET_KEY)
+    with pytest.raises(RuntimeError, match="API_SECRET_KEY"):
+        require_safe_api_bind("0.0.0.0", settings)
+
+
 def test_require_dashboard_password_public_without_hash() -> None:
     from scalper_hft.config import require_dashboard_password
 
