@@ -64,9 +64,23 @@ def test_mean_reversion_prefers_range_not_high_vol() -> None:
 
 
 def test_momentum_prefers_trends() -> None:
-    for name in ("cvd_momentum", "cross_momentum", "supertrend"):
+    for name in ("cvd_momentum", "cross_momentum"):
         pref = REGISTRY[name].preferred_regimes
         assert pref == frozenset({"trend_up", "trend_down"})
+
+
+def test_iter7_evidence_based_regime_tags() -> None:
+    """iter7 (1h × 10 символів × 3y): теги виправлено за OOS-даними.
+
+    supertrend/stoch_rsi/smc_fvg — лише trend_up (у trend_down 0/10 символів
+    позитивних); funding_carry — range+trend_down (у trend_up 0/10).
+    Референс: docs/reports/strategy_rating_regime.md.
+    """
+    for name in ("supertrend", "stoch_rsi", "smc_fvg"):
+        assert REGISTRY[name].preferred_regimes == frozenset({"trend_up"}), name
+    assert REGISTRY["funding_carry"].preferred_regimes == frozenset({"range", "trend_down"})
+    # supertrend НЕ має trend_down (найгірший режим: −4.82, 0/10 символів)
+    assert "trend_down" not in REGISTRY["supertrend"].preferred_regimes
 
 
 def test_registry_taxonomy_matches_classes() -> None:

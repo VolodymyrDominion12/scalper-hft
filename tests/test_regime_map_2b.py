@@ -111,7 +111,8 @@ def test_supervisor_uses_regime_map(tmp_path: Path) -> None:
         regime_map_path=str(p),
         hmm_fit_bars=200,
     )
-    r = sup._load_regime_map()
+    # v2.0: карта завантажується у __init__ і доступна як _regime_map_cache
+    r = sup._regime_map_cache
     assert r is not None
     assert r.active_strategies("trend_up|normal") == ["supertrend"]
     assert r.active_strategies("range|normal") == ["mean_reversion"]
