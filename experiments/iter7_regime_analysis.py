@@ -235,7 +235,6 @@ def rolling_switch(
         if len(tr) < 500 or len(te) < 500:
             continue
         reg_tr = tr["__regime"].to_numpy()
-        reg_te = te["__regime"].to_numpy()
 
         def build_map(cands: list[str]) -> dict[str, str | None]:
             m: dict[str, str | None] = {}
@@ -602,7 +601,8 @@ def main() -> None:
             f"(>0.95 у {int((dsr['dsr_selector'] > 0.95).sum())}/{len(dsr)} символів), "
             f"DSR best_single={dsr['dsr_best_single'].mean():.3f}, "
             f"DSR mean_all={dsr['dsr_mean_all'].mean():.3f}, "
-            f"PBO={dsr['pbo_cscv'].mean():.3f}"
+            f"PBO(singles)={dsr['pbo_cscv'].mean():.3f}, "
+            f"PBO(із селектором)={dsr['pbo_with_selector'].mean():.3f}"
         )
     print(f"\nCSV: {RATING_CSV}, {REGIME_CSV}, {SWITCH_CSV}, {SWITCH_SUM_CSV}, {ROLL_CSV}, {DSR_CSV}")
 
