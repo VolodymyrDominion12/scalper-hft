@@ -1,41 +1,80 @@
 name: regime_supervisor
-version: "1.4"
+version: "2.0"
 status: candidate
 family: meta
 
 hypothesis: >
-  Детектор ринкового режиму (HMM + rule-based структура + волатильність)
-  дозволяє динамічно зважувати суб-стратегії пропорційно їх теоретичній
-  відповідності поточному режиму. Онлайн-адаптація ваг (ContextualHedgeBlend)
-  швидше реагує на концепт-дрейф ніж статичне blending. Комбінований Sharpe
-  перевищує будь-яку суб-стратегію у всіх режимах — не через кращий signal,
-  а через кращий режим-гейтинг. Гістерезис структури (min_dwell_bars) і
-  жорсткий per-regime вибір (best_prior) зменшують churn ваг на фліпах
-  range↔trend (дослідження: min-dwell ріже режимний churn на ~68%).
+  Ринковий режим (каузальна 1h-структура EMA 9/50 + vol-перцентиль) визначає,
+  ЯКА альфа-модель заробляє: у бичому режимі (trend_up) працює моментум/flow
+  (supertrend, smc_fvg, stoch_rsi), у флеті та ведмежому — carry (funding_carry).
+  Комбінація «перемикання стратегії за режимом» має давати позитивний OOS там,
+  де будь-яка одиночна стратегія збиткова, бо кожна стратегія знищується саме
+  у «чужому» режимі (10/10 символів: моментум −4.8…−5.3 у флеті/ведмежому;
+  carry −3.99 у бичому).
+  КАРТА «режим → стратегія» має бути ЕМПІРИЧНОЮ (OOS-матриця Sharpe per
+  regime × strategy), а не статичною таксономічною гіпотезою: iter7 показав, що
+  preferred_regimes-пріори суперечать даним (supertrend мав тег trend_down —
+  свій найгірший режим), а порожній preferred_regimes (= вага 1.0 у всіх режимах)
+  вироджував best_prior у «завжди перша універсальна стратегія».
 
 edge_conditions:
-  - name: regime_detection_accuracy
+  - name: regime_conditional_edge_exists
     description: >
-      Детектор режиму правильно класифікує > 60% барів порівняно з
-      ретроспективним labels (структура: EMA cross; vol: percentile).
-  - name: contextual_hedge_improvement
+      На спільній сітці (10 символів × 1h × 3y, maker, фіксовані дефолти) кожна
+      стратегія має режим, де вона додатна на ≥9/10 символах, і режим, де вона
+      від'ємна на ≥9/10. iter7: trend_up — supertrend +3.96 (10/10),
+      smc_fvg +3.36 (10/10), stoch_rsi +2.77 (10/10); range — funding_carry
+      +1.42 (9/10); trend_down — funding_carry +2.78 (9/10); моментум у
+      range/trend_down — 0/10 позитивних.
+  - name: selector_beats_best_single_oos
     description: >
-      ContextualHedgeBlend показує >= 10% вищий Sharpe vs рівних ваг (equal_weight)
-      у >= 2 з 3 walk-forward вікон.
-  - name: dwell_reduces_turnover
+      Селектор (карта режим→стратегія, навчена на train-фолді, застосована до
+      наступного фолду з лагом 1 бар) перевищує best-single, обрану на тому ж
+      train-фолді, і рівноважний бленд. iter7: rolling 4 фолди, 30 спостережень
+      фолд×символ — selector +2.58 vs best-single −0.40 vs mean-all −0.85;
+      selector > best-single у 100% спостережень, selector > 0 у 100%.
+  - name: not_data_snooping
     description: >
-      min_dwell_bars>0 зменшує кількість змін режиму і turnover сигналу без
-      погіршення avg OOS Sharpe у walk-forward (порівняно з min_dwell_bars=0).
+      CSCV/PBO процедури вибору < 0.5 і DSR селектора > DSR best-single.
+      iter7: PBO = 0.004; DSR селектора 0.821 (per-symbol n_trials=27; ≥0.95
+      у 6/10 символів), DSR best-single = 0.000. Портфельний n_trials=270
+      дає DSR 0.666 → валідація НЕ завершена (потрібен sensitivity + свіжі дані).
+  - name: map_not_lookahead
+    description: >
+      Карта будується лише на періоді, що строго передує періоду застосування
+      (fit_days → потім apply), метадані fit-вікна зберігаються у JSON карти;
+      у самій стратегії карта є статичним входом (жодного перенавчання на барі).
 
-# regime_supervisor використовує **kwargs — параметри передаються рядком.
-# Параметри задекларовані як документація, але НЕ перевіряються у param_space.
 params_doc:
   strategies:
-    default: "mean_reversion,supertrend,hmm_reversion"
-    description: Список суб-стратегій через кому (name:param1=val1:param2=val2).
+    default: "supertrend,stoch_rsi,funding_carry"
+    description: >
+      Суб-стратегії через кому (name:param1=val1:param2=val2). Дефолт v2.0 —
+      evidence-based слеви: моментум для trend_up (supertrend, stoch_rsi) +
+      carry для range/trend_down (funding_carry). Попередній дефолт
+      "mean_reversion,supertrend,hmm_reversion" не мав жодного carry-рукава, і
+      mean_reversion/hmm_reversion на 1h практично не торгують (2 та 1 угода за 3 роки).
   blend_mode:
-    default: "contextual_hedge"
-    description: regime_soft | contextual_hedge | best_prior | exp3
+    default: "regime_soft"
+    description: >
+      regime_soft | best_prior | contextual_hedge | exp3. Дефолт v2.0 =
+      regime_soft: за наявності regime_map_path це ТОЧНИЙ empirical switch
+      (карта з політикою best_prior дає вагу 1 одній стратегії, 0 решті).
+      contextual_hedge/exp3 лишаються дослідницькими: 80–85 тис. угод (churn).
+  regime_map_path:
+    default: ""
+    description: >
+      Шлях до JSON валідованої карти regime→strategy (RegimeStrategyMap).
+      Якщо задано — карта АВТОРИТЕТНА для regime_soft і best_prior; taxonomy-пріори
+      (preferred_regimes) не використовуються. Порожньо = працювати на taxonomy
+      (дослідницький режим, не рекомендовано для paper/live).
+  perf_matrix_path:
+    default: ""
+    description: >
+      Шлях до JSON OOS-матриці (regime × strategy → Sharpe) для
+      apply_oos_preferred_regimes: перезаписує preferred_regimes суб-стратегій
+      емпіричними тегами (лише для діагностики/логування; на вибір у
+      regime_soft/best_prior не впливає, якщо задано regime_map_path).
   n_hmm_states:
     default: 3
     description: Кількість HMM-станів.
@@ -50,10 +89,14 @@ params_doc:
     min: 0.1
     max: 0.5
     step: 0.05
-    description: Мінімальна вага суб-стратегії у несприятливому режимі.
+    description: >
+      Мінімальна вага суб-стратегії у несприятливому режимі для regime_soft БЕЗ
+      карти. З картою не використовується (hard-off = 0 у карті).
   hedge_eta:
     default: null
-    description: Швидкість навчання для Hedge у contextual_hedge (null = адаптивний розрахунок з варіації loss).
+    description: >
+      Швидкість навчання для Hedge у contextual_hedge (null = адаптивний
+      розрахунок з варіації loss).
   exp3_gamma:
     default: 0.05
     min: 0.01
@@ -61,24 +104,37 @@ params_doc:
     step: 0.01
     description: Exploration rate для Exp3Bandit при blend_mode="exp3".
   min_dwell_bars:
-    default: 0
+    default: 3
     min: 0
     max: 12
     step: 1
     description: >
       Гістерезис structure-режиму: новий режим приймається лише після N
-      послідовних барів (0 = вимкнено). Зменшує churn ваг/стратегій на
-      фліпах range↔trend.
+      послідовних барів (0 = вимкнено). Зменшує churn перемикань на фліпах
+      range↔trend. Дефолт v2.0 = 3 (гістерезис без втрати OOS: iter7 dwell3 ≈ dwell0).
   vol_high_veto:
     default: false
     description: >
       True — позиція 0 у режимі волатильності high (вибухові рухи ≠ стабільний
       короткий edge; захист від momentum-crash і комісійного бюджету).
+      iter2: на 1h-структурі гейт не покращує OOS (залишається opt-in).
   trend_direction_gate:
     default: false
     description: >
       True — у trend_up заборонені шорти, у trend_down — лонги (не торгуємо
-      проти явного тренду; range — без обмежень).
+      проти явного тренду; range — без обмежень). iter2: на 1h суттєво гірше.
+  lazy_gating:
+    default: false
+    description: >
+      True — сигнал суб-стратегії занулюється, якщо її preferred_regimes не
+      перетинаються з поточним режимом («виконуються лише стратегії активного
+      режиму»). Працює лише на taxonomy-тегах; з regime_map_path зайве.
+  turnover_penalty:
+    default: 0.0
+    min: 0.0
+    max: 0.001
+    step: 0.0001
+    description: Штраф за |Δsignal| у навчанні contextual_hedge/exp3 (net-PnL-свідоме навчання).
   htf_tf:
     default: ""
     description: >
@@ -91,13 +147,23 @@ invariants:
   signal_values: [-1, 0, 1]  # ціль після clip; мета-стратегія може повертати float
   continuous_output_possible: true  # regime_soft/contextual_hedge повертають float
   no_nan_output: true
+  map_static_input: true  # карта режим→стратегія не перенавчається на барах
 
 preferred_regimes: []
 
 notes: >
-  RegimeSupervisor є розширеним EnsembleStrategy з явним RegimeDetector.
-  Чотири blend_mode: "regime_soft" (статичні ваги за taxonomy), "contextual_hedge"
-  (онлайн per-regime Hedge), "best_prior" (жорсткий вибір ОДНІЄЇ стратегії з
-  найвищим taxonomy-пріором у поточному режимі — нативний сигнал {-1,0,1}),
-  "exp3" (Exp3Bandit — вибирає одну найкращу стратегію).
-  Потребує спільного аудиту з суб-стратегіями (тест: чи supervisor > best sub-strategy).
+  v2.0 (2026-09-11, iter7): карта «режим → стратегія» стала ЕМПІРИЧНОЮ.
+  Зміни проти v1.4: (1) regime_map_path авторитетний для regime_soft і best_prior
+  (taxonomy-пріори обходяться); (2) дефолтний пул дітей —
+  supertrend,stoch_rsi,funding_carry (додано carry-рукав); (3) дефолт
+  blend_mode = regime_soft та min_dwell_bars = 3.
+  Діагностика v1.4 (чому попередня версія була збиткова на 1h, 10 символів):
+  усі blend_mode дали від'ємний mean OOS Sharpe (−0.150…−0.204 для
+  ensemble/supervisor, −0.469 для exp3) і не перевершили найкращу одиночну
+  стратегію; причини — taxonomy-пріори суперечили даним, порожній
+  preferred_regimes вироджував best_prior, пул дітей не мав carry.
+  Побудова карти: `python -m scalper_hft.cli regime-map --strategies ... --symbols ...
+  --fit-days N --out results/regime_map.json` (фіксує fit-вікно у метаданих).
+  Референси: docs/reports/strategy_rating_regime.md, docs/reports/iter7_tables.md.
+  НАСТУПНИЙ КРОК перед paper: sensitivity порогів детектора режиму + валідація
+  карти на символах поза спаленим вікном (iter8).

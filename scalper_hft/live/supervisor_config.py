@@ -38,6 +38,11 @@ class SupervisorConfig:
     strategies: list[StrategyConfig] = field(default_factory=list)
     max_total_leverage: float = 1.0
     risk_regime_filtering: bool = True
+    # v2.0: режим блендингу + карта «режим → стратегія» (Phase 2B).
+    # Порожній regime_map_path = працювати на taxonomy-пріорах (дослідницький режим).
+    blend_mode: str = "regime_soft"
+    regime_map_path: str = ""
+    min_dwell_bars: int = 0
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> SupervisorConfig:
@@ -77,4 +82,7 @@ class SupervisorConfig:
             strategies=strategies,
             max_total_leverage=float(raw.get("max_total_leverage", 1.0)),
             risk_regime_filtering=bool(raw.get("risk_regime_filtering", True)),
+            blend_mode=str(raw.get("blend_mode", "regime_soft")),
+            regime_map_path=str(raw.get("regime_map_path", "") or ""),
+            min_dwell_bars=int(raw.get("min_dwell_bars", 0)),
         )

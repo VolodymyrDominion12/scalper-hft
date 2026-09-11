@@ -29,7 +29,9 @@ from scalper_hft.strategies.base import Strategy
 class SupertrendStrategy(Strategy):
     name = "supertrend"
     family = "momentum"
-    preferred_regimes = frozenset({"trend_up", "trend_down"})
+    # iter7 (1h × 10 символів × 3y): trend_up +3.96 (10/10 символів),
+    # trend_down −4.82 (0/10) — тег trend_down прибрано (docs/reports/strategy_rating_regime.md).
+    preferred_regimes = frozenset({"trend_up"})
 
     param_space = {
         "atr_period": (7.0, 14.0, 1.0),

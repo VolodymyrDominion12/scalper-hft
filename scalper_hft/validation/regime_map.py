@@ -238,11 +238,92 @@ def apply_oos_preferred_regimes(
             strat.preferred_regimes = tags
 
 
+def pool_regime_perf_matrix(
+    per_symbol: dict[str, tuple[pd.DataFrame, pd.DataFrame]],
+    *,
+    min_bars: int = 30,
+    periods_per_year: int = 8760,
+) -> RegimePerfMatrix:
+    """OOS-матриця, об'єднана по символах (один пул замість per-symbol).
+
+    Селектор «режим → стратегія» має бути робастним ПО ІНСТРУМЕНТАХ, а не
+    підігнаним під один символ: карти, навчені на одному символі, не
+    переносяться (iter7). Тому дохідності та режимні мітки всіх символів
+    конкатенуються в один ряд (порядок символів зберігається), і матриця
+    рахується один раз — Sharpe кожної комірки вже усереднений по пулу.
+
+    Args:
+        per_symbol: {symbol: (returns_df (T×N), regime_df з колонкою ``label``)}.
+            Індекси returns_df і regime_df мають збігатися в межах символу.
+        min_bars: мінімум барів у комірці (regime × strategy) для значущості.
+        periods_per_year: ануалізація Sharpe (8760 для 1h).
+
+    Returns:
+        RegimePerfMatrix по пулу; порожня матриця, якщо немає валідних даних.
+    """
+    ret_parts: list[pd.DataFrame] = []
+    label_parts: list[pd.Series] = []
+    for symbol in sorted(per_symbol):
+        ret, regime = per_symbol[symbol]
+        if ret is None or ret.empty or regime is None or regime.empty:
+            continue
+        common = ret.index.intersection(regime.index)
+        if len(common) < min_bars:
+            continue
+        r = ret.loc[common].apply(pd.to_numeric, errors="coerce")
+        r.index = pd.RangeIndex(len(r))
+        lab = regime.loc[common, "label"].astype(str)
+        lab.index = r.index
+        ret_parts.append(r)
+        label_parts.append(lab.rename("label"))
+    if not ret_parts:
+        return RegimePerfMatrix()
+
+    pooled_ret = pd.concat(ret_parts, axis=0, ignore_index=True)
+    pooled_regime = pd.concat(label_parts, axis=0, ignore_index=True).to_frame()
+    return compute_regime_perf_matrix(
+        pooled_ret,
+        pooled_regime,
+        min_bars=min_bars,
+        periods_per_year=periods_per_year,
+    )
+
+
+def save_regime_map(
+    rmap: RegimeStrategyMap,
+    path: str | Path,
+    *,
+    meta: dict | None = None,
+) -> None:
+    """Записати карту у JSON разом із метаданими fit-вікна (no-lookahead аудит).
+
+    Структура: ``{"weights": ..., "policy": ..., "meta": {...}}``. ``from_json``
+    читає лише weights/policy, тож метадані зворотно сумісні.
+    """
+    payload: dict = {"weights": rmap.weights, "policy": rmap.policy}
+    if meta:
+        payload["meta"] = meta
+    Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True))
+
+
+def load_regime_map_meta(path: str | Path) -> dict:
+    """Метадані карти (fit-вікно, символи, стратегії); {} якщо їх немає."""
+    try:
+        d = json.loads(Path(path).read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    meta = d.get("meta", {})
+    return dict(meta) if isinstance(meta, dict) else {}
+
+
 __all__ = [
     "RegimePerfMatrix",
     "RegimeStrategyMap",
     "compute_regime_perf_matrix",
+    "pool_regime_perf_matrix",
     "build_regime_strategy_map",
+    "save_regime_map",
+    "load_regime_map_meta",
     "preferred_regimes_from_matrix",
     "preferred_regimes_book_from_matrix",
     "apply_oos_preferred_regimes",

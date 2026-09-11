@@ -946,3 +946,69 @@ def cmd_hedge_ratio(args: argparse.Namespace) -> None:
     b2 = load_research_data(args.leg2, args.interval, args.days)
     res = compare_hedge_oos(b1.klines["close"], b2.klines["close"], lookback=int(args.lookback))
     print(res.summary())
+
+
+def cmd_regime_map(args: argparse.Namespace) -> None:
+    """Fit емпіричної карти «режим → стратегія» (Phase 2B) і зберегти JSON.
+
+    Карта будується на IS-періоді (--fit-days) і застосовується у
+    RegimeSupervisor через `regime_map_path`. Метадані fit-вікна пишуться в
+    той самий JSON — аудит no-lookahead: застосовувати карту можна лише на
+    барах ПІСЛЯ meta.fit_end.
+    """
+    from scalper_hft.validation.regime_fit import (
+        DEFAULT_FIT_STRATEGIES,
+        DEFAULT_FIT_SYMBOLS,
+        fit_regime_map,
+        format_fit_summary,
+    )
+    from scalper_hft.validation.regime_map import save_regime_map
+
+    strategies = [s.strip() for s in (args.strategies or ",".join(DEFAULT_FIT_STRATEGIES)).split(",") if s.strip()]
+    symbols = [s.strip() for s in (args.symbols or ",".join(DEFAULT_FIT_SYMBOLS)).split(",") if s.strip()]
+
+    result = fit_regime_map(
+        strategies,
+        symbols,
+        interval=args.interval or "1h",
+        fit_days=int(args.fit_days),
+        base_interval=args.base or "1m",
+        is_maker=not args.taker,
+        min_bars=int(args.min_bars),
+        hard_off_sharpe=float(args.hard_off),
+        high_vol_flat=not args.no_high_vol_flat,
+        best_prior_min_gap=float(args.best_prior_gap),
+    )
+    if not result.map.weights:
+        fail("Не вдалося побудувати карту: немає жодної валідованої комірки (regime × strategy).")
+
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    save_regime_map(result.map, out, meta=result.meta)
+    print(format_fit_summary(result))
+    print(f"\nКарта: {out}")
+
+
+def cmd_regime_matrix(args: argparse.Namespace) -> None:
+    """Показати Sharpe per (regime × strategy) з fit-періоду (без запису карти)."""
+    from scalper_hft.validation.regime_fit import fit_regime_map
+
+    strategies = [s.strip() for s in args.strategies.split(",") if s.strip()]
+    symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
+    result = fit_regime_map(
+        strategies,
+        symbols,
+        interval=args.interval or "1h",
+        fit_days=int(args.fit_days),
+        base_interval=args.base or "1m",
+        is_maker=not args.taker,
+        min_bars=int(args.min_bars),
+    )
+    rows = []
+    for regime in result.matrix.regimes():
+        row: dict[str, object] = {"regime": regime, "policy": result.map.policy.get(regime, "")}
+        for strat in result.matrix.strategies():
+            cell = result.matrix.data.get(regime, {}).get(strat)
+            row[strat] = round(float(cell["sharpe"]), 3) if cell else None
+        rows.append(row)
+    print(pd.DataFrame(rows).to_string(index=False) if rows else "Матриця порожня.")

@@ -13,6 +13,8 @@ from scalper_hft.cli.research_audit import (
     cmd_ml,
     cmd_overfit,
     cmd_quintile,
+    cmd_regime_map,
+    cmd_regime_matrix,
     cmd_report,
     cmd_stress,
     cmd_survival,
@@ -47,5 +49,7 @@ __all__ = [
     "cmd_time_decay",
     "cmd_quintile",
     "cmd_coint_scan",
+    "cmd_regime_map",
+    "cmd_regime_matrix",
     "cmd_hedge_ratio",
 ]

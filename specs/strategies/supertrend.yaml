@@ -52,9 +52,15 @@ invariants:
   signal_values: [-1, 0, 1]
   no_nan_output: true
 
-preferred_regimes: ["trend_up", "trend_down"]
+preferred_regimes: ["trend_up"]
 
 notes: >
   Портована з trade-bot-main (supertrend_strategy.py + Indicators.supertrend).
-  Відхилена після 5-річного walk-forward аудиту (iter4), у strategy_book занесена як rejected.
-  Залишається в кодовій базі як референсна реалізація та бенчмарк трендових моделей.
+  Відхилена як standalone після 5-річного walk-forward аудиту (iter4), у
+  strategy_book занесена як rejected. Залишається як бенчмарк трендових моделей.
+  v1.2 (iter7, 1h × 10 символів × 3y): тег `trend_down` ПРИБРАНО — це найгірший
+  режим стратегії (Sharpe −4.82, 0/10 символів позитивних), тоді як `trend_up`
+  дає +3.96 на 10/10 символів. Механізм: дефолтне `allow_short=false` робить
+  стратегію long-only, тож у низхідній структурі вона або поза ринком, або
+  тримає лонг проти тренду. Роль у v2.0: bull-рукав regime-карти
+  (`docs/reports/strategy_rating_regime.md`), не standalone.

@@ -16,9 +16,16 @@ invariants:
   no_nan_output: true
   needs_funding: true
 
-preferred_regimes: ["range", "low", "normal"]
+preferred_regimes: ["range", "trend_down"]  # iter7: заробляє ПОЗА бичим режимом
 
 notes: >
   Баг: funding_rate × 480 замість × 3 (8h → день). Виправлено. Після
   виправлення edge зник. Funding carry може бути прибутковим у майбутньому
   bull-cycle — залишаємо як резерв. Референс: docs/funding_regimes.md.
+  v1.1 (iter7, 1h × 10 символів × 3y): теги уточнено емпірично —
+  `range` (+1.42, 9/10 символів позитивних) і `trend_down` (+2.78, 9/10),
+  тоді як `trend_up` — найгірший режим (−3.99, 0/10). Тег `normal`
+  (vol-режим) прибрано: він не розділяє PnL і лише розмивав пріор.
+  Це ЄДИНА стратегія з додатним mean OOS Sharpe (+0.052, 60% символів) на
+  спільній сітці iter7 → роль carry-рукава regime-карти в режимах
+  range/trend_down; standalone гейт (SR>0.3) не проходить.

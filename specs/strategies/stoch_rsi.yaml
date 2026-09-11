@@ -77,10 +77,16 @@ invariants:
   signal_values: [-1, 0, 1]
   no_nan_output: true
 
-preferred_regimes: ["range", "low", "normal"]
+preferred_regimes: ["trend_up"]
 
 notes: >
   Портована з trade-bot-main (stoch_rsi_strategy.py). allow_short=False —
   дефолтна спотова логіка; True — шорт на перп.
   Відмінність від mean_reversion: Stoch RSI дає кращий timing (crossover),
   але вимагає більше барів для розрахунку (rsi_period + smooth_k + smooth_d).
+  v1.2 (iter7, 1h × 10 символів × 3y): теги `range/low/normal` ЗАМІНЕНО на
+  `trend_up`. Емпірично стратегія заробляє лише в бичому режимі (+2.77, 10/10
+  символів), у флеті ≈ 0 (−0.04, 4/10), у ведмежому −3.97 (0/10). Економічно
+  це «купівля провалів у напрямку тренду», а не контр-трендовий рейндж-трейдинг:
+  EMA50-фільтр (`close >= ema50 × 0.97`) сам відсікає низхідну структуру.
+  Роль: bull-рукав regime-карти, не standalone (mean OOS Sharpe −0.132).

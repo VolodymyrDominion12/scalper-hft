@@ -27,7 +27,9 @@ from scalper_hft.strategies.base import Strategy
 class StochRsiStrategy(Strategy):
     name = "stoch_rsi"
     family = "mean_reversion"
-    preferred_regimes = frozenset({"range", "low", "normal"})
+    # iter7: заробляє лише в бичій структурі (+2.77, 10/10); флет ≈ 0 (−0.04),
+    # ведмежий −3.97 (0/10). Теги range/low/normal замінено на trend_up.
+    preferred_regimes = frozenset({"trend_up"})
 
     param_space = {
         "rsi_period": (10.0, 21.0, 1.0),

@@ -50,7 +50,7 @@ invariants:
   signal_values: [-1, 0, 1]
   no_nan_output: true
 
-preferred_regimes: []  # FVG формуються у трендах, re-test — у корекціях
+preferred_regimes: ["trend_up"]  # iter7: FVG re-test дає OOS>0 лише у бичій структурі
 
 notes: >
   Портована з trade-bot-main (smc_fvg_strategy.py + smc/liquidity.py::fvg).
@@ -58,3 +58,6 @@ notes: >
   volume_filter — вхід лише при volume > SMA20. FVG визначається на закритті
   бару t, доступна для торгівлі лише з t+1 (no-lookahead гарантовано).
   Потребує OOS-аудиту: SMC — неоднозначна теорія, edge на crypto не доведено.
+  v1.2 (iter7, 1h × 10 символів × 3y): емпіричні теги — `trend_up` (+3.36,
+  10/10 символів позитивних), флет −1.39 (1/10), ведмежий −5.15 (0/10).
+  Standalone mean OOS Sharpe −0.197 → роль bull-рукава regime-карти.

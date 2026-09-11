@@ -36,17 +36,58 @@ logger = logging.getLogger(__name__)
 # Структурні режими для ContextualHedgeBlend
 _STRUCTURE_REGIMES = ["range", "trend_up", "trend_down"]
 
+# v2.0 (iter7): evidence-based пул слевів — моментум для trend_up (supertrend,
+# stoch_rsi) + carry для range/trend_down (funding_carry). Попередній дефолт
+# (mean_reversion,supertrend,hmm_reversion) не мав carry-рукава, а
+# mean_reversion/hmm_reversion на 1h практично не торгують (2 та 1 угода за 3 роки).
+DEFAULT_CHILDREN: str = "supertrend,stoch_rsi,funding_carry"
+# regime_soft: детерміноване зважування без churn; за наявності regime_map_path
+# стає точним empirical switch (карта з політикою best_prior дає вагу 1 одній
+# стратегії, 0 решті). contextual_hedge/exp3 лишаються дослідницькими.
+DEFAULT_BLEND_MODE: str = "regime_soft"
+
+
+def _map_audit(children: list[str], rmap: object | None) -> list[str]:
+    """Перевірити узгодженість карти з пулом дітей (повертає попередження)."""
+    if rmap is None:
+        return []
+    weights = getattr(rmap, "weights", {}) or {}
+    mapped = {s for cells in weights.values() for s in cells}
+    warnings: list[str] = []
+    unknown = mapped - set(children)
+    if unknown:
+        warnings.append(
+            f"карта містить стратегії поза пулом дітей ({sorted(unknown)}) — їхні ваги ігноруються"
+        )
+    never = set(children) - mapped
+    if never and mapped:
+        warnings.append(f"діти без жодної комірки в карті ({sorted(never)}) — капітал їм не виділяється")
+    return warnings
+
+
 
 class RegimeSupervisor(Strategy):
-    """Supervisor: детектор режиму + онлайн-зважування сигналів стратегій.
+    """Supervisor: детектор режиму + перемикання/зважування сигналів стратегій.
+
+    Джерело ваг (v2.0, iter7):
+        - ``regime_map_path`` задано → ЕМПІРИЧНА карта «режим → стратегія»
+          (Phase 2B). АВТОРИТЕТНА для regime_soft і best_prior; taxonomy-пріори
+          не використовуються. Рекомендований режим для paper/live.
+        - інакше → taxonomy-пріори (``preferred_regimes``), дослідницький режим.
+          iter7: на спільній сітці (1h, 3y, 10 символів) усі blend_mode дали
+          від'ємний mean OOS Sharpe і не перевершили найкращу одиночну стратегію.
 
     Параметри (через **params):
-        strategies:         рядок через кому, наприклад "mean_reversion,supertrend,hmm_reversion".
-                            Підтримує формат name:param1=val1:param2=val2.
-        blend_mode:         "regime_soft" | "contextual_hedge" | "exp3" (default: "contextual_hedge").
+        strategies:         рядок через кому, наприклад "supertrend,stoch_rsi,funding_carry"
+                            (дефолт v2.0 — evidence-based слеви). Підтримує формат
+                            name:param1=val1:param2=val2.
+        blend_mode:         "regime_soft" (default) | "best_prior" |
+                            "contextual_hedge" | "exp3".
+        regime_map_path:    JSON валідованої карти regime→strategy (default: "").
+        perf_matrix_path:   JSON OOS-матриці (regime × strategy) для OOS-тегів.
         n_hmm_states:       кількість HMM станів (default 3).
         hmm_fit_bars:       скільки перших барів для навчання HMM (default 2000).
-        unfavorable_weight: вага в несприятливому режимі для regime_soft (default 0.25).
+        unfavorable_weight: вага в несприятливому режимі для regime_soft БЕЗ карти (default 0.25).
         hedge_eta:          параметр швидкості навчання Hedge (default: адаптивний).
         exp3_gamma:         exploration rate для Exp3 (default 0.05).
         min_dwell_bars:     гістерезис structure-режиму: новий режим приймається
@@ -55,6 +96,8 @@ class RegimeSupervisor(Strategy):
         vol_high_veto:      True — позиція 0 у режимі high-vol (default False).
         trend_direction_gate: True — у trend_up без шортів, у trend_down без
                             лонгів (default False).
+        lazy_gating:        True — занулювати сигнали стратегій поза їхнім
+                            taxonomy-режимом (default False; з картою зайве).
     """
 
     name = "regime_supervisor"
@@ -70,16 +113,21 @@ class RegimeSupervisor(Strategy):
         super().__init__(**params)
 
         # Список суб-стратегій
-        strat_str = str(self.get("strategies", "mean_reversion,supertrend,hmm_reversion"))
+        strat_str = str(self.get("strategies", DEFAULT_CHILDREN))
         self._strat_names: list[str] = []
         self._strats: list[Strategy] = []
         self._load_strategies(strat_str)
 
-        self.blend_mode: str = str(self.get("blend_mode", "contextual_hedge"))
+        self.blend_mode: str = str(self.get("blend_mode", DEFAULT_BLEND_MODE))
         self.needs_trades = any(s.needs_trades for s in self._strats)
         self.needs_funding = any(s.needs_funding for s in self._strats)
         self.requires = frozenset().union(*(s.requires for s in self._strats))
         self._apply_oos_preferred()
+
+        # Емпірична карта «режим → стратегія» (Phase 2B). Завантажується один раз;
+        # якщо задана — АВТОРИТЕТНА для regime_soft і best_prior (taxonomy-пріори
+        # обходяться). Карта — статичний вхід: на барах не перенавчається.
+        self._refresh_regime_map()
 
         # RegimeDetector
         self._detector = RegimeDetector(
@@ -99,6 +147,22 @@ class RegimeSupervisor(Strategy):
         # попереднього стану → невідтворювані бектести. Свіжий стан на виклик.
         self._prev_sigs: np.ndarray | None = None  # сигнали минулого бару для hedge update
 
+    def _refresh_regime_map(self) -> None:
+        """(Пере)завантажити карту та перевірити її узгодженість із пулом дітей.
+
+        Викликається у __init__ і після заміни списку суб-стратегій (from_config):
+        карта має відповідати САМЕ тому пулу, який реально торгує.
+        """
+        self._regime_map_cache = self._read_regime_map()
+        self.regime_map_meta: dict = {}
+        if self._regime_map_cache is None:
+            return
+        from scalper_hft.validation.regime_map import load_regime_map_meta
+
+        self.regime_map_meta = load_regime_map_meta(str(self.get("regime_map_path", "")))
+        for warning in _map_audit(self._strat_names, self._regime_map_cache):
+            logger.warning("RegimeSupervisor: %s", warning)
+
     @classmethod
     def from_config(cls, config_path: str) -> RegimeSupervisor:
         from scalper_hft.live.supervisor_config import SupervisorConfig
@@ -106,8 +170,12 @@ class RegimeSupervisor(Strategy):
 
         cfg = SupervisorConfig.from_yaml(config_path)
 
-        # Створюємо базовий Supervisor
-        sup = cls(blend_mode="contextual_hedge")
+        # Створюємо базовий Supervisor (карта/режим блендингу — з YAML).
+        sup = cls(
+            blend_mode=cfg.blend_mode,
+            regime_map_path=cfg.regime_map_path,
+            min_dwell_bars=cfg.min_dwell_bars,
+        )
         sup._strat_names = []
         sup._strats = []
 
@@ -130,6 +198,8 @@ class RegimeSupervisor(Strategy):
         sup.needs_funding = any(s.needs_funding for s in sup._strats)
         sup.requires = frozenset().union(*(s.requires for s in sup._strats))
         sup._apply_oos_preferred()
+        # Пул дітей змінився → карту треба перевірити проти нього.
+        sup._refresh_regime_map()
 
         return sup
 
@@ -219,8 +289,8 @@ class RegimeSupervisor(Strategy):
         from scalper_hft.strategies.taxonomy import regime_capital_weight
 
         unfavorable = float(self.get("unfavorable_weight", DEFAULT_UNFAVORABLE_WEIGHT))
-        # Валідована regime→strategy map (2B): опційно.
-        rmap = self._load_regime_map()
+        # Валідована regime→strategy map (2B): АВТОРИТЕТНА, якщо задана.
+        rmap = self._regime_map_cache
         result = pd.Series(0.0, index=sig_df.index)
 
         for i, (idx, row) in enumerate(sig_df.iterrows()):
@@ -249,15 +319,21 @@ class RegimeSupervisor(Strategy):
         return result.clip(-1.0, 1.0)
 
     def _blend_best_prior(self, sig_df: pd.DataFrame, regime_df: pd.DataFrame) -> pd.Series:
-        """Жорсткий вибір суб-стратегії за режимом (taxonomy prior).
+        """Жорсткий вибір ОДНІЄЇ суб-стратегії за режимом.
 
-        На кожному барі обирається ОДНА суб-стратегія з найвищою вагою
-        regime_capital_weight у поточному (structure, vol)-режимі; повертається
-        її нативний сигнал {-1, 0, 1}. Перемикання відбувається лише коли
-        режим реально змінився (згладжений `min_dwell_bars` у детекторі) —
-        це і є «перемикання стратегії за типом ринку» без дробових позицій.
-        Тай-брейк: перша стратегія за порядком; стратегії з нульовим
-        пріором у режимі (вага = unfavorable × вага) — останні.
+        Джерело ваг (пріоритет):
+            1. ``regime_map_path`` (Phase 2B, v2.0) — ЕМПІРИЧНА OOS-карта
+               «режим → стратегія»: вага береться з карти, комірки без покриття
+               (усі ваги 0) → flat. Це рекомендований режим: taxonomy-пріори
+               суперечать даним (iter7: supertrend мав тег trend_down — свій
+               найгірший режим, Sharpe −4.82).
+            2. інакше — taxonomy-пріор ``regime_capital_weight`` (дослідницький
+               режим; порожній preferred_regimes = вага 1.0 у всіх режимах).
+
+        На кожному барі обирається суб-стратегія з найвищою вагою в поточному
+        (structure, vol)-режимі; повертається її нативний сигнал {-1, 0, 1}.
+        Перемикання відбувається лише коли режим реально змінився (згладжений
+        `min_dwell_bars` у детекторі). Тай-брейк: перша стратегія за порядком.
         """
         from scalper_hft.strategies.taxonomy import regime_capital_weight
 
@@ -265,28 +341,48 @@ class RegimeSupervisor(Strategy):
         n = len(sig_df)
         out = np.zeros(n, dtype=float)
         sigs = sig_df.values
-        w_rows: list[np.ndarray] = []
         structures = regime_df.reindex(sig_df.index)["structure"].fillna("range").values
         vols = regime_df.reindex(sig_df.index)["vol"].fillna("normal").values
+        rmap = self._regime_map_cache
 
-        for s in self._strats:
-            row_w = np.array(
-                [
-                    regime_capital_weight(
-                        frozenset(s.preferred_regimes),
-                        str(structures[t]),
-                        str(vols[t]),
-                        unfavorable=unfavorable,
+        if rmap is not None:
+            # Комірка карти = "structure|vol" (як у RegimePerfMatrix).
+            if "label" in regime_df.columns:
+                labels = regime_df.reindex(sig_df.index)["label"].fillna("range|normal").astype(str).values
+            else:
+                labels = np.array(
+                    [f"{structures[t]}|{vols[t]}" for t in range(n)],
+                    dtype=object,
+                )
+            w_rows: list[np.ndarray] = []
+            for s in self._strats:
+                w_rows.append(
+                    np.array([float(rmap.weights_for(str(lab)).get(s.name, 0.0)) for lab in labels], dtype=float)
+                )
+            W = np.vstack(w_rows) if w_rows else np.zeros((1, n))
+        else:
+            w_rows = []
+            for s in self._strats:
+                w_rows.append(
+                    np.array(
+                        [
+                            regime_capital_weight(
+                                frozenset(s.preferred_regimes),
+                                str(structures[t]),
+                                str(vols[t]),
+                                unfavorable=unfavorable,
+                            )
+                            for t in range(n)
+                        ]
                     )
-                    for t in range(n)
-                ]
-            )
-            w_rows.append(row_w)
-        W = np.vstack(w_rows)  # (n_strats, n_bars)
+                )
+            W = np.vstack(w_rows) if w_rows else np.zeros((1, n))
 
+        active = W.max(axis=0) > 0 if W.size else np.zeros(n, dtype=bool)
         for t in range(n):
-            best = int(np.argmax(W[:, t]))
-            out[t] = sigs[t, best]
+            if not active[t]:
+                continue
+            out[t] = sigs[t, int(np.argmax(W[:, t]))]
 
         return pd.Series(out, index=sig_df.index)
 
@@ -477,26 +573,22 @@ class RegimeSupervisor(Strategy):
         except (OSError, ValueError, TypeError) as exc:
             logger.warning("RegimeSupervisor: не вдалося застосувати perf_matrix %s: %s", path, exc)
 
-    def _load_regime_map(self):
+    def _read_regime_map(self):
         """Завантажити валідовану regime→strategy map (2B) з regime_map_path.
 
-        Опційно: якщо параметр не заданий — None (статичні taxonomy-пріори).
-        Кешується на інстансі, щоб не читати файл щоразу на бар.
+        Опційно: якщо параметр не заданий — None (працюємо на taxonomy-пріорах,
+        дослідницький режим). Карта читається один раз у __init__ (статичний вхід).
         """
-        if hasattr(self, "_regime_map_cache"):
-            return self._regime_map_cache
         path = self.get("regime_map_path", "")
-        rmap = None
-        if path:
-            try:
-                from scalper_hft.validation.regime_map import RegimeStrategyMap
+        if not path:
+            return None
+        try:
+            from scalper_hft.validation.regime_map import RegimeStrategyMap
 
-                rmap = RegimeStrategyMap.from_json(str(path))
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("RegimeSupervisor: не вдалося завантажити regime_map %s: %s", path, exc)
-                rmap = None
-        self._regime_map_cache = rmap  # type: ignore[assignment]
-        return rmap
+            return RegimeStrategyMap.from_json(str(path))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("RegimeSupervisor: не вдалося завантажити regime_map %s: %s", path, exc)
+            return None
 
     def regime_summary(self, df: pd.DataFrame) -> pd.DataFrame:
         """Зведення по режимах: частота, avg signal per strategy.

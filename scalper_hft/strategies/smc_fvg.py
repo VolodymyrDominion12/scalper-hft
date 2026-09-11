@@ -28,7 +28,9 @@ from scalper_hft.strategies.base import Strategy
 class SmcFvgStrategy(Strategy):
     name = "smc_fvg"
     family = "flow"
-    preferred_regimes = frozenset()
+    # iter7: FVG re-test дає OOS>0 лише у бичій структурі (+3.36, 10/10
+    # символів); флет −1.39, ведмежий −5.15.
+    preferred_regimes = frozenset({"trend_up"})
 
     param_space = {
         "atr_sl": (1.0, 3.0, 0.5),

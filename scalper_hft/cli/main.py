@@ -206,8 +206,8 @@ def main(argv: list[str] | None = None) -> None:
     )
     p.add_argument(
         "--strategies",
-        default="mean_reversion,supertrend,hmm_reversion",
-        help="Стратегії через кому (default: mean_reversion,supertrend,hmm_reversion)",
+        default="supertrend,stoch_rsi,funding_carry",
+        help="Стратегії через кому (default: supertrend,stoch_rsi,funding_carry — слеви iter7)",
     )
     p.add_argument("--symbol", default="BTCUSDT", help="Символ")
     p.add_argument("--interval", default="1h", help="Таймфрейм")
@@ -473,6 +473,53 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--leg2", default="ETHUSDT")
     p.add_argument("--lookback", type=int, default=240)
     p.set_defaults(func=_cli_pkg.cmd_hedge_ratio, interval="1h")
+
+    p = sub.add_parser(
+        "regime-map",
+        help="Fit емпіричної карти «режим → стратегія» (Phase 2B) на IS-періоді → JSON",
+    )
+    p.add_argument(
+        "--strategies",
+        default=None,
+        help="Кандидати-слеви через кому (default: supertrend,stoch_rsi,funding_carry)",
+    )
+    p.add_argument(
+        "--symbols",
+        default=None,
+        help="Символи для пулу Sharpe через кому (default: BTC,ETH,SOL,XRP,LINK)",
+    )
+    p.add_argument("--interval", default="1h", help="Таймфрейм режиму/торгівлі")
+    p.add_argument("--fit-days", type=int, default=365, help="Глибина fit-періоду (IS), днів")
+    p.add_argument("--base", default="1m", help="Базовий ТФ для деривації з кешу")
+    p.add_argument("--taker", action="store_true", help="Taker-модель витрат (default: maker)")
+    p.add_argument("--min-bars", type=int, default=30, help="Мінімум барів у комірці (regime × strategy)")
+    p.add_argument("--hard-off", type=float, default=0.0, help="Sharpe-поріг hard-off (вага 0)")
+    p.add_argument(
+        "--no-high-vol-flat",
+        action="store_true",
+        help="НЕ вимикати торгівлю в режимах high-vol (default: flat у *|high)",
+    )
+    p.add_argument(
+        "--best-prior-gap",
+        type=float,
+        default=0.1,
+        help="Відносний відрив лідера для політики best_prior (частка top-Sharpe)",
+    )
+    p.add_argument("--out", default="results/regime_map.json", help="Куди зберегти карту (JSON)")
+    p.set_defaults(func=_cli_pkg.cmd_regime_map)
+
+    p = sub.add_parser(
+        "regime-matrix",
+        help="Показати Sharpe per (regime × strategy) з fit-періоду (без запису карти)",
+    )
+    p.add_argument("--strategies", default="supertrend,stoch_rsi,funding_carry")
+    p.add_argument("--symbols", default="BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT,LINKUSDT")
+    p.add_argument("--interval", default="1h")
+    p.add_argument("--fit-days", type=int, default=365)
+    p.add_argument("--base", default="1m")
+    p.add_argument("--taker", action="store_true")
+    p.add_argument("--min-bars", type=int, default=30)
+    p.set_defaults(func=_cli_pkg.cmd_regime_matrix)
 
     p = sub.add_parser(
         "migrate-to-parquet",

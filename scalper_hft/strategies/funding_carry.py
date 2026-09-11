@@ -24,7 +24,9 @@ from scalper_hft.strategies.base import Strategy
 class FundingCarryScalper(Strategy):
     name = "funding_carry"
     family = "carry"
-    preferred_regimes = frozenset({"range", "low", "normal"})
+    # iter7: заробляє ПОЗА бичим — range +1.42 (9/10 символів), trend_down
+    # +2.78 (9/10), trend_up −3.99 (0/10). Тег normal (vol) прибрано.
+    preferred_regimes = frozenset({"range", "trend_down"})
     needs_funding = True
 
     param_space = {
