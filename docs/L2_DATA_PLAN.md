@@ -1,6 +1,6 @@
 # План: отримання та використання даних стакана (L2 / depth5) для HFT-досліджень
 
-Дата: 2026-09-07 · Статус: **ЗАПИС ЗАПУЩЕНО (2026-09-08); Фаза 0 ✅, Фаза 1 ✅, Фаза 3 (крок 1) ✅**
+Дата: 2026-09-07 · Статус: **ЗАПИС ЗАПУЩЕНО (2026-09-08); Фаза 0 ✅, Фаза 1 ✅, Фаза 2 (sync) ✅ W0-R5, Фаза 3 (крок 1) ✅**
 Контекст: `market_maker` та depth-weighted `ob_imbalance` — єдиний шлях до
 HFT-класу alpha, але не валідуються без історичної глибини стакана
 (див. `docs/STRATEGY_STATUS.md` — «Очікують даних/інфраструктури»).
@@ -13,6 +13,10 @@ HFT-класу alpha, але не валідуються без історичн
 - ✅ **Фаза 1 (запис)**: усі 15 канонічних символів пишуть `data/*_depth5.parquet`;
   дублікатів ts немає; legacy `scalper-record.service` (другий писач BTCUSDT)
   **вимкнено** (2026-09-08 06:27 UTC) — один писач на символ.
+- ✅ **Фаза 2 (sync, W0-R5)**: `scripts/sync_depth.sh [--dry-run] [user@host:path]`
+  (`rsync -avz --partial` лише `*depth5*.parquet` / `*bookTicker*`) →
+  `uv run python -m scalper_hft.cli depth-audit` → `results/quality_depth.md`;
+  exit ≠ 0 якщо `quality_ok=false`. Ранбук: одна команда (OB_RECORDER_RUNBOOK Крок 4).
 - ✅ **Фаза 3 (крок 1, фічі)**: `scalper_hft/features/depth_features.py` —
   `depth_imbalance` (depth-weighted OBI), `top_of_book_imbalance`,
   `depth_spread_bps`, `snapshot_quality` + тести (`tests/test_depth_features.py`).
@@ -20,7 +24,7 @@ HFT-класу alpha, але не валідуються без історичн
   top-of-book 64% (depth-weighted стабільніший — підтверджує research);
   BTC med spread ≈ 0.01 bps.
 - ⏳ **Накопичення**: ~7–9 снапшотів/с/символ → ~0.6–0.8 млн/день/символ;
-  синхронізація на research-машину — ручний `rsync` (див. OB_RECORDER_RUNBOOK Крок 4).
+  архів на research-машині з’являється після `bash scripts/sync_depth.sh`.
 
 ## Що вже є в коді (перевірено)
 
@@ -30,6 +34,7 @@ HFT-класу alpha, але не валідуються без історичн
 | WS-рекордер **depth5** | той самий, `_record_depth()` | ✅ 5 рівнів, розгорнуті колонки `bid1..5, ask1..5 (+_qty)`, ts = час події |
 | CLI | `scalper_hft.cli record-bookticker --symbol S --minutes M --depth` | ✅ |
 | Безперервний цикл | `scripts/record_loop.sh SYMBOL MIN` | ✅ (одна сесія на запуск) |
+| Синк VPS → research | `scripts/sync_depth.sh` + CLI `depth-audit` | ✅ W0-R5, fail-closed `quality_ok` |
 | systemd на VPS | `deploy/scalper-record.service` | ⚠ записує **лише BTCUSDT**, `User=volodymyr`, WorkingDirectory = локальний шлях (на VPS шлях інший!) |
 | Дані | `data/{SYMBOL}_depth5.parquet`, `{SYMBOL}_bookTicker.parquet` | ⚠ на цій машині НЕМАЄ (перевірено) |
 
@@ -74,10 +79,13 @@ df -h   # диск
 4. Тести: `pytest tests/ -q` зелений після змін; локально 2-хвилинний
    smoke-запис depth5 для одного символу (потрібен мережевий доступ до Binance).
 
-## Фаза 2 — Синхронізація даних VPS → research-машина
+## Фаза 2 — Синхронізація даних VPS → research-машина ✅ (W0-R5)
 
-- `scripts/sync_depth.sh` (rsync по ssh): `rsync -avz vps:…/data/*depth5*.parquet ./data/`
-- daily cron/CI-крок; перевірка цілісності (ts монотонний, дедуп за ts).
+- `scripts/sync_depth.sh [--dry-run] [user@host:path]`:
+  `rsync -avz --partial` `*depth5*.parquet` + `*bookTicker*` → `data/`
+- після копії: `validate_depth` / `validate_bookticker` → `results/quality_depth.md`;
+  ненульовий exit, якщо `quality_ok=false`
+- daily cron: та сама команда; parquet не комітити
 - Після цього depth5 з'являється локально → можна будувати датасети.
 
 ## Фаза 3 — Патлайн снапшот → бари/фічі (код)

@@ -10,7 +10,7 @@ import pytest
 from scalper_hft.live.account import PaperAccount
 from scalper_hft.live.control import ControlState
 from scalper_hft.live.trader import LiveTrader
-from scalper_hft.live.trader_loop import run_trader_once
+from scalper_hft.live.trader_loop import TradeDecision, run_trader_once
 from scalper_hft.strategies.base import Strategy
 
 

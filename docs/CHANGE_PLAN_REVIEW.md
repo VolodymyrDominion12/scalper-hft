@@ -234,9 +234,9 @@ pytest зелений; DESIGN не обіцяє live-ladders.
 
 ## Фаза R5 — Автосинк depth5 VPS → research (P1)
 
-**Навіщо.** [L2_DATA_PLAN.md](L2_DATA_PLAN.md) Фаза 2 обіцяє `scripts/sync_depth.sh`;
-файлу немає. Без архіву на research-машині MM/OBI не аудитити. Paper-pairs
-не залежить від цього; робимо паралельно, щоб Фаза C огляду мала дані.
+**Навіщо.** [L2_DATA_PLAN.md](L2_DATA_PLAN.md) Фаза 2 обіцяє `scripts/sync_depth.sh`.
+Без архіву на research-машині MM/OBI не аудитити. Paper-pairs не залежить від
+цього; робимо паралельно, щоб Фаза C огляду мала дані.
 
 **Файли**
 
@@ -261,6 +261,9 @@ sync_depth.sh [--dry-run] [user@host:path]
 
 **Готово коли:** скрипт у репо; ранбук містить одну команду; валідатор
 fail-closed на битих файлах (уже так для save path).
+
+**Статус:** зроблено. `scripts/sync_depth.sh`; CLI `depth-audit`;
+`results/quality_depth.md`; `bash -n` + pytest dry-run (мокнутий rsync).
 
 ---
 
@@ -387,7 +390,7 @@ LINK/BTC 1h maker + regime_scale(0.25) + vol-target + fill-parity.
 - [ ] R2: API-юніт localhost; lifespan fail-closed на слабкий ключ + публічний host
 - [ ] R3: `docs/env/vps-paper.env.example` + `research.env.example`; HOLDOUT у `.env.example`
 - [ ] R4: `use_exit_ladders` явне поле, дефолт false; немає getattr-магії
-- [ ] R5: `scripts/sync_depth.sh` + quality-звіт
+- [x] R5: `scripts/sync_depth.sh` + quality-звіт
 - [x] R6: `use_cases` без downloader
 - [x] R7: `tests/test_trader_loop.py`; немає swallow на fetch позицій
 - [ ] R8: ROADMAP/TODO покажчик на цей файл — зроблено разом із публікацією плану; тримати в синхроні при зміні фаз

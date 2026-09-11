@@ -54,7 +54,7 @@ VPS: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
 - [x] **R2** `scalper-api.service` localhost + lifespan `require_safe_api_bind`
 - [x] **R3** Профілі `docs/env/vps-paper.env.example` і `research.env.example`
 - [ ] **R4 / W0-R4** Тест + docs `use_exit_ladders=false` (поле в Settings уже є)
-- [ ] **R5 / W0-R5** `scripts/sync_depth.sh` + quality-звіт
+- [x] **R5 / W0-R5** `scripts/sync_depth.sh` + quality-звіт
 - [x] **R6 / W0-R6** I/O геть з `application/use_cases.py` + `CostModel.from_settings`
 - [x] **R7 / W0-R7** Тести `trader_loop` + вузькі except на fetch позицій
 - [x] **R8** Покажчики ROADMAP/TODO/DESIGN на CHANGE_PLAN_REVIEW

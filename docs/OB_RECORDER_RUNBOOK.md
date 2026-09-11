@@ -133,10 +133,14 @@ for f in glob.glob('data/*depth5*.parquet'):
 
 ## Крок 4. Перенесення даних на research-машину (коли є VPS)
 
+Одна команда (W0-R5). Parquet не комітити. Рекордер — публічний WS, без API-ключів.
+
 ```bash
 # на локальній машині (ssh-ключ налаштовано):
-rsync -avz --partial vps:/path/to/scalper-hft/data/*depth5*.parquet ./data/
-# перевірка цілісності: ts монотонний, без дублікатів
+bash scripts/sync_depth.sh [--dry-run] [user@host:path]
+# дефолт джерела: ${VPS_USER:-tradebot}@${VPS_HOST}:${REMOTE_DIR:-~/scalper-hft/data}
+# після копії: validate_depth / validate_bookticker → results/quality_depth.md
+# exit ≠ 0, якщо quality_ok=false
 ```
 Після цього дані доступні для Фази 3–4 (`docs/L2_DATA_PLAN.md`):
 depth-weighted imbalance → бари → `ob_imbalance`/`market_maker` дослідження.

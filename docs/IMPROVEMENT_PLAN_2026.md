@@ -82,6 +82,9 @@ sync_depth.sh [--dry-run] [user@host:path]
 Не комітити parquet. **Готово коли:** скрипт у репо; ранбук — одна команда;
 `bash -n scripts/sync_depth.sh` проходить.
 
+**Статус:** зроблено. `scripts/sync_depth.sh [--dry-run] [user@host:path]`;
+CLI `depth-audit` → `results/quality_depth.md`; exit ≠ 0 якщо `quality_ok=false`.
+
 ### W0-R6 — Use-cases без завантаження ринку [P2, ~1 д]
 
 **Навіщо.** `run_backtest()` качає klines/trades і будує **плоский**
@@ -313,7 +316,7 @@ uv run python -m scalper_hft.cli backtest \
 |---|---|---|---|---|---|
 | R1–R3, R8 | Fill-parity, API bind, .env профілі, документи | — | — | так (уже в коді) | ☑ |
 | W0-R4 | Тест + docs `use_exit_ladders=false` | 0 | 0.5 | ні | ☐ код є |
-| W0-R5 | `sync_depth.sh` | 0 | 1 | ні | ☐ |
+| W0-R5 | `sync_depth.sh` | 0 | 1 | ні | ☑ |
 | W0-R6 | I/O геть з use_cases + `from_settings` | 0 | 1 | бажано | ☑ |
 | W0-R7 | Тести `trader_loop` | 0 | 1–2 | ні | ☑ |
 | W0-TCA | IS mid ≠ fill + miss-cost + paper-audit | 0 | 2 | **так** | ☑ |

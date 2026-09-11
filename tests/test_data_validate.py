@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -188,3 +190,80 @@ def test_save_funding_fail_closed(tmp_path) -> None:
     with pytest.raises(ValueError, match="битого funding"):
         save_funding(path, bad)
     assert not path.exists()
+
+
+def _book(n: int = 5) -> pd.DataFrame:
+    idx = pd.date_range("2024-01-01", periods=n, freq="1s")
+    return pd.DataFrame(
+        {"bid": 100.0, "ask": 100.1, "bid_qty": 1.0, "ask_qty": 1.0},
+        index=idx,
+    )
+
+
+def test_audit_l2_cache_empty_dir_fails(tmp_path: Path) -> None:
+    from scalper_hft.data.validate import audit_l2_cache
+
+    audit = audit_l2_cache(tmp_path)
+    assert audit.quality_ok is False
+    assert "quality_ok:** `false`" in audit.to_markdown()
+
+
+def test_audit_l2_cache_ignores_klines_and_passes_clean(tmp_path: Path) -> None:
+    from scalper_hft.data.validate import audit_l2_cache, list_l2_parquet
+
+    klines = pd.DataFrame(
+        {"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0},
+        index=pd.date_range("2024-01-01", periods=3, freq="1h"),
+    )
+    klines.to_parquet(tmp_path / "BTCUSDT_1h.parquet")
+    _depth().to_parquet(tmp_path / "BTCUSDT_depth5.parquet")
+    _book().to_parquet(tmp_path / "BTCUSDT_bookTicker.parquet")
+
+    names = {p.name for p in list_l2_parquet(tmp_path)}
+    assert names == {"BTCUSDT_depth5.parquet", "BTCUSDT_bookTicker.parquet"}
+
+    audit = audit_l2_cache(tmp_path)
+    assert audit.quality_ok is True
+    md = audit.to_markdown()
+    assert "quality_ok:** `true`" in md
+    assert "BTCUSDT_1h.parquet" not in md
+
+
+def test_audit_l2_cache_crossed_book_fails(tmp_path: Path) -> None:
+    from scalper_hft.data.validate import audit_l2_cache
+
+    _depth().to_parquet(tmp_path / "LINKUSDT_depth5.parquet")
+    bad = _book()
+    bad.loc[bad.index[0], "ask"] = 90.0
+    bad.to_parquet(tmp_path / "LINKUSDT_bookTicker.parquet")
+
+    audit = audit_l2_cache(tmp_path)
+    assert audit.quality_ok is False
+    assert any(not item.report.ok for item in audit.files)
+
+
+def test_audit_l2_cache_unreadable_parquet_fails(tmp_path: Path) -> None:
+    from scalper_hft.data.validate import audit_l2_cache
+
+    (tmp_path / "ETHUSDT_depth5.parquet").write_bytes(b"not a parquet")
+    audit = audit_l2_cache(tmp_path)
+    assert audit.quality_ok is False
+    assert audit.extra_issues
+
+
+def test_cmd_depth_audit_writes_report_and_exits(tmp_path: Path) -> None:
+    from argparse import Namespace
+
+    from scalper_hft.cli.ops import cmd_depth_audit
+
+    out = tmp_path / "quality_depth.md"
+    with pytest.raises(SystemExit) as exc:
+        cmd_depth_audit(Namespace(data_dir=str(tmp_path), out=str(out)))
+    assert exc.value.code == 1
+    text = out.read_text(encoding="utf-8")
+    assert "quality_ok:** `false`" in text
+
+    _depth().to_parquet(tmp_path / "XRPUSDT_depth5.parquet")
+    _book().to_parquet(tmp_path / "XRPUSDT_bookTicker.parquet")
+    cmd_depth_audit(Namespace(data_dir=str(tmp_path), out=str(out)))
+    assert "quality_ok:** `true`" in out.read_text(encoding="utf-8")

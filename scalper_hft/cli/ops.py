@@ -247,6 +247,25 @@ def cmd_data_audit(args: argparse.Namespace) -> None:
         fail(f"Аудит даних провалено для {len(bad)} символ(ів): {', '.join(r.symbol for r in bad)}")
 
 
+def cmd_depth_audit(args: argparse.Namespace) -> None:
+    """Валідація локального архіву depth5/bookTicker → `results/quality_depth.md`.
+
+    Fail-closed: exit 1, якщо `quality_ok=false` (немає файлів або валідатор FAIL).
+    """
+    from scalper_hft.data.validate import audit_l2_cache
+
+    data_dir = Path(getattr(args, "data_dir", None) or "data")
+    out = Path(getattr(args, "out", None) or "results/quality_depth.md")
+    audit = audit_l2_cache(data_dir)
+    markdown = audit.to_markdown()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(markdown, encoding="utf-8")
+    print(markdown)
+    logger.info("L2 quality-звіт: %s (quality_ok=%s)", out, audit.quality_ok)
+    if not audit.quality_ok:
+        fail(f"L2 quality_ok=false — див. {out}")
+
+
 def cmd_migrate_to_parquet(args: argparse.Namespace) -> None:
     """Міграція всіх даних з PostgreSQL у Parquet-файли (data/).
 

@@ -259,6 +259,14 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--json", default=None, help="Шлях для JSON-звіту")
     p.set_defaults(func=_cli_pkg.cmd_data_audit)
 
+    p = sub.add_parser(
+        "depth-audit",
+        help="Валідація локального depth5/bookTicker → results/quality_depth.md",
+    )
+    p.add_argument("--dir", dest="data_dir", default="data", help="Каталог з parquet (за замовч. data/)")
+    p.add_argument("--out", default="results/quality_depth.md", help="Markdown-звіт")
+    p.set_defaults(func=_cli_pkg.cmd_depth_audit)
+
     p = sub.add_parser("arb", help="Delta-neutral funding arb (перп+спот)")
     add_common(p)
     p.add_argument("--position-pct", type=float, default=None, help="Ноціонал кожної ноги (за замовч. 0.1)")

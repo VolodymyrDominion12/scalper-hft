@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -422,3 +423,111 @@ def stream_is_critical(report: StreamQualityReport) -> bool:
     if report.n_rows == 0:
         return False  # порожній checkpoint downloader-а не блокує
     return (not report.monotonic) or bool(report.n_duplicates) or bool(report.n_invalid) or bool(report.n_future)
+
+
+def _l2_kind(path: Path) -> str | None:
+    """depth5 → depth, bookTicker → book; інакше не L2-архів."""
+    name = path.name.lower()
+    if "depth5" in name:
+        return "depth"
+    if "bookticker" in name:
+        return "book"
+    return None
+
+
+def list_l2_parquet(data_dir: Path | str) -> list[Path]:
+    """`data/*depth5*.parquet` та `*bookTicker*` (регістр імен не важливий)."""
+    root = Path(data_dir)
+    if not root.is_dir():
+        return []
+    return sorted(p for p in root.glob("*.parquet") if p.is_file() and _l2_kind(p) is not None)
+
+
+@dataclass(frozen=True, slots=True)
+class L2FileReport:
+    path: str
+    report: StreamQualityReport
+
+
+@dataclass(frozen=True, slots=True)
+class L2CacheAudit:
+    """Зведений quality-звіт depth5/bookTicker (W0-R5)."""
+
+    data_dir: str
+    files: tuple[L2FileReport, ...]
+    extra_issues: tuple[str, ...] = ()
+
+    @property
+    def quality_ok(self) -> bool:
+        if self.extra_issues or not self.files:
+            return False
+        return all(item.report.ok for item in self.files)
+
+    def to_markdown(self) -> str:
+        lines = [
+            "# L2 quality (depth5 / bookTicker)",
+            "",
+            f"**quality_ok:** `{'true' if self.quality_ok else 'false'}`",
+            "",
+            f"Каталог: `{self.data_dir}`",
+            "",
+            "| Файл | kind | n | dup | invalid | gaps | future | ok | issues |",
+            "|---|---|---|---|---|---|---|---|---|",
+        ]
+        if not self.files:
+            lines.append("| — | — | 0 | — | — | — | — | false | немає файлів |")
+        for item in self.files:
+            rep = item.report
+            issues = "; ".join(rep.issues) if rep.issues else "—"
+            name = Path(item.path).name
+            lines.append(
+                f"| `{name}` | {rep.kind} | {rep.n_rows} | {rep.n_duplicates} | "
+                f"{rep.n_invalid} | {rep.n_gaps} | {rep.n_future} | {rep.ok} | {issues} |"
+            )
+        if self.extra_issues:
+            lines.extend(["", "## Проблеми", ""])
+            lines.extend(f"- {issue}" for issue in self.extra_issues)
+        lines.append("")
+        return "\n".join(lines)
+
+
+def audit_l2_cache(data_dir: Path | str) -> L2CacheAudit:
+    """Прогнати `validate_depth` / `validate_bookticker` по локальному архіву."""
+    root = Path(data_dir)
+    extra: list[str] = []
+    if not root.is_dir():
+        extra.append(f"немає каталогу {root}")
+        return L2CacheAudit(data_dir=str(root), files=(), extra_issues=tuple(extra))
+
+    paths = list_l2_parquet(root)
+    if not paths:
+        extra.append(f"немає *depth5*.parquet / *bookTicker* у {root}")
+        return L2CacheAudit(data_dir=str(root), files=(), extra_issues=tuple(extra))
+
+    files: list[L2FileReport] = []
+    for path in paths:
+        kind = _l2_kind(path)
+        try:
+            df = pd.read_parquet(path)
+        except Exception as exc:
+            extra.append(f"{path.name}: не вдалося прочитати ({type(exc).__name__}: {exc})")
+            files.append(
+                L2FileReport(
+                    path=str(path),
+                    report=StreamQualityReport(
+                        kind=kind or "unknown",
+                        n_rows=0,
+                        n_duplicates=0,
+                        n_invalid=0,
+                        n_gaps=0,
+                        n_future=0,
+                        monotonic=False,
+                        ok=False,
+                        issues=[f"read failed: {exc}"],
+                    ),
+                )
+            )
+            continue
+        report = validate_depth(df) if kind == "depth" else validate_bookticker(df)
+        files.append(L2FileReport(path=str(path), report=report))
+    return L2CacheAudit(data_dir=str(root), files=tuple(files), extra_issues=tuple(extra))
