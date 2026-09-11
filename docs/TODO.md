@@ -23,7 +23,7 @@
 - [x] **Виконання та Execution**:
   - Емпіричний `CostModel`: vol-aware slippage + Square-Root impact (`backtest/execution.py`);
   - Micro-price розрахунок та котирування fair value (`backtest/micro_price.py`);
-  - Price ladder exit (`live/exit_ladders.py`) та portfolio risk budget — модулі з тестами, ще не в live-циклі;
+  - Price ladder exit (`live/exit_ladders.py`) — вимкнено прапорцем `USE_EXIT_LADDERS=false` (не для pairs-gate); portfolio risk budget — модуль з тестами, ще не в live-циклі;
   - Live reconciliation в циклі (`run_trader_once`, `PairsPortfolioRunner.step`) та kill-switch;
   - SQLite persistence для paper/live (`live/store.py`).
 - [x] **Мульти-активні та онлайн-стратегії**:
@@ -53,7 +53,7 @@ VPS: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
 - [x] **R1** Fill-parity paper ↔ backtest (mid + `MAKER_FILL_SEED`, snapshot rng)
 - [x] **R2** `scalper-api.service` localhost + lifespan `require_safe_api_bind`
 - [x] **R3** Профілі `docs/env/vps-paper.env.example` і `research.env.example`
-- [ ] **R4 / W0-R4** Тест + docs `use_exit_ladders=false` (поле в Settings уже є)
+- [x] **R4 / W0-R4** Тест + docs `use_exit_ladders=false` (поле в Settings уже є)
 - [x] **R5 / W0-R5** `scripts/sync_depth.sh` + quality-звіт
 - [x] **R6 / W0-R6** I/O геть з `application/use_cases.py` + `CostModel.from_settings`
 - [x] **R7 / W0-R7** Тести `trader_loop` + вузькі except на fetch позицій

@@ -78,7 +78,8 @@ Paper/testnet за замовчуванням (`DRY_RUN=true`).
 - Hard limits: ліміт позиції, денний ліміт збитків на ногу та портфель, зупинка після серії збитків;
 - Динамічне масштабування: vol-scaled sizing (GARCH/EWMA) та блокування нових входів за HMM-режимом (помилка моделі → блок входу);
 - Звірка (reconciliation): `fetch_positions` + kill-switch у `run_trader_once` та `PairsPortfolioRunner.step` (paper/`DRY_RUN=true` — no-op);
-- Exit ladders (`live/exit_ladders.py`) та portfolio risk budget (`portfolio/risk_budget.py`) — бібліотечні модулі з тестами, **ще не** в paper/live циклі.
+- Exit ladders (`live/exit_ladders.py`) — бібліотечний модуль; гілка в `trader_loop` **вимкнена прапорцем** `USE_EXIT_LADDERS` (дефолт `false`). Не для pairs-gate; не вмикати без окремого spec для directional;
+- Portfolio risk budget (`portfolio/risk_budget.py`) — бібліотечний модуль з тестами, **ще не** в paper/live циклі.
 
 ---
 
@@ -95,8 +96,8 @@ Paper/testnet за замовчуванням (`DRY_RUN=true`).
 6. ✅ MCP-сервер для трейдінгу та Streamlit дашборд.
 
 ### Наступні кроки (Roadmap):
-1. **Wave 0** — чесний TCA, R5–R7, тег `paper-v0.2.0`: [IMPROVEMENT_PLAN_2026.md](IMPROVEMENT_PLAN_2026.md).
-2. **Цикл R1–R8** (R1–R3, R8 закриті): [CHANGE_PLAN_REVIEW.md](CHANGE_PLAN_REVIEW.md).
+1. **Wave 0** — код TCA + R4–R7 закритий; тег `paper-v0.2.0`: [IMPROVEMENT_PLAN_2026.md](IMPROVEMENT_PLAN_2026.md).
+2. **Цикл R1–R8** (R1–R7 закриті в коді): [CHANGE_PLAN_REVIEW.md](CHANGE_PLAN_REVIEW.md).
 3. **Paper-Gate**: 8 тижнів paper LINK/BTC 1h maker на тому тегу (`paper-audit` vs та сама модель філу).
 4. **VPS / research split**: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
 5. **L2 Order Book**: [L2_DATA_PLAN.md](L2_DATA_PLAN.md) + R5 sync; Tardis лише для ретроспективи MM (Wave 3).

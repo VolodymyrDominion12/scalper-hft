@@ -1,7 +1,7 @@
 # План змін: огляд 2026-09-09 → чесний paper-gate
 
 > **Наступний цикл (2026-09-11):** [IMPROVEMENT_PLAN_2026.md](IMPROVEMENT_PLAN_2026.md)
-> (Wave 0: TCA + R5–R7 + тег `paper-v0.2.0`). Цей файл — R1–R8; R1–R3 і R8 закриті.
+> (Wave 0: TCA + R4–R7 + тег `paper-v0.2.0`). Цей файл — R1–R8; R1–R7 закриті в коді.
 
 Стан на 2026-09-09. Попередні цикли закриті в коді:
 [CHANGE_PLAN.md](CHANGE_PLAN.md) (A–E), [CHANGE_PLAN_HEALTH.md](CHANGE_PLAN_HEALTH.md) (H1–H8).
@@ -208,9 +208,9 @@ DEPLOY_PLAN посилається на vps-paper профіль; жоден п�
 
 ## Фаза R4 — Прибрати фальшивий дріт exit_ladders (P1)
 
-**Навіщо.** `LiveTrader` робить `getattr(settings, "use_exit_ladders", False)`.
-Поля в `Settings` немає → гілка в `trader_loop` мертва. Документи кажуть
-«модуль не в циклі», код удає підключення. **Не вмикати** ladders у paper
+**Навіщо.** Раніше `LiveTrader` робив `getattr(settings, "use_exit_ladders", False)`
+на полі, якого не було → гілка в `trader_loop` була мертва. Документи казали
+«модуль не в циклі», код удавав підключення. **Не вмикати** ladders у paper
 (план L / CHANGE_PLAN_HEALTH).
 
 **Файли**
@@ -229,6 +229,9 @@ DEPLOY_PLAN посилається на vps-paper профіль; жоден п�
 
 **Готово коли:** немає `getattr(..., False)` на неіснуючому полі; дефолт false;
 pytest зелений; DESIGN не обіцяє live-ladders.
+
+**Статус:** зроблено. Явне `Settings.use_exit_ladders` (дефолт false);
+`trader.use_exit_ladders` з поля, не getattr; DESIGN §3.5 — вимкнено прапорцем.
 
 ---
 
@@ -389,7 +392,7 @@ LINK/BTC 1h maker + regime_scale(0.25) + vol-target + fill-parity.
 - [x] R1: paper і BT maker — mid + той самий seed; snapshot rng; тести parity
 - [ ] R2: API-юніт localhost; lifespan fail-closed на слабкий ключ + публічний host
 - [ ] R3: `docs/env/vps-paper.env.example` + `research.env.example`; HOLDOUT у `.env.example`
-- [ ] R4: `use_exit_ladders` явне поле, дефолт false; немає getattr-магії
+- [x] R4: `use_exit_ladders` явне поле, дефолт false; немає getattr-магії
 - [x] R5: `scripts/sync_depth.sh` + quality-звіт
 - [x] R6: `use_cases` без downloader
 - [x] R7: `tests/test_trader_loop.py`; немає swallow на fetch позицій

@@ -47,8 +47,8 @@ W3  L2 / Nautilus / MM           ← окремий продукт, не цей 
 
 ## Wave 0 — блокери чесного Paper-Gate
 
-Мета: один CostModel, чесний IS, закриті R5–R7, тег `paper-v0.2.0`.
-R1–R3 і R8 уже в коді. R4 (поле `use_exit_ladders=false`) майже закрите.
+Мета: один CostModel, чесний IS, закриті R4–R7, тег `paper-v0.2.0`.
+R1–R8 (крім ops-тегу) уже в коді.
 
 ### W0-R4 — Closeout exit_ladders [P2, ~0.5 д]
 
@@ -61,6 +61,10 @@ R1–R3 і R8 уже в коді. R4 (поле `use_exit_ladders=false`) май�
 **Готово коли:** `trader.use_exit_ladders is False` за замовчуванням покрито
 тестом; DESIGN каже «вимкнено прапорцем»; немає `getattr(..., False)` на
 неіснуючому полі; чекбокс R4 у TODO закритий.
+
+**Статус:** зроблено. `Settings.use_exit_ladders` (дефолт false); LiveTrader
+читає поле напряму; DESIGN §3.5 — вимкнено прапорцем; тест у
+`test_trader_notional_cap.py`.
 
 ### W0-R5 — `scripts/sync_depth.sh` [P1, ~1 д]
 
@@ -315,7 +319,7 @@ uv run python -m scalper_hft.cli backtest \
 | ID | Завдання | Хвиля | Дні | Блокує paper-тег? | Статус |
 |---|---|---|---|---|---|
 | R1–R3, R8 | Fill-parity, API bind, .env профілі, документи | — | — | так (уже в коді) | ☑ |
-| W0-R4 | Тест + docs `use_exit_ladders=false` | 0 | 0.5 | ні | ☐ код є |
+| W0-R4 | Тест + docs `use_exit_ladders=false` | 0 | 0.5 | ні | ☑ |
 | W0-R5 | `sync_depth.sh` | 0 | 1 | ні | ☑ |
 | W0-R6 | I/O геть з use_cases + `from_settings` | 0 | 1 | бажано | ☑ |
 | W0-R7 | Тести `trader_loop` | 0 | 1–2 | ні | ☑ |

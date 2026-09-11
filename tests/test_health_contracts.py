@@ -202,6 +202,34 @@ def test_use_cases_does_not_import_market_data_io() -> None:
     assert not (mods & forbidden), f"use_cases imports market I/O: {sorted(mods & forbidden)}"
 
 
+def _getattr_string_arg_lines(path: Path, attr: str) -> list[int]:
+    """Line numbers of getattr(..., \"attr\"[, default]) in a module."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    lines: list[int] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Name) and func.id == "getattr"):
+            continue
+        if len(node.args) < 2:
+            continue
+        key = node.args[1]
+        if isinstance(key, ast.Constant) and key.value == attr:
+            lines.append(int(node.lineno))
+    return lines
+
+
+def test_no_getattr_use_exit_ladders() -> None:
+    """W0-R4: Settings.use_exit_ladders is a real field — no getattr fallback."""
+    violations: list[str] = []
+    for path in _python_files(_REPO_ROOT / "scalper_hft"):
+        for lineno in _getattr_string_arg_lines(path, "use_exit_ladders"):
+            rel = path.relative_to(_REPO_ROOT)
+            violations.append(f"{rel}:{lineno}")
+    assert not violations, "getattr(..., 'use_exit_ladders') leftover:\n  " + "\n  ".join(violations)
+
+
 def test_cli_and_application_cost_model_from_settings() -> None:
     """W0-COST: CLI/application must not build a flat CostModel(...)."""
     violations: list[str] = []

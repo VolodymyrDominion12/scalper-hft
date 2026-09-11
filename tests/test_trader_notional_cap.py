@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
+from scalper_hft.config import Settings, get_settings, set_settings
 from scalper_hft.live.account import PaperAccount
 from scalper_hft.live.risk_gate import margin_proximity_ok, per_symbol_notional_ok
 from scalper_hft.live.trader import LiveTrader, execute_signal
@@ -25,7 +27,6 @@ class _AlwaysLong:
 
 
 def _trader(start_equity: float = 10_000.0, cap_pct: float = 0.30, buf: float = 0.10) -> LiveTrader:
-    from scalper_hft.config import get_settings
 
     base = get_settings()
     settings = type(base)(
@@ -88,3 +89,20 @@ def test_trader_allows_entry_within_caps() -> None:
     # position_pct=0.01 → butional = 0.01×10000 = 100; 100 ≤ 3000 cap; leverage 0.01
     assert "long" in out
     assert "BTCUSDT" in t.account.positions
+
+
+def test_settings_use_exit_ladders_defaults_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("USE_EXIT_LADDERS", raising=False)
+    assert Settings().use_exit_ladders is False
+
+
+def test_trader_use_exit_ladders_defaults_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("USE_EXIT_LADDERS", raising=False)
+    orig = get_settings()
+    set_settings(Settings())
+    try:
+        trader = LiveTrader(_AlwaysLong(), "BTCUSDT", "1h", account=PaperAccount(10_000.0))
+        assert trader.use_exit_ladders is False
+        assert trader.settings.use_exit_ladders is False
+    finally:
+        set_settings(orig)

@@ -65,7 +65,7 @@ paper-replay реверсує і рахує daily-loss на mark-to-market. Те
 4. ✅ **Risk budget** (модуль, не в live-циклі): денний/тижневий ліміт збитків, vol-targeting (`scalper_hft/portfolio/risk_budget.py`).
 5. ✅ **Hedge-ratio**: rolling OLS та Johansen вектори коінтеграції (`scalper_hft/validation/hedge_ratio.py`).
 6. ✅ **Емпіричний CostModel & пропущені філи**: vol-aware slippage, Square-Root impact, micro-price та ймовірність виконання (`scalper_hft/backtest/execution.py`, `micro_price.py`).
-7. ✅ **Exit ladders** (модуль, не в live-циклі): драбини рівнів виходу (`scalper_hft/live/exit_ladders.py`).
+7. ✅ **Exit ladders** (модуль; `USE_EXIT_LADDERS=false` за замовчуванням, не pairs-gate): драбини рівнів виходу (`scalper_hft/live/exit_ladders.py`).
 
 ---
 
