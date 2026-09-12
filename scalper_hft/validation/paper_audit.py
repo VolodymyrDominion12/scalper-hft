@@ -14,6 +14,90 @@ from scalper_hft.validation.forensics import ForensicsReport, analyze_trades, tr
 
 DD_MULT_DEFAULT = 1.5
 
+# Hard go/no-go критерії Paper Gate (Phase 6 / P6-A).
+# Усі пороги мають бути пройдені одночасно: провал хоча б одного =
+# заборона переходу з paper у live незалежно від прибутковості.
+PAPER_GATE_THRESHOLDS: dict[str, float] = {
+    # Tracking error (std diff per-bar returns) ≤ 3% на тиждень
+    "tracking_error_weekly_pct": 0.03,
+    # Maker fill rate ≥ 70% (нижче → ринок не підтримує post-only)
+    "fill_rate_min": 0.70,
+    # Paper max DD ≤ 1.5× backtest max DD
+    "dd_ratio_max": DD_MULT_DEFAULT,
+    # Blended TCA (Implementation Shortfall) ≤ 3 bps
+    # Вище → реальні витрати перевищують модель → live = збиток
+    "blended_tca_bps_max": 3.0,
+}
+
+
+def check_paper_gate(
+    audit: "PaperAudit",
+    *,
+    thresholds: dict[str, float] | None = None,
+) -> tuple[bool, list[str]]:
+    """Hard go/no-go gate перед переходом з paper у live.
+
+    Перевіряє всі критерії з PAPER_GATE_THRESHOLDS. Повертає (True, []) якщо
+    всі пройдені, або (False, [список_провалів]) де кожен рядок пояснює причину.
+
+    Args:
+        audit: результат audit_paper_store / audit_paper_vs_backtest.
+        thresholds: перевизначити порогові значення (для тестів / кастомізації).
+
+    Returns:
+        (passed, failures) де failures — список рядків з описом проблем.
+    """
+    t = thresholds if thresholds is not None else PAPER_GATE_THRESHOLDS
+    failures: list[str] = []
+
+    # 1. Tracking error
+    te_limit = float(t.get("tracking_error_weekly_pct", 0.03))
+    if audit.tracking_error is not None and audit.tracking_error > te_limit:
+        failures.append(
+            f"tracking_error={audit.tracking_error:.4%} > {te_limit:.4%} "
+            f"(max допустимий: {te_limit:.0%}/тиждень)"
+        )
+
+    # 2. Fill rate
+    fr_min = float(t.get("fill_rate_min", 0.70))
+    if audit.paper_fill_rate < fr_min:
+        failures.append(
+            f"fill_rate={audit.paper_fill_rate:.0%} < {fr_min:.0%} "
+            f"(post-only ордери рідко філяться — ринок несприятливий)"
+        )
+
+    # 3. DD ratio (paper vs backtest)
+    dd_max = float(t.get("dd_ratio_max", DD_MULT_DEFAULT))
+    if audit.dd_gate_ok is False:
+        bt_dd = audit.bt_max_dd or 0.0
+        failures.append(
+            f"paper_max_dd={audit.paper_max_dd:.2%} > backtest_max_dd×{dd_max:.1f} "
+            f"(bt_max_dd={bt_dd:.2%}, threshold={bt_dd * dd_max:.2%})"
+        )
+
+    # 4. Blended TCA (IS) — ключовий hard criterion
+    tca_max = float(t.get("blended_tca_bps_max", 3.0))
+    if audit.is_report is not None and audit.is_report.coverage_ok:
+        tca = audit.is_report.blended_tca_bps
+        if tca > tca_max:
+            failures.append(
+                f"blended_tca_bps={tca:.2f} > {tca_max:.1f} bps "
+                f"(реальні T-costs перевищують модель → live = збиток)"
+            )
+
+    return len(failures) == 0, failures
+
+
+def format_gate_result(passed: bool, failures: list[str]) -> str:
+    """Форматований рядок для CLI/логів."""
+    if passed:
+        return "Paper Gate: ✅ PASS — всі критерії пройдені"
+    lines = ["Paper Gate: ❌ FAIL — заборона live:"]
+    for f in failures:
+        lines.append(f"  • {f}")
+    return "\n".join(lines)
+
+
 
 @dataclass(frozen=True, slots=True)
 class PaperAudit:

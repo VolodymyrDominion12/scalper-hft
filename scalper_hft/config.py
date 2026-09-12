@@ -121,6 +121,10 @@ class Settings:
     cooldown_losses: int = field(default_factory=lambda: _env_int("COOLDOWN_LOSSES", 2))
     cooldown_hours: float = field(default_factory=lambda: _env_float("COOLDOWN_HOURS", 12.0))
     cooldown_size_mult: float = field(default_factory=lambda: _env_float("COOLDOWN_SIZE_MULT", 0.5))
+    # Portfolio-level VaR halt: якщо portfolio_var_limit > 0, PairsPortfolioRunner
+    # блокує нові входи коли hist-VaR(95%) портфеля перевищує цей поріг (частка equity).
+    # 0.0 = вимкнено (backward-compatible); рекомендоване значення: 0.05 (5%).
+    portfolio_var_limit: float = field(default_factory=lambda: _env_float("PORTFOLIO_VAR_LIMIT", 0.0))
     corr_notional_cap: float = field(default_factory=lambda: _env_float("CORR_NOTIONAL_CAP", 0.40))
     pair_notional_pct: float = field(default_factory=lambda: _env_float("PAIR_NOTIONAL_PCT", 0.30))
     portfolio_notional_pct: float = field(default_factory=lambda: _env_float("PORTFOLIO_NOTIONAL_PCT", 0.60))

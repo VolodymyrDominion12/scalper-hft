@@ -101,7 +101,7 @@ class PairsArb(Strategy):
             spread_series = kf_res["spread"]
             self.betas = kf_res["beta"]
         else:
-            spread_series = np.log(df["leg1"] / df["leg2"])
+            spread_series = np.log(df["leg1"] / df["leg2"])  # type: ignore[assignment]
             self.betas = pd.Series(1.0, index=df.index)
 
         lookback = int(self.get("lookback", 480))
@@ -129,7 +129,7 @@ class PairsArb(Strategy):
         exit_any = (prev_pos != 0.0) & (z.abs() < exit_z)
         sig[exit_any] = 0.0
 
-        sig = sig.ffill().fillna(0.0).astype(int)
+        sig = sig.ffill().fillna(0.0).astype(int)  # type: ignore[assignment]
 
         # ── Breakeven gate: відключаємо сигнали де ATR спреду < 2-leg round-trip ──
         if use_breakeven_gate:
@@ -226,7 +226,7 @@ class PairsArb(Strategy):
         # новий вхід: sig != 0 після sig == 0
         new_entry = (sig_f != 0.0) & (sig_f.shift(1).fillna(0.0) == 0.0)
         entry_scale = pd.Series(np.nan, index=sig.index, dtype=float)
-        entry_scale.loc[new_entry.values] = scale.loc[new_entry.values].values
+        entry_scale.loc[new_entry.values] = scale.loc[new_entry.values].values  # type: ignore[index]
         # lock entry-time scale на час угоди (ffill); поза позицією — байдуже (sig==0)
         entry_scale = entry_scale.ffill().fillna(1.0)
         return (sig_f * entry_scale).clip(-1.0, 1.0)

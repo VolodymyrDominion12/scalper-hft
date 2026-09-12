@@ -101,7 +101,7 @@ def compute_metrics(
     # Calculate median time delta between bars in seconds
     diffs = equity.index.to_series().diff().dropna()
     if len(diffs) and diffs.gt(pd.Timedelta(0)).all() and diffs.notna().all():
-        delta_s = diffs.median().total_seconds()
+        delta_s = float(diffs.median().total_seconds())  # type: ignore[attr-defined]
     else:
         # дублікати індексу/нульові дельти: median = 0 → bars_per_year = 31.5M
         # (Sharpe/vol завищені ×5616). Fallback на хвилинний масштаб.
@@ -114,7 +114,7 @@ def compute_metrics(
     # Sortino: стандартне downside deviation = sqrt(mean(min(r,0)^2))
     # (RMS лише збиткових періодів), а не std підмножини збитків. При
     # відсутності збитків — безкінечність (ідеальна крива), а не 0.
-    downside_dev = float(np.sqrt((np.minimum(ret.values, 0.0) ** 2).mean())) if len(ret) else 0.0
+    downside_dev = float(np.sqrt((np.minimum(ret.values, 0.0) ** 2).mean())) if len(ret) else 0.0  # type: ignore[arg-type]
     if downside_dev > 0:
         sortino = ret.mean() / downside_dev * math.sqrt(bars_per_year)
     else:
@@ -158,7 +158,7 @@ def compute_metrics(
         if len(hourly) >= 2 and hourly.std(ddof=0) > 0:
             sharpe_hourly = float(hourly.mean() / hourly.std(ddof=0))
             # стандартне downside deviation (як у sortino вище), не std збитків
-            down_dev = float(np.sqrt((np.minimum(hourly.values, 0.0) ** 2).mean()))
+            down_dev = float(np.sqrt((np.minimum(hourly.values, 0.0) ** 2).mean()))  # type: ignore[arg-type]
             if down_dev > 0:
                 sortino_hourly = float(hourly.mean() / down_dev)
             elif hourly.mean() > 0:

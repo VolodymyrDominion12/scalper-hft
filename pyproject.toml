@@ -101,5 +101,16 @@ module = [
 ]
 strict = true
 
+# Phase 6 / P6-D: поступово розширюємо strict-зону
+[[tool.mypy.overrides]]
+module = [
+    "scalper_hft.backtest.execution",
+    "scalper_hft.backtest.metrics",
+    "scalper_hft.strategies.base",
+    "scalper_hft.strategies.pairs_arb",
+    "scalper_hft.validation.paper_audit",
+]
+strict = true
+
 [tool.uv]
 package = true

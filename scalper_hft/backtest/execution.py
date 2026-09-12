@@ -40,7 +40,7 @@ class CostModel:
     vol_exp: float = 1.0  # показник масштабування slippage волатильністю
 
     @classmethod
-    def from_settings(cls, settings=None, df: pd.DataFrame | None = None) -> CostModel:
+    def from_settings(cls, settings: object = None, df: pd.DataFrame | None = None) -> "CostModel":
         """Авто-калібровка vol_ref з Parkinson-vol якщо не задано."""
         from scalper_hft.config import get_settings
 
@@ -133,7 +133,7 @@ class CostModel:
         impact = 0.0
         if qty_notional is not None and adv_notional is not None and sigma_frac is not None:
             impact = self.sqrt_law_impact(qty_notional, adv_notional, sigma_frac)
-        return float(fee + slip + impact)
+        return float(fee) + float(slip) + float(impact)  # type: ignore[arg-type]
 
     def with_is_slippage(self, records: list[object], kind: str = "all") -> CostModel:
         from dataclasses import replace
@@ -173,12 +173,16 @@ def estimate_impact_k_from_bars(df: pd.DataFrame, sigma_col: str | None = None) 
     if sigma_col and sigma_col in df.columns:
         sigma = df[sigma_col].astype(float)
     else:
-        hl = np.log(df["high"] / df["low"])
-        sigma = np.sqrt(hl.rolling(20, min_periods=10).mean() / (4.0 * np.log(2.0))).fillna(0.0)
+        hl: pd.Series = pd.Series(np.log(df["high"].to_numpy() / df["low"].to_numpy()), index=df.index)
+        sigma_s: pd.Series = pd.Series(
+            np.sqrt(hl.rolling(20, min_periods=10).mean().to_numpy() / (4.0 * np.log(2.0))),
+            index=df.index,
+        ).fillna(0.0)
+        sigma = sigma_s
     adv = df["volume"].rolling(100, min_periods=50).mean().replace(0, np.nan)
     share = (df["volume"] / adv).clip(upper=1.0).fillna(0.0)
     ret = close.pct_change().abs()
-    denom = (sigma * np.sqrt(share)).replace(0, np.nan)
+    denom: pd.Series = (sigma * np.sqrt(share)).replace(0, np.nan)
     k = (ret / denom).replace([np.inf, -np.inf], np.nan).dropna()
     if len(k) < 20:
         return 0.1

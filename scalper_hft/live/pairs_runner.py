@@ -14,9 +14,12 @@ import logging
 import signal
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 import pandas as pd
 
@@ -592,8 +595,13 @@ class PairsPortfolioRunner:
             )
         self.daily_loss_limit = settings.daily_loss_limit
         self.weekly_loss_limit = settings.weekly_loss_limit
+        self.portfolio_var_limit = settings.portfolio_var_limit
         self.week_start_equity = self.account.equity
         self._last_week: tuple[int, int] | None = None
+        # Ковзне вікно equity для hist-VaR: зберігаємо 100 останніх значень
+        # (при 1h-інтервалі — ~4 дні; достатньо для VaR-сигналу корельованого
+        # стресу, але не надто мало для сплайнів вибірки).
+        self._equity_window: deque[float] = deque(maxlen=100)
         mode = "paper" if self._dry_run else "live"
         all_legs = {cfg["leg1"] for cfg in self.configs} | {cfg["leg2"] for cfg in self.configs}
         self.sync_engine = _make_sync_engine(
@@ -625,11 +633,42 @@ class PairsPortfolioRunner:
             self.week_start_equity = self.account.equity
         self._last_week = week
 
+    def _update_equity_window(self) -> None:
+        """Зафіксувати поточне значення equity у ковзному вікні."""
+        self._equity_window.append(self.account.equity)
+
+    def _portfolio_var_ok(self) -> bool:
+        """True якщо hist-VaR(95%) портфеля в межах ліміту або ліміт вимкнений.
+
+        Повертає True (no-op) якщо:
+        - portfolio_var_limit == 0.0 (дефолт, backward-compatible)
+        - недостатньо даних у вікні (< 10 точок → чекаємо накопичення)
+        """
+        if self.portfolio_var_limit <= 0.0:
+            return True
+        win = list(self._equity_window)
+        if len(win) < 10:
+            return True  # недостатньо даних — не блокуємо
+        arr = np.array(win, dtype=float)
+        returns = np.diff(arr) / arr[:-1]
+        # Hist-VaR(95%): 5-й перцентиль доходності → втрата (додатнє число)
+        var_95 = float(-np.quantile(returns, 0.05))
+        if var_95 > self.portfolio_var_limit:
+            logger.warning(
+                "Portfolio hist-VaR(95%%) = %.4f > limit %.4f — halting new entries",
+                var_95,
+                self.portfolio_var_limit,
+            )
+            return False
+        return True
+
     def _should_halt_entries(self) -> bool:
         eq = self.account.equity
         if eq <= self.account.day_start_equity * (1.0 - self.daily_loss_limit):
             return True
         if eq <= self.week_start_equity * (1.0 - self.weekly_loss_limit):
+            return True
+        if not self._portfolio_var_ok():
             return True
         return False
 
@@ -655,13 +694,20 @@ class PairsPortfolioRunner:
         if ctrl.pause:
             return "hold:paused"
         self._roll_week(now)
+        self._update_equity_window()
         scope = {sym for r in self.runners for sym in (r.leg1, r.leg2)}
         reconcile_exchange_state(self.account, self.client, dry_run=self._dry_run, scope=scope)
         halt = self._should_halt_entries()
+        var_halt = not self._portfolio_var_ok() if not halt else False
         for r in self.runners:
             r.engine.portfolio_block_entries = halt
             r.engine.control_block_entries = ctrl.no_new_entries
-        prefix = "halt:portfolio_loss " if halt else ""
+        if var_halt:
+            prefix = "halt:portfolio_var "
+        elif halt:
+            prefix = "halt:portfolio_loss "
+        else:
+            prefix = ""
         action = prefix + " || ".join(
             r.step(now=now, reconcile=False, control=ctrl, persist=False) for r in self.runners
         )
