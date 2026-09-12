@@ -20,6 +20,15 @@ def test_cli_job_help() -> None:
     assert ei.value.code == 0
 
 
+def test_dashboard_script_path_exists() -> None:
+    """Регресія: cmd_dashboard брав cli/dashboard.py замість scalper_hft/dashboard.py
+    → streamlit падав з "File does not exist"."""
+    import scalper_hft.cli.ops as ops
+
+    script = Path(ops.__file__).resolve().parent.parent / "dashboard.py"
+    assert script.exists(), f"Streamlit target не існує: {script}"
+
+
 def test_sidebar_payload_fingerprint_stable() -> None:
     from scalper_hft.research.jobs import fingerprint
 

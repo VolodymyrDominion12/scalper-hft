@@ -78,6 +78,8 @@ def spike_rate_limit_for(interval: str | None) -> float:
     if not interval:
         return SPIKE_RATE_CRITICAL
     return SPIKE_RATE_CRITICAL_BY_INTERVAL.get(str(interval).lower(), SPIKE_RATE_CRITICAL)
+
+
 # «Плита»: довгі серії O=H=L=C (ціна не рухається взагалі). Мертвий ринок
 # такого не дає; testnet — дає тисячами барів підряд.
 FLAT_RUN_CRITICAL = 240
@@ -177,10 +179,18 @@ def validate_bars(
                 f"схоже на testnet/синтетичну історію"
             )
         flat = _flat_run(df["close"])
+        # Бари з нульовим обсягом — біржовий halt: угод немає, close
+        # «заморожений» (live-підтверджено: LINKUSDT 2021-03-02, 59 хв підряд).
+        # Неринковий підпис — «плита» серед ТОРГОВАНИХ барів (угоди є, а ціна
+        # не рухається) або дуже довга серія взагалі (testnet дає тисячами).
+        if "volume" in df.columns:
+            flat_traded = _flat_run(df["close"][df["volume"] > 0])
+        else:
+            flat_traded = flat
         if flat >= FLAT_RUN_CRITICAL:
             issues.append(f"«плита»: {flat} барів підряд з однаковим close (неринкові дані)")
-        elif flat >= _FLAT_RUN_WARN:
-            issues.append(f"довга серія однакових close: {flat} барів")
+        elif flat_traded >= _FLAT_RUN_WARN:
+            issues.append(f"довга серія однакових close на торгованих барах: {flat_traded} барів")
 
     ok = not issues
     return BarQualityReport(

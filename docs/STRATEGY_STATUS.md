@@ -3,6 +3,35 @@
 Оновлюється після кожного аудиту. Методологія: повний цикл інвестігейт →
 реалізація → тест → аудит (walk-forward + Deflated Sharpe + CSCV/PBO + stress/cohort + paper-replay).
 
+## 🔄 Iteration 13 — ts_momentum на тижневому ТФ (1w), two-stage (2026-09-12)
+
+Повний звіт: [reports/iter13_weekly_momentum.md](reports/iter13_weekly_momentum.md).
+Pre-registration: [reports/hypothesis_iter13.md](reports/hypothesis_iter13.md).
+Перше використання **нативних 1w klines** (2019–2026, CORE_15) — остання
+неспалена вісь за рекомендацією iter9 §7.
+
+- **H13-A ts_momentum 1w long-only CORE_15 — FAIL (не промотується).**
+  Selection half (2019–22) обрала lookback=13w (плато: усі 4–26w позитивні,
+  SR 1.05–1.39). Validation half (2023–26): SR **+0.58**, t_NW **+1.11** < 2.0,
+  CI **[−0.30, +1.39]** містить 0 → за pre-registered правилом НЕ monitoring.
+  Повний OOS: SR +0.96, t_NW +1.85; 14/15 символів > 0.
+- **Контроль long-short слабший** (validation +0.38 vs +0.58) — підтверджує
+  механізм iter11: edge = відмова від шортів.
+- **H13-B value-added 1w⊕1d — PASS як діагностика**: corr 1w↔1d лише **+0.09**,
+  combined 50/50 SR **+1.51** (t_NW 2.61) проти 1.30 (1d) і 0.95 (1w), maxDD
+  кращий. Це portfolio-construction evidence, **не paper-gate** — у лідерборді
+  тіер candidate.
+- Дорогою виправлено: підтримка `1w` в interval-мапах (downloader/engine/
+  trader_bars), WF-вікно 1w (50,25)→(50,30) (мінімум рушія 30 барів), а також
+  кеш LINKUSDT 1m (дірка 48 діб 2023-07→09 + halt-плита 2021-03-02) і
+  калібрування flat-run валідатора (нульовий обсяг = біржовий halt, не «плита»).
+
+**Висновок циклу iter9→13:** простір «дешевих» покращень вичерпано —
+monitoring-набір (**pairs_arb LINK/BTC 1h** validated + **ts_momentum 1d/4h
+long-only CORE_15** monitoring) лишається оптимальним; подальша підгонка на
+тих самих даних = data-snooping. Наступний крок — paper-гейт 8 тижнів
+(`paper-v0.2.0`) і накопичення L2 для maker-напряму.
+
 ## 🔄 Iteration 12 — improvement loop: two-stage vol-target + value-added (2026-09-12)
 
 Повний звіт: [reports/iter12_improvement_cycle.md](reports/iter12_improvement_cycle.md).

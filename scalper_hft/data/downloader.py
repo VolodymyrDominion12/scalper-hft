@@ -122,7 +122,7 @@ def _interval_ms(interval: str) -> int:
     """Тривалість інтервалу в мілісекундах: '1s'=1000, '1m'=60000, '1h'=3.6M."""
     unit = interval[-1]
     num = int(interval[:-1])
-    per_unit = {"s": 1_000, "m": 60_000, "h": 3_600_000, "d": 86_400_000}[unit]
+    per_unit = {"s": 1_000, "m": 60_000, "h": 3_600_000, "d": 86_400_000, "w": 604_800_000}[unit]
     return num * per_unit
 
 
@@ -476,8 +476,10 @@ class Downloader:
         self.strict_funding_coverage = bool(strict_funding_coverage)
         # Fail-closed: testnet/sandbox для ринкових даних заборонено (див.
         # `Settings.data_exchange`). `client=` (тести) обходить цю перевірку.
-        self.exchange_id = require_live_data_exchange(settings, exchange_id) if client is None else (
-            exchange_id or settings.data_exchange
+        self.exchange_id = (
+            require_live_data_exchange(settings, exchange_id)
+            if client is None
+            else (exchange_id or settings.data_exchange)
         )
         self.client = client or _default_client(self.exchange_id)
         self.retries = int(retries if retries is not None else settings.download_retries)
@@ -998,7 +1000,12 @@ def download_klines(
     if coverage.complete and not force:
         return cached if cached is not None and not cached.empty else _empty_ohlcv()
     if force and coverage.complete:
-        logger.info("force: оновлюю хвіст %s %s з джерела %s", symbol, interval, exchange_id or getattr(get_settings(), "data_exchange", "binanceusdm"))
+        logger.info(
+            "force: оновлюю хвіст %s %s з джерела %s",
+            symbol,
+            interval,
+            exchange_id or getattr(get_settings(), "data_exchange", "binanceusdm"),
+        )
     return Downloader(
         store=store,
         retries=retries,
@@ -1025,7 +1032,12 @@ def download_agg_trades(
         return cached
     if cached is not None and not cached.empty:
         logger.info("Оновлення aggTrades %s: було %d рядків до %s", symbol, len(cached), cached.index[-1])
-    logger.info("Завантаження aggTrades %s за %d днів (джерело: %s)", symbol, days, exchange_id or getattr(get_settings(), "data_exchange", "binanceusdm"))
+    logger.info(
+        "Завантаження aggTrades %s за %d днів (джерело: %s)",
+        symbol,
+        days,
+        exchange_id or getattr(get_settings(), "data_exchange", "binanceusdm"),
+    )
     with _exclusive_fetch(f"aggtrades_{symbol}"):
         if not force:
             cached = store.load_trades(symbol)
@@ -1076,7 +1088,12 @@ def download_funding(
             logger.info("Кеш funding %s покриває період і свіжий: %d рядків (до %s)", symbol, len(cached), newest)
             return cached
         logger.info("Оновлення funding %s: %d рядків (до %s, stale=%s)", symbol, len(cached), newest, stale)
-    logger.info("Завантаження funding %s за %d днів (джерело: %s)", symbol, days, exchange_id or getattr(get_settings(), "data_exchange", "binanceusdm"))
+    logger.info(
+        "Завантаження funding %s за %d днів (джерело: %s)",
+        symbol,
+        days,
+        exchange_id or getattr(get_settings(), "data_exchange", "binanceusdm"),
+    )
     return Downloader(
         store=store,
         retries=retries,
@@ -1123,7 +1140,12 @@ def download_oi(
     exchange_id: str | None = None,
 ) -> pd.DataFrame:
     store = get_store()
-    logger.info("Завантаження oi %s за %d днів (джерело: %s)", symbol, days, exchange_id or getattr(get_settings(), "data_exchange", "binanceusdm"))
+    logger.info(
+        "Завантаження oi %s за %d днів (джерело: %s)",
+        symbol,
+        days,
+        exchange_id or getattr(get_settings(), "data_exchange", "binanceusdm"),
+    )
     return Downloader(
         store=store,
         retries=retries,
@@ -1148,4 +1170,3 @@ def download_liquidations(
     )
     start = date.today() - timedelta(days=days)
     return download_liquidations_vision(symbol, start=start, freq="daily")
-

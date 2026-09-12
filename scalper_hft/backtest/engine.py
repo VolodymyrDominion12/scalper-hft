@@ -518,7 +518,7 @@ def run_backtest(
     if vol_target_ann is not None:
         unit = interval[-1]
         num = int(interval[:-1])
-        sec_per_bar = num * {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
+        sec_per_bar = num * {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}[unit]
         bpy = 365.0 * 86400.0 / float(sec_per_bar)
         realized = ret.rolling(vol_lookback, min_periods=max(20, vol_lookback // 4)).std(ddof=0) * np.sqrt(bpy)
         vol_mult = (float(vol_target_ann) / realized.replace(0.0, np.nan)).clip(0.0, 1.0)

@@ -133,3 +133,26 @@ def test_post_hoc_top10_is_candidate_not_monitoring(tmp_path: Path) -> None:
     top10 = [r for r in rows if "top10" in r.symbol.lower()]
     assert top10
     assert top10[0].tier == "candidate"
+
+
+def test_construction_evidence_is_candidate_not_monitoring(tmp_path: Path) -> None:
+    """Value-added бленд рукавів (portfolio-construction evidence) — не paper-gate:
+    слабкий рукав не промотується в monitoring через комбінацію (iter13 H13-B)."""
+    csv_dir = tmp_path / "iter13"
+    csv_dir.mkdir()
+    pd.DataFrame(
+        [
+            {
+                "variant": "combined_1w1d_lb13",
+                "port_sharpe": 1.51,
+                "t_newey_west": 2.61,
+                "mean_oos_wf": 0.001,
+                "symbols_pos_frac": 0.9,
+                "notes": "H13-B value-added 50/50 1w⊕1d; portfolio-construction evidence",
+            }
+        ]
+    ).to_csv(csv_dir / "variants.csv", index=False)
+    rows = build_leaderboard(tmp_path)
+    comb = [r for r in rows if "combined" in r.symbol.lower()]
+    assert comb
+    assert comb[0].tier == "candidate"

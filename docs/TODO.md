@@ -72,6 +72,9 @@ VPS: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
 - [x] Нативна 4h-історія CORE_15; long-only PASS (Sharpe +1.01, t_NW +2.49) — iter11
 - [x] **iter12 improvement loop**: two-stage vol-target overlay (FAIL — post-hoc підтверджено) +
   value-added pairs⊕ts (FAIL — pairs деградував на свіжих 3y) + per-symbol attribution — [iter12](reports/iter12_improvement_cycle.md) 2026-09-12
+- [x] **iter13 weekly momentum**: ts_momentum 1w CORE_15 (H13-A FAIL — validation t_NW 1.11<2.0,
+  CI містить 0; H13-B value-added 1w⊕1d PASS як construction evidence, corr +0.09, combined SR +1.51) —
+  [iter13](reports/iter13_weekly_momentum.md) 2026-09-12
 
 ### 1. Paper-валідація та моніторинг (Phase 1 Gate)
 - [ ] Безперервний моніторинг paper pairs (`results/paper_pairs.sqlite`) протягом **≥8 тижнів** без розходження з бектестом — **після тегу з R1+R3**.

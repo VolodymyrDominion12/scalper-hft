@@ -363,7 +363,10 @@ def cmd_dashboard(args: argparse.Namespace) -> None:
     except RuntimeError as exc:
         fail(str(exc))
 
-    script = Path(__file__).resolve().parent / "dashboard.py"
+    # dashboard.py лежить у корені пакета (scalper_hft/), не в cli/ —
+    # раніше шлях вказував на cli/dashboard.py і streamlit падав з
+    # "File does not exist".
+    script = Path(__file__).resolve().parent.parent / "dashboard.py"
     try:
         import streamlit  # noqa: F401
     except ImportError:

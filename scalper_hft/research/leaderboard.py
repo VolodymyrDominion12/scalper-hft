@@ -125,9 +125,15 @@ def _tier_for_row(
     mined = f"{symbol} {notes}".lower()
     post_hoc_subset = "top10" in mined or "smooth3" in mined or "smooth=3" in mined
     rides_on_core = "full45" in mined or "h2;" in mined
+    # portfolio-construction evidence (value-added комбінації рукавів) — не
+    # paper-gate: слабкий рукав не має потрапляти в monitoring через бленд
+    # (pre-registration iter12/iter13: combined — це діагностика диверсифікації).
+    construction_evidence = "construction" in mined
     if port_sharpe is not None and t_nw is not None:
         if port_sharpe >= 0.5 and t_nw >= 2.0:
-            return "candidate" if post_hoc_subset or rides_on_core else "monitoring"
+            if post_hoc_subset or rides_on_core or construction_evidence:
+                return "candidate"
+            return "monitoring"
         if port_sharpe >= 0.5 and t_nw >= 1.5:
             return "candidate"
     if verdict == "PASS":

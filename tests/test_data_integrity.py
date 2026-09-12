@@ -74,6 +74,48 @@ def test_validate_bars_flags_flat_plateau() -> None:
     assert bars_are_critical(rep)
 
 
+def _ohlcv_with_volume(closes: np.ndarray, volumes: np.ndarray) -> pd.DataFrame:
+    idx = pd.date_range(end="2024-06-01", periods=len(closes), freq="1min")
+    c = pd.Series(closes, index=idx)
+    return pd.DataFrame(
+        {"open": c, "high": c * 1.0005, "low": c * 0.9995, "close": c, "volume": volumes},
+        index=idx,
+    )
+
+
+def test_validate_bars_tolerates_zero_volume_halt() -> None:
+    """Біржовий halt: ~1 година без угод (LINKUSDT 2021-03-02, підтверджено
+    live-перекачкою) — close «заморожений», але це реальні дані біржі."""
+    closes = _clean_closes()
+    volumes = np.ones(len(closes))
+    closes[1000:1060] = closes[999]  # 60 барів підряд
+    volumes[1000:1060] = 0.0
+    rep = validate_bars(_ohlcv_with_volume(closes, volumes), interval="1m")
+    assert rep.ok
+    assert rep.max_flat_run >= 60
+    assert not bars_are_critical(rep)
+
+
+def test_validate_bars_flags_traded_flat_run() -> None:
+    """«Плита» серед ТОРГОВАНИХ барів (обсяг є, ціна не рухається) — неринково."""
+    closes = _clean_closes()
+    closes[1000:1060] = closes[999]  # 60 барів з обсягом 1.0
+    rep = validate_bars(_ohlcv(closes), interval="1m")
+    assert not rep.ok
+    assert any("торгованих" in issue for issue in rep.issues)
+
+
+def test_validate_bars_zero_volume_plateau_still_critical() -> None:
+    """Багатогодинна «плита» (≥240 барів) — критично навіть з нульовим обсягом."""
+    closes = _clean_closes()
+    volumes = np.ones(len(closes))
+    closes[1000:1400] = closes[999]
+    volumes[1000:1400] = 0.0
+    rep = validate_bars(_ohlcv_with_volume(closes, volumes), interval="1m")
+    assert not rep.ok
+    assert bars_are_critical(rep)
+
+
 def test_validate_bars_tolerates_isolated_real_tails() -> None:
     """Поодинокі справжні хвости (0.002%, як NEARUSDT на live) не блокують."""
     closes = _clean_closes(200_000, seed=7)

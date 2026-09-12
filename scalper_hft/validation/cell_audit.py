@@ -44,7 +44,11 @@ WF_TRAIN_TEST: dict[str, tuple[int, int]] = {
     # "Дані коротші за train+purge+test" (status=error), тобто найдешевший
     # за витратами таймфрейм був недоступний для аудиту взагалі.
     "1d": (200, 100),
-    "1w": (50, 25),
+    # 1w: test=25 падав би на мінімумі рушія run_backtest (len(df) < 30 →
+    # ValueError) — жодне тижневе OOS-вікно не могло бути пораховане.
+    # test=30 — мінімум, що проходить рушій; train=50 (~1 рік) покриває
+    # warm-up momentum-lookback до 26 тижнів + quantile_window.
+    "1w": (50, 30),
 }
 DEFAULT_TRAIN_TEST: tuple[int, int] = (2000, 500)
 MIN_TRADES: dict[str, int] = {

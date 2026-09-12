@@ -15,7 +15,7 @@ def as_naive_utc(ts: pd.Timestamp) -> pd.Timestamp:
 def interval_seconds(interval: str) -> float:
     unit = interval[-1]
     num = int(interval[:-1])
-    per_unit = {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
+    per_unit = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}[unit]
     return float(num * per_unit)
 
 

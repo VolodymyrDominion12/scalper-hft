@@ -58,3 +58,20 @@
 {"ts": "2026-09-12T17:52:34+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell/cscv", "n_trials": 22, "score": 0.5}
 {"ts": "2026-09-12T17:52:34+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell", "n_trials": 2, "score": 0.5}
 {"ts": "2026-09-12T17:52:34+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell/cscv", "n_trials": 22, "score": 0.5}
+{"ts": "2026-09-12T18:00:20+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell/cscv", "n_trials": 22, "score": 0.5}
+{"ts": "2026-09-12T18:00:20+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell", "n_trials": 2, "score": 0.5}
+{"ts": "2026-09-12T18:00:20+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell/cscv", "n_trials": 22, "score": 0.5}
+{"ts": "2026-09-12T18:07:07+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell/cscv", "n_trials": 22, "score": 0.5}
+{"ts": "2026-09-12T18:07:07+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell", "n_trials": 2, "score": 0.5}
+{"ts": "2026-09-12T18:07:07+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell/cscv", "n_trials": 22, "score": 0.5}
+{"ts": "2026-09-12T18:12:03+00:00", "strategy": "ts_momentum", "symbol": "PORTFOLIO_CORE15", "purpose": "iter13:weekly/1w", "n_trials": 1, "score": null, "extra": {"lookback": 4, "allow_short": false, "n_symbols": 15}}
+{"ts": "2026-09-12T18:12:12+00:00", "strategy": "ts_momentum", "symbol": "PORTFOLIO_CORE15", "purpose": "iter13:weekly/1w", "n_trials": 1, "score": null, "extra": {"lookback": 8, "allow_short": false, "n_symbols": 15}}
+{"ts": "2026-09-12T18:12:23+00:00", "strategy": "ts_momentum", "symbol": "PORTFOLIO_CORE15", "purpose": "iter13:weekly/1w", "n_trials": 1, "score": null, "extra": {"lookback": 13, "allow_short": false, "n_symbols": 15}}
+{"ts": "2026-09-12T18:12:34+00:00", "strategy": "ts_momentum", "symbol": "PORTFOLIO_CORE15", "purpose": "iter13:weekly/1w", "n_trials": 1, "score": null, "extra": {"lookback": 26, "allow_short": false, "n_symbols": 15}}
+{"ts": "2026-09-12T18:12:44+00:00", "strategy": "ts_momentum", "symbol": "PORTFOLIO_CORE15", "purpose": "iter13:weekly/1w", "n_trials": 1, "score": null, "extra": {"lookback": 4, "allow_short": true, "n_symbols": 15}}
+{"ts": "2026-09-12T18:12:54+00:00", "strategy": "ts_momentum", "symbol": "PORTFOLIO_CORE15", "purpose": "iter13:weekly/1w", "n_trials": 1, "score": null, "extra": {"lookback": 8, "allow_short": true, "n_symbols": 15}}
+{"ts": "2026-09-12T18:13:05+00:00", "strategy": "ts_momentum", "symbol": "PORTFOLIO_CORE15", "purpose": "iter13:weekly/1w", "n_trials": 1, "score": null, "extra": {"lookback": 13, "allow_short": true, "n_symbols": 15}}
+{"ts": "2026-09-12T18:13:16+00:00", "strategy": "ts_momentum", "symbol": "PORTFOLIO_CORE15", "purpose": "iter13:weekly/1w", "n_trials": 1, "score": null, "extra": {"lookback": 26, "allow_short": true, "n_symbols": 15}}
+{"ts": "2026-09-12T18:15:03+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell/cscv", "n_trials": 22, "score": 0.5}
+{"ts": "2026-09-12T18:15:04+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell", "n_trials": 2, "score": 0.5}
+{"ts": "2026-09-12T18:15:04+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell/cscv", "n_trials": 22, "score": 0.5}
