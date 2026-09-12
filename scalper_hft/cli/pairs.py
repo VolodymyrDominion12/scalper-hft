@@ -103,7 +103,13 @@ def cmd_pairs_portfolio(args: argparse.Namespace) -> None:
             {
                 "leg1": cfg["leg1"],
                 "leg2": cfg["leg2"],
-                "strategy": PairsArb(entry_z=cfg["entry_z"], exit_z=cfg["exit_z"], lookback=cfg["lookback"]),
+                "strategy": PairsArb(
+                    entry_z=cfg["entry_z"],
+                    exit_z=cfg["exit_z"],
+                    lookback=cfg["lookback"],
+                    regime_scale=cfg.get("regime_scale", True),
+                    regime_scale_factor=cfg.get("regime_scale_factor", 0.25),
+                ),
                 "funding1": funding[cfg["leg1"]],
                 "funding2": funding[cfg["leg2"]],
             }

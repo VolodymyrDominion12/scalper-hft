@@ -95,10 +95,10 @@ def run_pairs_portfolio(
     returns_df = pd.concat(raw_returns, axis=1, keys=list(pair_equities.keys()))
     returns_df = returns_df.dropna(how="all").fillna(0.0)
 
-    if method == "erc":
+    if len(pair_configs) > 1 and method == "erc":
         w_arr = erc_weights(returns_df.values)
         weights = [float(w) for w in w_arr]
-    elif method == "hrp":
+    elif len(pair_configs) > 1 and method == "hrp":
         from scalper_hft.portfolio.hrp import hrp_weights
 
         w_arr = hrp_weights(returns_df.values)

@@ -135,3 +135,4 @@
 | cross_momentum | ATOMUSDT | 2023-09-12 | 2026-09-11 | audit_cell/cscv |
 | cross_momentum | SOLUSDT | 2023-09-12 | 2026-09-11 | audit_cell/cscv |
 | cross_momentum | XRPUSDT | 2023-09-12 | 2026-09-11 | audit_cell/cscv |
+| ts_momentum | AVAXUSDT | 2023-09-12 | 2026-09-11 | audit_cell/cscv |

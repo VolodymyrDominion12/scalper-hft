@@ -277,12 +277,14 @@ def cmd_regime_backtest(args: argparse.Namespace) -> None:
 
     # ── Бектест базових стратегій ────────────────────────────────────────
     from scalper_hft.backtest.router import run_strategy_backtest as run_backtest
+    from scalper_hft.cli._common import _load_optional_streams
 
     baseline_returns: dict[str, pd.Series] = {}
     for name in strat_names:
         try:
             strat = get_strategy(name)
-            result = run_backtest(df, strat, cost=cost)
+            trades, funding = _load_optional_streams(strat, args.symbol, args.days)
+            result = run_backtest(df, strat, cost=cost, trades=trades, funding=funding)
             baseline_returns[name] = result.bar_returns
             print(f"  ✓ {name}: Sharpe={result.sharpe:.2f}  PF={result.profit_factor:.2f}")
         except Exception as exc:
@@ -304,7 +306,8 @@ def cmd_regime_backtest(args: argparse.Namespace) -> None:
                 n_hmm_states=int(args.n_hmm_states),
                 hmm_fit_bars=int(args.hmm_fit_bars),
             )
-            result = run_backtest(df, sup, cost=cost)
+            sup_trades, sup_funding = _load_optional_streams(sup, args.symbol, args.days)
+            result = run_backtest(df, sup, cost=cost, trades=sup_trades, funding=sup_funding)
             key = f"supervisor_{mode}"
             supervisor_results[key] = result.bar_returns
             print(f"  ✓ supervisor[{mode}]: Sharpe={result.sharpe:.2f}  PF={result.profit_factor:.2f}")

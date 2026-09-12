@@ -47,6 +47,7 @@ class RunCellAudit:
     purge_bars: int | None = None
     embargo_bars: int | None = None
     n_trials_floor: int | None = None
+    derive: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +121,7 @@ def run_cell_audit(req: RunCellAudit) -> CellAudit:
         purge_bars=req.purge_bars,
         embargo_bars=req.embargo_bars,
         n_trials_floor=req.n_trials_floor,
+        derive=req.derive,
     )
 
 

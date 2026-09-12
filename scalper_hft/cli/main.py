@@ -153,8 +153,8 @@ def main(argv: list[str] | None = None) -> None:
 
     p = sub.add_parser("overfit", help="Повний аудит на перенавчання")
     add_common(p)
-    p.add_argument("--train", type=int, default=2000)
-    p.add_argument("--test", type=int, default=500)
+    p.add_argument("--train", type=int, default=None, help="Барів у train (IS). Пропуск = per-TF дефолт")
+    p.add_argument("--test", type=int, default=None, help="Барів у test (OOS). Пропуск = per-TF дефолт")
     p.add_argument(
         "--purge-bars",
         type=int,

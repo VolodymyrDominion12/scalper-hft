@@ -71,6 +71,7 @@ def cmd_overfit(args: argparse.Namespace) -> None:
             purge_bars=getattr(args, "purge_bars", None),
             embargo_bars=getattr(args, "embargo_bars", None),
             n_trials_floor=int(getattr(args, "trials", 0)) or None,
+            derive=getattr(args, "derive", True),
         )
     )
     if audit.status != "ok":

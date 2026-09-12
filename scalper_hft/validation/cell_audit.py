@@ -372,6 +372,7 @@ def audit_cell(
     purge_bars: int | None = None,
     embargo_bars: int | None = None,
     n_trials_floor: int | None = None,
+    derive: bool = True,
 ) -> CellAudit:
     """Повний аудит комірки. Помилки даних/рахунку — status=error, без raise.
 
@@ -425,7 +426,7 @@ def audit_cell(
                 )
             with_cscv = True
         strategy = get_strategy(strategy_name, **(strategy_params or {}))
-        df = ensure_klines(symbol, interval, days)
+        df = ensure_klines(symbol, interval, days, derive=derive)
         if df is None or df.empty:
             return CellAudit(
                 symbol=symbol,
