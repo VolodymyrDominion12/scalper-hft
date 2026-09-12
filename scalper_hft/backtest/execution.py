@@ -40,7 +40,7 @@ class CostModel:
     vol_exp: float = 1.0  # показник масштабування slippage волатильністю
 
     @classmethod
-    def from_settings(cls, settings: object = None, df: pd.DataFrame | None = None) -> "CostModel":
+    def from_settings(cls, settings: object = None, df: pd.DataFrame | None = None) -> CostModel:
         """Авто-калібровка vol_ref з Parkinson-vol якщо не задано."""
         from scalper_hft.config import get_settings
 
@@ -322,7 +322,7 @@ class ImplementationShortfallTracker:
             if vol_frac > 0:
                 self._ewma_vol = (1.0 - self.alpha_decay) * self._ewma_vol + self.alpha_decay * vol_frac
         self._count += 1
-        
+
         if self.persist_path:
             self.save()
 
@@ -360,6 +360,7 @@ class ImplementationShortfallTracker:
             return
         import json
         from pathlib import Path
+
         path = Path(self.persist_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         data = {
@@ -377,6 +378,7 @@ class ImplementationShortfallTracker:
             return
         import json
         from pathlib import Path
+
         path = Path(self.persist_path)
         if not path.exists():
             return

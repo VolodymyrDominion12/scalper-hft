@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
-import pytest
-
+from scalper_hft.validation.forensics import ForensicsReport
 from scalper_hft.validation.paper_audit import (
     PAPER_GATE_THRESHOLDS,
     PaperAudit,
     check_paper_gate,
     format_gate_result,
 )
-from scalper_hft.validation.forensics import ForensicsReport
 
 
 def _dummy_forensics() -> ForensicsReport:
     from scalper_hft.validation.forensics import MfeMaeSummary
+
     return ForensicsReport(
         n_closed=10,
         n_winners=5,
@@ -39,6 +38,7 @@ def _dummy_forensics() -> ForensicsReport:
 
 def _make_is_report(blended_tca_bps: float, *, coverage_ok: bool = True, fill_rate: float = 0.80):
     from scalper_hft.live.is_report import ISReport
+
     return ISReport(
         n_fills=25,
         n_unfilled=5,

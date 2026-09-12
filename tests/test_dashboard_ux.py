@@ -434,10 +434,9 @@ def test_jobs_bulk_actions_logic(tmp_path: Path) -> None:
 
 
 def test_jobs_page_apptest_selection(tmp_path, monkeypatch) -> None:
-    from streamlit.testing.v1 import AppTest
-
     from scalper_hft.research import jobs as jobs_mod
     from scalper_hft.research.jobs import JobStore
+    from streamlit.testing.v1 import AppTest
 
     # Сторінка читає РЕАЛЬНИЙ results/jobs.sqlite і при порожній черзі робить
     # `return` до рендера кнопок — тест залежав від стану черги на машині.
@@ -495,6 +494,7 @@ def test_research_page_presets_apptest() -> None:
 
 def test_open_combo_details_and_audit_switch_deferred() -> None:
     from unittest import mock
+
     import streamlit as st
     from scalper_hft.app_pages._results import (
         _on_results_row_action,
@@ -536,4 +536,3 @@ def test_open_combo_details_and_audit_switch_deferred() -> None:
         consume_results_action("hub")
     assert switched == ["app_pages/cell.py"]
     assert "_results_pending_switch" not in state
-

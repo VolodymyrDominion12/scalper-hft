@@ -18,7 +18,6 @@ def _load_iter7_oos(oos_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame] | None:
     if not files:
         return None
     frames: list[pd.DataFrame] = []
-    regime_frames: list[pd.DataFrame] = []
     for fp in files:
         df = pd.read_parquet(fp)
         if "ret" not in df.columns or "regime" not in df.columns:

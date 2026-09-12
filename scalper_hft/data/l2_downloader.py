@@ -5,23 +5,18 @@
 """
 
 import logging
-import asyncio
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+
 async def download_l2_snapshots(
-    symbol: str, 
-    start_date: str, 
-    end_date: str, 
-    exchange: str = "binance-futures",
-    cache_dir: Optional[Path] = None
+    symbol: str, start_date: str, end_date: str, exchange: str = "binance-futures", cache_dir: Path | None = None
 ) -> pd.DataFrame:
     """Завантажує L2 снапшоти з Tardis.dev.
-    
+
     Args:
         symbol: Торговий інструмент (напр., 'BTCUSDT')
         start_date: Дата початку у форматі 'YYYY-MM-DD'
@@ -35,5 +30,5 @@ async def download_l2_snapshots(
     # 2. Fetch from tardis-dev library
     # 3. Normalize into standard format (timestamp, bids[], asks[])
     # 4. Save to parquet
-    
+
     raise NotImplementedError("Tardis.dev integration is pending API key configuration.")
