@@ -143,3 +143,7 @@
 | ts_momentum | ATOMUSDT | 2023-09-12 | 2026-09-11 | audit_cell |
 | ts_momentum | BTCUSDT | 2023-09-12 | 2026-09-11 | audit_cell |
 | ts_momentum | BNBUSDT | 2023-09-12 | 2026-09-11 | audit_cell |
+| ts_momentum | PORTFOLIO_CORE15 | 2019-11-08 | 2026-09-12 | iter11:universe/1d |
+| ts_momentum | PORTFOLIO_NEW27 | 2019-11-08 | 2026-09-12 | iter11:universe/1d |
+| ts_momentum | PORTFOLIO_CORE15 | 2019-11-08 | 2026-09-12 | iter11:native-4h |
+

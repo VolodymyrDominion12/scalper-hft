@@ -114,7 +114,9 @@ def htf_market_structure(
     """
     if trend_threshold < 0.0:
         raise ValueError(f"trend_threshold must be >= 0, got {trend_threshold}")
-    off = pd.tseries.frequencies.to_offset(htf)
+    from scalper_hft.data.resample import pandas_resample_rule
+
+    off = pd.tseries.frequencies.to_offset(pandas_resample_rule(htf))
     htf_close = close.resample(off).last().dropna()
     if len(htf_close) < ema_slow + 5:
         return pd.Series("range", index=close.index, dtype=object)

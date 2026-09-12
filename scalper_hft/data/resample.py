@@ -69,6 +69,15 @@ def _rule(minutes: float) -> str:
     return f"{int(minutes * 60)}s"
 
 
+def pandas_resample_rule(interval: str) -> str:
+    """Binance-інтервал → pandas offset alias ('1d' → '1D', '1m' → '1min').
+
+    pandas 3+ відкидає lowercase `'d'` (`Pandas4Warning`); Binance і цей
+    проєкт лишають `'1d'/'1w'` як канонічні ключі кешу.
+    """
+    return _rule(interval_minutes(interval))
+
+
 def infer_interval_minutes(index: pd.DatetimeIndex) -> float:
     """Визначити таймфрейм ряду за медіаною різниць сусідніх барів."""
     if len(index) < 2:
@@ -153,6 +162,7 @@ __all__ = [
     "INTERVAL_MINUTES",
     "interval_minutes",
     "infer_interval_minutes",
+    "pandas_resample_rule",
     "check_target_valid",
     "resample_klines",
     "resample_series",

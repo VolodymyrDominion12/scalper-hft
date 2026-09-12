@@ -85,6 +85,28 @@ def _directional_verdict(row: dict) -> str:
     return label
 
 
+def _normalize_symbol(symbol: str) -> str:
+    """LINKUSDT/BTCUSDT і LINK/BTC → LINK-BTC; PORTFOLIO_* лишається як є."""
+    if symbol.upper().startswith("PORTFOLIO"):
+        return symbol.upper()
+    cleaned = symbol.upper().replace("USDT", "")
+    return cleaned.replace("/", "-").replace("_", "-")
+
+
+def _is_link_btc_pair(strategy: str, symbol: str) -> bool:
+    if "pairs_arb" not in strategy.lower():
+        return False
+    legs = [p for p in _normalize_symbol(symbol).split("-") if p]
+    return "LINK" in legs and "BTC" in legs
+
+
+def _is_pairs_single_symbol(strategy: str, symbol: str) -> bool:
+    """pairs_arb на одному тікері — не пара, не paper-ready."""
+    if "pairs_arb" not in strategy.lower():
+        return False
+    return len([p for p in _normalize_symbol(symbol).split("-") if p]) < 2
+
+
 def _tier_for_row(
     strategy: str,
     symbol: str,
@@ -95,19 +117,40 @@ def _tier_for_row(
     t_nw: float | None,
     notes: str,
 ) -> Tier:
-    key = f"{strategy}|{symbol}|{interval}".lower()
-    if "pairs_arb" in strategy.lower() and "link" in key and "btc" in key:
+    del interval  # ключ комірки використовує caller; тут — лише класифікація
+    if _is_link_btc_pair(strategy, symbol):
         return "validated_pairs"
-    if port_sharpe is not None and port_sharpe >= 0.5 and t_nw is not None and t_nw >= 1.8:
-        return "monitoring"
+    if _is_pairs_single_symbol(strategy, symbol):
+        return "rejected"
+    mined = f"{symbol} {notes}".lower()
+    post_hoc_subset = "top10" in mined or "smooth3" in mined or "smooth=3" in mined
+    rides_on_core = "full45" in mined or "h2;" in mined
+    if port_sharpe is not None and t_nw is not None:
+        if port_sharpe >= 0.5 and t_nw >= 2.0:
+            return "candidate" if post_hoc_subset or rides_on_core else "monitoring"
+        if port_sharpe >= 0.5 and t_nw >= 1.5:
+            return "candidate"
     if verdict == "PASS":
         return "paper"
-    if avg_oos is not None and avg_oos > 0.1 and (verdict in {"EXPLORATORY_PASS", "FAIL"}):
-        if avg_oos >= OOS_SHARPE_MIN * 0.5:
-            return "candidate"
-    if "monitoring" in notes.lower() or "кандидат" in notes.lower():
+    if avg_oos is not None and avg_oos >= 0.15 and verdict in {"EXPLORATORY_PASS", "FAIL"}:
+        return "candidate"
+    if "monitoring" in notes.lower():
         return "monitoring"
     return "rejected"
+
+
+def _dedupe_key(row: LeaderboardRow) -> tuple[str, str, str]:
+    return (row.strategy.lower(), _normalize_symbol(row.symbol), row.interval.lower())
+
+
+def _dedupe_rows(rows: list[LeaderboardRow]) -> list[LeaderboardRow]:
+    best: dict[tuple[str, str, str], LeaderboardRow] = {}
+    for row in rows:
+        key = _dedupe_key(row)
+        prev = best.get(key)
+        if prev is None or _score_row(row) > _score_row(prev):
+            best[key] = row
+    return list(best.values())
 
 
 def _score_row(row: LeaderboardRow) -> float:
@@ -282,45 +325,52 @@ def build_leaderboard(results_dir: Path | str = "results") -> list[LeaderboardRo
             )
         )
 
-    # iter10 variant csv
-    iter10_var = root / "iter10" / "variants.csv"
-    if iter10_var.exists():
-        vdf = pd.read_csv(iter10_var)
+    # iter*/variants.csv — портфельні порівняння (iter10, iter11, …)
+    for csv_path in sorted(root.glob("iter*/variants.csv")):
+        try:
+            vdf = pd.read_csv(csv_path)
+        except Exception:  # noqa: BLE001
+            continue
         for rec in vdf.itertuples(index=False):
             d = rec._asdict()
             avg_oos = _safe_float(d.get("mean_oos_wf"))
             port_sr = _safe_float(d.get("port_sharpe"))
             t_nw = _safe_float(d.get("t_newey_west"))
+            interval = str(d.get("interval") or "1d")
+            variant = str(d.get("variant", csv_path.parent.name))
+            strategy = str(d.get("strategy") or "ts_momentum")
+            notes = str(d.get("notes", variant))
             tier = _tier_for_row(
-                "ts_momentum",
-                f"PORTFOLIO_{d.get('variant', '')}",
-                "1d",
+                strategy,
+                f"PORTFOLIO_{variant}",
+                interval,
                 avg_oos,
                 "FAIL",
                 port_sr,
                 t_nw,
-                str(d.get("variant", "")),
+                notes,
             )
             rows.append(
                 LeaderboardRow(
                     rank=0,
                     tier=tier,
-                    strategy="ts_momentum",
-                    symbol=f"PORTFOLIO_{d.get('variant', '')}",
-                    interval="1d",
+                    strategy=strategy,
+                    symbol=f"PORTFOLIO_{variant}",
+                    interval=interval,
                     avg_oos_sharpe=avg_oos,
                     oos_pos_frac=_safe_float(d.get("symbols_pos_frac")),
                     dsr=None,
                     pbo=None,
-                    n_trades_oos=None,
+                    n_trades_oos=_safe_float(d.get("n_trades_oos")),
                     port_sharpe=port_sr,
                     t_newey_west=t_nw,
-                    verdict="CANDIDATE" if tier == "candidate" else str(tier),
-                    notes=str(d.get("notes", d.get("variant", ""))),
-                    source=str(iter10_var),
+                    verdict="MONITORING" if tier == "monitoring" else str(tier).upper(),
+                    notes=notes,
+                    source=str(csv_path),
                 )
             )
 
+    rows = _dedupe_rows(rows)
     rows.sort(key=lambda r: (_TIER_ORDER.get(r.tier, 9), -_score_row(r)))
     ranked: list[LeaderboardRow] = []
     for i, row in enumerate(rows, 1):
@@ -414,18 +464,39 @@ def render_leaderboard_markdown(
     else:
         lines.append("_Немає даних — запустіть `experiments/iter10_research_cycle.py`_")
 
-    lines.extend(
-        [
-            "",
-            "## Рекомендації для paper",
-            "",
-            "1. **pairs_arb LINK/BTC 1h** — єдиний validated; paper на `paper-v0.2.0`.",
-            "2. **ts_momentum 1d портфель** — monitoring (Sharpe +0.76, vol-target +1.09); "
-            "потрібна pre-registration перед live.",
-            "3. Directional single-symbol комірки **не проходять** гейт 0.3 — диверсифікація обов'язкова.",
-            "",
-        ]
-    )
+    recs: list[str] = []
+    for row in rows:
+        if row.tier == "validated_pairs":
+            recs.append("1. **pairs_arb LINK/BTC 1h** — єдиний validated; paper на `paper-v0.2.0`.")
+            break
+    mon = [
+        r
+        for r in rows
+        if r.tier == "monitoring"
+        and r.strategy == "ts_momentum"
+        and "top10" not in r.symbol.lower()
+        and "smooth3" not in r.symbol.lower()
+    ]
+    n = 2
+    seen: set[str] = set()
+    for best in mon:
+        key = f"{best.interval}:{best.symbol}"
+        if key in seen:
+            continue
+        seen.add(key)
+        tnw = f"{best.t_newey_west:+.2f}" if best.t_newey_west is not None else "—"
+        psr = f"{best.port_sharpe:+.2f}" if best.port_sharpe is not None else "—"
+        recs.append(
+            f"{n}. **ts_momentum {best.interval} {best.symbol}** — monitoring "
+            f"(Port Sharpe {psr}, t_NW {tnw}); paper-моніторинг поруч із pairs, не live."
+        )
+        n += 1
+        if n > 4:
+            break
+    recs.append(f"{n}. Directional single-symbol комірки **не проходять** гейт 0.3 — диверсифікація обов'язкова.")
+    lines.extend(["", "## Рекомендації для paper", ""])
+    lines.extend(recs)
+    lines.append("")
     return "\n".join(lines)
 
 

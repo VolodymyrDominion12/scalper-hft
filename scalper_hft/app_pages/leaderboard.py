@@ -1,4 +1,4 @@
-"""Лідерборд: рейтинг комірок і портфелів з audit/sweep/iter10."""
+"""Лідерборд: рейтинг комірок і портфелів з audit/sweep/iter-циклів."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ import streamlit as st
 
 from scalper_hft.research.leaderboard import (
     _TIER_LABELS,
-    build_leaderboard,
     leaderboard_dataframe,
     render_leaderboard_markdown,
 )
@@ -17,37 +16,60 @@ from scalper_hft.research.leaderboard import (
 st.title("Лідерборд")
 st.caption("Агрегація audit, sweep і портфельних тестів. Оновлення: `uv run python -m scalper_hft.cli leaderboard`")
 
-results_dir = Path("results")
-rows = build_leaderboard(results_dir)
 
-if not rows:
+@st.cache_data(ttl=30, max_entries=4)
+def _cached_frame(results_dir: str) -> pd.DataFrame:
+    return leaderboard_dataframe(Path(results_dir))
+
+
+results_dir = Path("results")
+df = _cached_frame(str(results_dir))
+
+if df.empty:
     st.info("Немає даних. Запустіть дослідницький цикл або `cli leaderboard`.")
     st.stop()
 
-df = leaderboard_dataframe(results_dir)
-
-# KPI по тієрах
 tier_counts = df["tier"].value_counts()
 with st.container(horizontal=True):
     for tier, label in _TIER_LABELS.items():
         n = int(tier_counts.get(tier, 0))
-        st.metric(
-            label.replace("✅ ", "").replace("🟢 ", "").replace("🟡 ", "").replace("🔵 ", "").replace("⛔ ", ""),
-            n,
-            border=True,
-        )
+        st.metric(label.split(" ", 1)[-1], n, border=True)
 
-# Фільтри
-tiers_avail = ["Усі"] + [label for label in _TIER_LABELS.values()]
-tier_pick = st.selectbox("Тіер", tiers_avail, index=0)
-strategy_pick = st.selectbox("Стратегія", ["Усі"] + sorted(df["strategy"].dropna().unique().tolist()))
+hide_rejected = st.toggle("Сховати rejected", value=True)
+filters = st.container(horizontal=True)
+with filters:
+    intervals = ["Усі"] + sorted(df["interval"].dropna().astype(str).unique().tolist())
+    interval_pick = st.selectbox("Таймфрейм", intervals, index=0)
+    strategies = ["Усі"] + sorted(df["strategy"].dropna().unique().tolist())
+    strategy_pick = st.selectbox("Стратегія", strategies)
 
 view = df.copy()
-if tier_pick != "Усі":
-    tier_key = next(k for k, v in _TIER_LABELS.items() if v == tier_pick)
-    view = view[view["tier"] == tier_key]
+if hide_rejected:
+    view = view[view["tier"] != "rejected"]
+if interval_pick != "Усі":
+    view = view[view["interval"].astype(str) == interval_pick]
 if strategy_pick != "Усі":
     view = view[view["strategy"] == strategy_pick]
+
+paper_rows = df[df["tier"].isin(["validated_pairs", "paper", "monitoring"])].head(6)
+if not paper_rows.empty:
+    st.subheader("Рекомендації для paper")
+    for rec in paper_rows.itertuples(index=False):
+        label = _TIER_LABELS.get(str(rec.tier), rec.tier)
+        notes = str(rec.notes or "")[:120]
+        st.markdown(f"- **{rec.strategy}** `{rec.symbol}` {rec.interval} — {label}. {notes}")
+
+port = view.dropna(subset=["port_sharpe"]) if "port_sharpe" in view.columns else view.iloc[0:0]
+if not port.empty:
+    st.subheader("Портфельний Sharpe")
+    chart_df = (
+        port.assign(label=port["symbol"].astype(str) + " " + port["interval"].astype(str))
+        .set_index("label")[["port_sharpe"]]
+        .sort_values("port_sharpe", ascending=False)
+        .head(12)
+    )
+    st.bar_chart(chart_df, y="port_sharpe")
+    st.caption("Source: results/iter*/variants.csv · річний Sharpe рівноважного портфеля, maker.")
 
 st.subheader("Таблиця")
 show_cols = [
@@ -73,24 +95,15 @@ if "port_sharpe" in display.columns:
 if "t_newey_west" in display.columns:
     display["t_newey_west"] = display["t_newey_west"].map(lambda x: f"{x:+.2f}" if pd.notna(x) else "—")
 display["tier"] = display["tier"].map(lambda t: _TIER_LABELS.get(t, t))
-
-st.dataframe(display, use_container_width=True, hide_index=True)
-
-# Paper-ready блок
-paper_rows = [r for r in rows if r.tier in ("validated_pairs", "paper", "monitoring")][:5]
-if paper_rows:
-    st.subheader("Рекомендації для paper")
-    for r in paper_rows:
-        st.markdown(
-            f"- **{r.strategy}** `{r.symbol}` {r.interval} — {_TIER_LABELS.get(r.tier, r.tier)}: {r.notes[:80]}"
-        )
+st.dataframe(display, width="stretch", hide_index=True)
 
 with st.expander("Повний markdown-звіт"):
     st.markdown(render_leaderboard_markdown(results_dir, top_n=40))
 
 if st.button("Оновити лідерборд з диска", type="primary"):
+    _cached_frame.clear()
     out = Path("docs/reports/LEADERBOARD.md")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(render_leaderboard_markdown(results_dir), encoding="utf-8")
-    df.to_csv(results_dir / "leaderboard.csv", index=False)
+    leaderboard_dataframe(results_dir).to_csv(results_dir / "leaderboard.csv", index=False)
     st.success(f"Збережено {out}")

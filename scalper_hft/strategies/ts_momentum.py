@@ -79,8 +79,9 @@ class TimeSeriesMomentum(Strategy):
         if allow_short:
             sig[ret < low] = -1.0
         if smooth > 1:
-            sig = sig.ewm(span=smooth, adjust=False).mean()
-            sig = sig.apply(lambda v: 1.0 if v > 0.3 else (-1.0 if v < -0.3 else 0.0))
+            sm = sig.ewm(span=smooth, adjust=False).mean()
+            sig = pd.Series(0.0, index=df.index)
+            sig = sig.mask(sm > 0.3, 1.0).mask(sm < -0.3, -1.0)
         return sig.fillna(0.0).clip(-1, 1).astype(int)
 
 

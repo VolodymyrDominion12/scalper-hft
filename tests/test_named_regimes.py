@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -132,6 +134,17 @@ def test_apply_regime_gates_noop_when_disabled() -> None:
     regime = _regime_df(["trend_up", "high", "range"], ["normal", "high", "low"])
     out = apply_regime_gates(sig, regime)
     assert list(out) == [1.0, -1.0, 1.0]
+
+
+def test_htf_market_structure_binance_1d_has_no_pandas4_warning() -> None:
+    """Binance '1d' має мапитись на pandas '1D' — інакше Pandas4Warning."""
+    n = 24 * 80
+    idx = pd.date_range("2024-01-01", periods=n, freq="1h")
+    close = pd.Series(100.0 + np.arange(n, dtype=float) * 0.1, index=idx)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", message=".*'d' is deprecated.*")
+        out = htf_market_structure(close, htf="1d")
+    assert len(out) == len(close)
 
 
 def test_htf_market_structure_direction_and_labels() -> None:

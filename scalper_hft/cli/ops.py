@@ -633,7 +633,7 @@ def cmd_is_report(args: argparse.Namespace) -> None:
     if orders is None or orders.empty:
         print("Немає ордерів для аналізу IS.")
         return
-    cutoff = pd.Timestamp.utcnow() - pd.Timedelta(days=days)
+    cutoff = pd.Timestamp.now("UTC") - pd.Timedelta(days=days)
     if "ts" in orders.columns:
         orders = orders[pd.to_datetime(orders["ts"], utc=True) >= cutoff]
     if shadow_frame is not None and not shadow_frame.empty and "ts" in shadow_frame.columns:

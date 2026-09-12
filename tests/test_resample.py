@@ -9,6 +9,7 @@ from scalper_hft.data.resample import (
     check_target_valid,
     infer_interval_minutes,
     interval_minutes,
+    pandas_resample_rule,
     resample_klines,
     resample_series,
 )
@@ -27,6 +28,14 @@ def _make_1m(hours: int = 72) -> pd.DataFrame:
         },
         index=idx,
     )
+
+
+@pytest.mark.parametrize(
+    ("interval", "rule"),
+    [("1m", "1min"), ("5m", "5min"), ("1h", "1h"), ("4h", "4h"), ("1d", "1D"), ("1w", "7D")],
+)
+def test_pandas_resample_rule_maps_binance_intervals(interval: str, rule: str) -> None:
+    assert pandas_resample_rule(interval) == rule
 
 
 @pytest.mark.parametrize(

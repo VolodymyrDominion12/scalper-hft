@@ -3,6 +3,19 @@
 Оновлюється після кожного аудиту. Методологія: повний цикл інвестігейт →
 реалізація → тест → аудит (walk-forward + Deflated Sharpe + CSCV/PBO + stress/cohort + paper-replay).
 
+## 🔄 Iteration 11 — незалежне підтвердження long-only (2026-09-12)
+
+Повний звіт: [reports/iter11_improvement_cycle.md](reports/iter11_improvement_cycle.md).
+Pre-registration: [reports/hypothesis_iter11_universe.md](reports/hypothesis_iter11_universe.md).
+Лідерборд: [reports/LEADERBOARD.md](reports/LEADERBOARD.md).
+
+**Комірки для paper:**
+1. **pairs_arb LINK/BTC 1h maker** — validated (без змін).
+2. **ts_momentum 1d long-only CORE_15** — monitoring. Реплікація H0: Port Sharpe **+1.37**, t_NW **+2.61**, bootstrap CI **[+0.49, +2.25]** (без нуля), обидва підперіоди > 0.
+3. **ts_momentum 4h long-only CORE_15** — monitoring. Нативний 4h (не ресемпл): Sharpe **+1.01**, t_NW **+2.49**, CI **[+0.25, +1.77]**.
+
+**Не paper:** 27 нових імен (H1 t_NW +1.70, CI містить 0). Причина edge — відмова від шортів (контроль short+long: 1d +0.19 / 4h +0.32).
+
 ## 🔄 Iteration 9 — відбір стратегій/інструментів/таймфреймів (2026-09-12)
 
 Повний звіт: [reports/iter9_strategy_selection.md](reports/iter9_strategy_selection.md).

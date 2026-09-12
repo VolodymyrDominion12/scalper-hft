@@ -64,6 +64,7 @@ preferred_regimes: ["trend_up", "trend_down"]
 notes: >
   Виділено з `cross_momentum` (там цей механізм працював у single-symbol гілці,
   але capability contract його блокує — клітинка з назвою cross_momentum
-  рахувала б інший механізм). Перше застосування: momentum на денних барах,
-  історія 6.8 року (нативний 1d-кеш), walk-forward train=250/test=125 —
-  див. experiments/iter9_daily_long_history.py та docs/reports/iter9_*.md.
+  рахувала б інший механізм). Paper-конфіг (iter11, не validated): long-only
+  (`allow_short=false`), lookback=20, maker, універсум CORE_15, ТФ 1d і 4h.
+  NEW-імена (27 перпів) не пройшли незалежний t-гейт — не розширювати книгу.
+  Див. experiments/iter11_expansion_cycle.py та docs/reports/iter11_*.md.

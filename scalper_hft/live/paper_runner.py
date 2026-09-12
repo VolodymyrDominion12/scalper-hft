@@ -112,7 +112,7 @@ class PaperRunner:
                     logger.warning("Крок %d помилка: %s", i, exc)
                     action = f"error:{exc}"
                 result.actions.append(action)
-                result.equity_points.append((pd.Timestamp.utcnow().tz_localize(None), self.account.equity))
+                result.equity_points.append((pd.Timestamp.now("UTC").replace(tzinfo=None), self.account.equity))
                 logger.info(
                     "[%d/%d] %s | equity=%.2f | positions=%d",
                     i + 1,

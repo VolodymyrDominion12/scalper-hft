@@ -68,8 +68,8 @@ VPS: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
 
 ### 0b. Після iter9 (research backlog)
 - [x] Pre-registration гіпотези `ts_momentum` 1d (`docs/reports/hypothesis_ts_momentum.md`) — iter10 2026-09-12
-- [ ] Розширення універсуму momentum-портфеля до 30–50 перпів (єдиний шлях підняти t-стат)
-- [ ] Нативна 4h-історія (не лише 1d) для 4h-комірок поза 3-річним 1m-кешем
+- [x] Розширення універсуму momentum-портфеля (27 нових перпів, H1 FAIL t_NW 1.70 — імена не в paper) — iter11
+- [x] Нативна 4h-історія CORE_15; long-only PASS (Sharpe +1.01, t_NW +2.49) — iter11
 
 ### 1. Paper-валідація та моніторинг (Phase 1 Gate)
 - [ ] Безперервний моніторинг paper pairs (`results/paper_pairs.sqlite`) протягом **≥8 тижнів** без розходження з бектестом — **після тегу з R1+R3**.
