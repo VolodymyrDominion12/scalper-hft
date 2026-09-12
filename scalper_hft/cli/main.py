@@ -11,7 +11,7 @@ def main(argv: list[str] | None = None) -> None:
     import scalper_hft.cli as _cli_pkg  # call-time резолюція (тести патчать пакет)
 
     parser = argparse.ArgumentParser(
-        prog="scalper-hft", description="Високочастотна скальпінг-система (Binance USDT-M)"
+        prog="scalper-hft", description="MFT квант-платформа Binance USDT-M (pairs/research/paper)"
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

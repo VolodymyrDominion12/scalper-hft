@@ -1,7 +1,8 @@
 # AGENTS.md — інструкції для AI-агентів у scalper-hft
 
 ## Про проєкт
-Високочастотна скальпінг-система на Binance USDT-M futures. Python 3.12, uv.
+MFT квант-платформа на Binance USDT-M futures (хвилини–години; **не** субмілісекундний HFT).
+Python 3.12, uv. Валідований кандидат: `pairs_arb` LINK/BTC 1h maker.
 Архітектура за книгою "Inside the Black Box" (Narang): Alpha → Risk → Transaction Cost
 → Portfolio Construction → Execution поверх Data та Research.
 
@@ -42,7 +43,7 @@
 uv run python -m scalper_hft.cli data-audit --days 1095
 uv run python scripts/download_live_history.py --days 1095          # live-історія (15 символів)
 uv run python -m scalper_hft.cli download --symbol BTCUSDT --interval 1h --days 90
-uv run python -m scalper_hft.cli pairs --strategy pairs_arb --leg1 XRPUSDT --leg2 BTCUSDT --interval 1h --days 90 --maker
+uv run python -m scalper_hft.cli pairs --strategy pairs_arb --leg1 LINKUSDT --leg2 BTCUSDT --interval 1h --days 90 --maker
 uv run python -m scalper_hft.cli overfit --strategy pairs_arb --symbol BTCUSDT --interval 1h --days 90
 uv run python -m scalper_hft.cli cscv --strategy pairs_arb --symbol BTCUSDT --interval 1h --days 90
 uv run python -m scalper_hft.cli report --strategy pairs_arb --symbol BTCUSDT --interval 1h --days 90

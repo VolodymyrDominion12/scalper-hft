@@ -253,5 +253,6 @@ live-vX.Y.Z       — той самий SHA після Paper-Gate (фаза 3)
 ## Стан коду (2026-09-03)
 
 Фази 0–1 у репозиторії: persist `PaperAccount`, `--daemon`, `control.json`,
-systemd-юніт і `scripts/deploy_paper.sh`. Наступне — тег `paper-v0.1.0` і
-paper-gate на VPS (фаза 2). Не вмикати live.
+systemd-юніт і `scripts/deploy_paper.sh`. Теги `paper-v0.1.0` і `paper-v0.2.0` є.
+Наступне — **фаза 2**: 8 тижнів paper-gate на VPS на `paper-v0.2.0` (не `git pull main`).
+Не вмикати live. Chase на live-адаптері не дефолт paper (див. ROADMAP Phase 6.6 L0).

@@ -79,7 +79,7 @@ def cmd_pairs(args: argparse.Namespace) -> None:
 
 
 def cmd_pairs_portfolio(args: argparse.Namespace) -> None:
-    """Бектест портфеля валідованих пар (XRP/BTC + BTC/ETH + LINK/BTC)."""
+    """Бектест портфеля з VALIDATED_PAIRS (зараз лише LINK/BTC)."""
     from scalper_hft.backtest.execution import CostModel
     from scalper_hft.backtest.pairs_portfolio import run_pairs_portfolio
     from scalper_hft.cli import _load_klines  # call-time (patchable)

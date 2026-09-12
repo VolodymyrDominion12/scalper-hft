@@ -21,6 +21,8 @@ H1–H8 закриті: [CHANGE_PLAN_HEALTH.md](CHANGE_PLAN_HEALTH.md).
 **Головне правило розгортання:** жоден live з реальними коштами, доки paper pairs не пройде **≥8 тижнів безперервного моніторингу** без розходження з бектестом.
 
 Розділення research (локально) і робота (VPS, git-тег): [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
+Доповнення 2026-09-12: [Phase 6.6](#66--honesty-live-parity-hygiene-аудит-2026-09-12-p0p1)
+(chase-cost vs paper, job integrity, quarantine REGISTRY).
 
 ---
 
@@ -54,7 +56,8 @@ paper-replay реверсує і рахує daily-loss на mark-to-market. Те
 
 **Критерій виходу (Paper Gate):** ≥8 тижнів paper-прогону, CLI `paper-audit` (tracking error vs бектест, fill-rate, maxDD ≤ бектест × 1.5, MAE/MFE forensics).
 
-Стартовий портфель: **XRP/BTC + BTC/ETH + LINK/BTC (+ LINK/ETH)**, 1h, maker.
+Стартовий портфель для Gate: **лише LINK/BTC** (`lookback=120`, `regime_scale=0.25`)
+у `VALIDATED_PAIRS`. XRP/ETH-рукави — поза книгою, доки не буде нового pair-PASS + ADF у paper.
 
 ---
 
@@ -106,7 +109,7 @@ paper-replay реверсує і рахує daily-loss на mark-to-market. Те
 | ID | Що | Статус |
 |---|---|---|
 | 0 | Persist `PaperAccount` + `--daemon` + `control.json` + SIGTERM | код |
-| 1 | systemd `scalper-paper-pairs` + тег `paper-v0.1.0` | код юніта; тег — реліз |
+| 1 | systemd `scalper-paper-pairs` + теги `paper-v0.1.0` / `paper-v0.2.0` | теги в git; 8 тижнів на v0.2.0 — ops |
 | 2 | 8 тижнів paper на VPS (операції; Paper-Gate) | план |
 | 3 | Live-адаптер ніг pairs (код, `DRY_RUN=true` за замовчуванням) | план |
 | 4 | Тег `live-v*` + ключі IP-whitelist | лише після Gate і явного запиту |
@@ -246,6 +249,25 @@ Paper Gate ≥8 тижнів на конфігурації LINK/BTC 1h maker + r
 | HFT-2 | Nautilus benchmark vs `event_engine` fill parity | 📋 |
 | HFT-3 | Tardis.dev історія для queue model (Phase 4) | 📋 |
 
+### 6.6 — Honesty, live-parity, hygiene (аудит 2026-09-12) [P0–P1]
+
+Свіжий код-аудит (live/risk/docs vs HFT/MFT практики). Не нові альфи.
+Тег `paper-v0.2.0` **існує** в git; `main` попереду тега (research ок).
+Gate = 8 тижнів **на VPS**, не факт створення тега.
+
+| ID | Що | Пріоритет | Статус |
+|---|---|---|---|
+| DOC-1 | Одна книга: `VALIDATED_PAIRS` = LINK/BTC; прибрати 4-парний «стартовий портфель» | P0 | ✅ цей коміт (Phase 1) |
+| DOC-2 | TODO / DESIGN / AGENTS / `pyproject` / CLI: продукт = MFT pairs, не HFT-скальп | P0 | ✅ 2026-09-12 |
+| L0 | Live `PairsLiveRunner` hardcode `legging_mode="chase"` vs paper `strict_both`. Chase — свідомий захист від одноногої позиції, але **Paper Gate не міряє taker-вартість другої ноги**. Перед live-soak: або shadow-TCA chase у paper, або live теж `strict_both` до окремого PASS | P0 (до L1) | 📋 |
+| JOB-1 | `job succeeded` ≠ усі клітинки здорові: fail/warn при високій частці `error`/`degenerate` | P1 | 📋 |
+| APP-1 | `run_cell_audit` ще качає trades/funding (R6 закрив лише `run_backtest`) | P1 | 📋 |
+| REG-1 | 17 імен у `REGISTRY`; default sweep без відхилених (`--include-rejected`) | P1 | 📋 |
+| HFT-0 | `nautilus_adapter` — stub (`NotImplementedError`); не продавати як інтегрований рушій | P1 | 📋 |
+| MFT-1 | Перп-облік: isolated/cross, mark vs last, funding з mark, buffer до ліквідації — не first-class у live | P2 (після Gate) | 📋 |
+| MFT-2 | `IMPACT_K=0`; `CostModel()` dataclass default 0.1 ≠ settings 0.0. Лише `from_settings` | P2 | 📋 |
+| STRESS-G | Crash maxDD ≤ 2× BT додати в критерії Paper Gate | P2 | 📋 |
+
 ---
 
 ## Що категорично не робити
@@ -253,7 +275,7 @@ Paper Gate ≥8 тижнів на конфігурації LINK/BTC 1h maker + r
 - Не вмикати live на `mean_reversion` / `cvd_momentum` / `funding_carry` / `basis_reversion` / 1m pairs — усі відхилені.
 - Не оптимізувати z/lookback на повній вибірці без OOS/DSR контролю.
 - Не збільшувати частоту pairs до 1m «щоб більше угод» — 1m знищується fee-drag.
-- Не ставити taker-виконання на pairs.
+- Не ставити taker на **вхід** pairs (лише post-only). Chase другої ноги — свідомий live-режим, не дефолт paper (Phase 6.6 L0).
 - Не запускати реальний капітал до завершення 8-тижневого paper-трейдингу.
 
 ---
@@ -280,3 +302,4 @@ Paper Gate ≥8 тижнів на конфігурації LINK/BTC 1h maker + r
 | 6.3 | Regime portfolio (selector OOS iter7) | 📋 Після Gate |
 | 6.4 | Live execution (лише після Gate + явний запит) | 📋 |
 | 6.5 | HFT track (L2/Tardis/Nautilus — окремий продукт) | 🔜 |
+| 6.6 | Doc honesty; chase-cost vs paper; job integrity; registry quarantine | 📋 Аудит 2026-09-12 |

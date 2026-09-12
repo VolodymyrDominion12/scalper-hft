@@ -253,12 +253,29 @@ L2 queue у live, async OMS, colocation — Phase 6.5 / Phase 4. Не блоку
 | Paper Gate не закритий | ops / VPS | 🔴 | ⏳ |
 | `portfolio_var_limit` у частковому runner | `pairs_runner.py` | 🔴 | ✅ 2026-09-12 |
 | Worker code version | `research/code_version.py` | 🟡 | ✅ hash у worker |
-| `IMPACT_K=0` | `CostModel` | 🟡 | відкрито |
+| `IMPACT_K=0` | `CostModel` | 🟡 | відкрито (`from_settings` = 0.0; bare `CostModel()` = 0.1) |
+| Live chase vs paper `strict_both` | `pairs_runner.PairsLiveRunner` | 🔴 до live | відкрито (Phase 6.6 L0) |
 | `risk_budget` не в live | `portfolio/` | 🟡 | відкрито |
 | AAVEUSDT sweep bias | research | 🟡 | W1-X |
 | `mypy strict` частково | `pyproject.toml` | 🟢 | |
+| Job succeeded при degenerate-клітинках | `research/job_worker.py` | 🟡 | Phase 6.6 JOB-1 |
 
 ---
 
-*Джерела: Narang, López de Prado AFML, Bailey-LdP DSR, Kyle/Roll/Amihud,
-Avellaneda-Stoikov, аудит кодової бази 2026-09-11/12.*
+## 8. Аудит 2026-09-12 (код vs практики)
+
+Повторна перевірка live/risk/docs. Вердикт **не змінився**: зріла **MFT**-платформа, не HFT.
+Нове, чого не було в §2:
+
+1. **Paper vs live execution gap.** `PairsEngine` дефолт `strict_both`; `PairsLiveAdapter` /
+   `PairsLiveRunner` — `legging_mode="chase"` (taker IOC другої ноги). Це правильний захист
+   від одноногої книги на біржі, але 8-тижневий paper **не** накопичує цей taker-cost.
+   Не вмикати live, поки chase не в shadow-TCA або не вирівняний з paper.
+2. **Тег ≠ Gate.** `paper-v0.2.0` є в git; `main` на ~7 комітів попереду — так і має бути.
+   Відкритий пункт — безперервний прогін на VPS, не створення тега.
+3. **Narang pipeline частково бібліотека:** ERC / `risk_budget.py` не в live-циклі (одна пара —
+   ок). Isolated/cross, mark-price funding, MMR-ліквідація — не first-class.
+4. **Назва.** `AGENTS.md` / `DESIGN.md` / `pyproject` вирівняні на MFT (2026-09-12), щоб агенти
+   не пропонували 1m taker-скальп «бо репо називається HFT».
+
+Деталі в роадмапі: [ROADMAP.md](ROADMAP.md#66--honesty-live-parity-hygiene-аудит-2026-09-12-p0p1).

@@ -35,7 +35,7 @@
   - MCP-сервер для AI-асистентів (`scalper_hft/mcp_trading.py`, CLI `mcp`);
   - Streamlit дашборд (`scalper_hft/dashboard.py`);
   - Telegram сповіщення.
-- [x] **Тести**: 23 файли в `tests/` — `uv run pytest tests/ -q` має бути зеленим (Postgres-сюїта skip без `TEST_POSTGRES_DSN`).
+- [x] **Тести**: ~120 файлів у `tests/` — `uv run pytest tests/ -q` має бути зеленим (Postgres-сюїта skip без `TEST_POSTGRES_DSN`).
 
 ---
 
@@ -71,8 +71,8 @@ VPS: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
 План з фазами, файлами і протоколом hotfix: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
 - [x] **Фаза 0:** знімок `PaperAccount` у SQLite, `--daemon`, `control.json`, SIGTERM save.
 - [x] **Фаза 1 (код):** systemd `scalper-paper-pairs.service`, `scripts/deploy_paper.sh` (не `git pull` на VPS).
-- [ ] **Фаза 1 (реліз):** тег `paper-v0.1.0` на VPS.
-- [ ] **Фаза 2:** 8 тижнів paper на VPS.
+- [x] **Фаза 1 (реліз):** теги `paper-v0.1.0` і `paper-v0.2.0` у git (VPS крутить тег, не `main`).
+- [ ] **Фаза 2:** 8 тижнів paper на VPS на `paper-v0.2.0` (Gate; SHA тега ≠ HEAD `main`).
 - [ ] **Фаза 3:** live-адаптер ніг pairs під моком; дефолт `DRY_RUN=true`.
 - [ ] **Фаза 4:** `live-v*` лише після Gate і явного запиту.
 
