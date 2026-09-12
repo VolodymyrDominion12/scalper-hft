@@ -267,3 +267,78 @@ def test_cmd_depth_audit_writes_report_and_exits(tmp_path: Path) -> None:
     _book().to_parquet(tmp_path / "XRPUSDT_bookTicker.parquet")
     cmd_depth_audit(Namespace(data_dir=str(tmp_path), out=str(out)))
     assert "quality_ok:** `true`" in out.read_text(encoding="utf-8")
+
+
+# ── aggTrades: спільні мілісекунди — норма, а не дефект ─────────────────────
+
+
+def _trades_multi_per_ms(n: int = 50, per_ms: int = 5) -> pd.DataFrame:
+    """aggTrades, де кілька угод ділять одну мілісекунду (як у реальному потоці)."""
+    idx = pd.to_datetime([1_700_000_000_000 + i // per_ms for i in range(n)], unit="ms")
+    return pd.DataFrame(
+        {
+            "trade_id": np.arange(1, n + 1),
+            "price": np.full(n, 100.0),
+            "amount": np.full(n, 0.1),
+            "side": ["buy", "sell"] * (n // 2),
+        },
+        index=idx,
+    )
+
+
+def test_validate_trades_allows_shared_milliseconds_when_ids_unique() -> None:
+    """Регресія: дублікати міток часу НЕ блокують запис aggTrades.
+
+    Реальний кейс (2026-09-12): завантаження SOLUSDT з Binance Vision впало з
+    `FAIL: n=43289298 dup=1162183 invalid=0`. `invalid=0` означає, що з
+    trade_id усе гаразд, а `dup` — це спільні мілісекунди, яких у потоці ~2.2%
+    (на реальному архіві: 6085 на 279 778 рядків). До аудиту це не спрацьовувало
+    лише тому, що старий дедуп за мілісекундним індексом ЗНИЩУВАВ ці угоди.
+    """
+    from scalper_hft.data.validate import stream_is_critical, validate_trades
+
+    df = _trades_multi_per_ms()
+    assert df.index.duplicated().sum() > 0, "синтетика має містити спільні мс"
+
+    rep = validate_trades(df)
+
+    assert rep.ok, rep.issues
+    assert rep.n_duplicates == 0
+    assert not stream_is_critical(rep)
+
+
+def test_validate_trades_still_flags_duplicate_trade_id() -> None:
+    from scalper_hft.data.validate import stream_is_critical, validate_trades
+
+    df = _trades_multi_per_ms()
+    dup = pd.concat([df, df.iloc[:10]])
+
+    rep = validate_trades(dup)
+
+    assert not rep.ok
+    assert stream_is_critical(rep), "дублікати справжнього ключа — критично"
+    assert any("trade_id" in i for i in rep.issues)
+
+
+def test_validate_trades_flags_timestamp_dups_when_no_trade_id() -> None:
+    """Без trade_id час — єдиний ключ, тож дублікати мс знову дефект."""
+    from scalper_hft.data.validate import validate_trades
+
+    df = _trades_multi_per_ms().drop(columns=["trade_id"])
+    rep = validate_trades(df)
+
+    assert not rep.ok
+    assert rep.n_duplicates > 0
+
+
+def test_save_trades_accepts_shared_milliseconds(tmp_path) -> None:
+    """Запис кешу не має падати на кадрі зі спільними мс (fail-closed лишається для id)."""
+    from scalper_hft.data.storage import load_trades, save_trades
+
+    df = _trades_multi_per_ms()
+    path = tmp_path / "SYN_aggTrades.parquet"
+
+    save_trades(path, df)
+    back = load_trades(path)
+
+    assert back is not None and len(back) == len(df)

@@ -216,8 +216,14 @@ def _index_quality(
     df: pd.DataFrame,
     *,
     now: pd.Timestamp | None = None,
+    allow_duplicates: bool = False,
 ) -> tuple[bool, int, int, list[str]]:
-    """Монотонність, дублікати, майбутні мітки. Не змінює validate_bars API."""
+    """Монотонність, дублікати, майбутні мітки. Не змінює validate_bars API.
+
+    allow_duplicates: дублікати міток часу не вважаються дефектом — потік
+    aggTrades, де унікальний ключ це `trade_id`, а `transact_time` має лише
+    мілісекундну роздільність.
+    """
     issues: list[str] = []
     idx = df.index
     if not isinstance(idx, pd.DatetimeIndex):
@@ -227,8 +233,11 @@ def _index_quality(
     if not monotonic:
         issues.append("індекс не монотонний")
     n_dup = int(idx.duplicated().sum()) if len(idx) else 0
-    if n_dup:
+    if n_dup and not allow_duplicates:
         issues.append(f"дублікати: {n_dup}")
+        n_dup_reported = n_dup
+    else:
+        n_dup_reported = 0
     n_future = 0
     now_ts = _now_naive(now)
     if len(idx):
@@ -239,7 +248,7 @@ def _index_quality(
             comparable = idx.tz_localize(None) if idx.tz is not None else idx
             n_future = int((comparable > now_ts).sum())
             issues.append(f"майбутні мітки: {n_future}")
-    return monotonic, n_dup, n_future, issues
+    return monotonic, n_dup_reported, n_future, issues
 
 
 def _gap_count(idx: pd.DatetimeIndex, expected: pd.Timedelta) -> int:
@@ -254,11 +263,38 @@ def validate_trades(
     *,
     now: pd.Timestamp | None = None,
 ) -> StreamQualityReport:
-    """aggTrades: price/amount > 0, side ∈ {buy,sell}, монотонний час."""
+    """aggTrades: price/amount > 0, side ∈ {buy,sell}, унікальний trade_id, монотонний час.
+
+    Дублікати МІТОК ЧАСУ тут — норма, а не дефект. `transact_time` має
+    мілісекундну роздільність, і кілька aggTrades регулярно ділять одну
+    мілісекунду (на реальному архіві SOLUSDT: 6 085 дублів індексу на 279 778
+    рядків ≈ 2.2%). Унікальний ключ угоди — `agg_trade_id`, і саме за ним
+    дедуплікує `storage.dedupe_trades`.
+
+    Тому перевірка «індекс без дублікатів» лишається чинною лише тоді, коли
+    `trade_id` відсутній або сам має дублікати — тоді час є єдиним доступним
+    ключем.
+
+    Історична пастка: до аудиту 2026-09-11 дедуп ішов за мілісекундним індексом
+    і ЗНИЩУВАВ ці угоди, тому перевірка ніколи не спрацьовувала. Після переходу
+    на `trade_id` вона почала блокувати коректне завантаження: 43.3 млн рядків →
+    `FAIL: n=43289298 dup=1162183 invalid=0`, хоч `invalid=0` означає, що з
+    trade_id усе гаразд, а `dup` — це спільні мілісекунди.
+    """
     if df is None or df.empty:
         return _empty_stream("trades")
-    monotonic, n_dup, n_future, issues = _index_quality(df, now=now)
-    n_invalid = 0
+
+    # Унікальність справжнього ключа визначає, чи взагалі має значення час.
+    n_id_dup = 0
+    id_is_key = False
+    if "trade_id" in df.columns:
+        n_id_dup = int(df["trade_id"].duplicated().sum())
+        id_is_key = n_id_dup == 0
+    monotonic, n_dup, n_future, issues = _index_quality(df, now=now, allow_duplicates=id_is_key)
+    if n_id_dup:
+        issues.insert(0, f"дублікати trade_id: {n_id_dup}")
+
+    n_invalid = n_id_dup
     price_col = "price" if "price" in df.columns else None
     amt_col = "amount" if "amount" in df.columns else ("qty" if "qty" in df.columns else None)
     if price_col is None or amt_col is None:
@@ -268,9 +304,10 @@ def validate_trades(
         px = pd.to_numeric(df[price_col], errors="coerce")
         amt = pd.to_numeric(df[amt_col], errors="coerce")
         bad = px.isna() | amt.isna() | (px <= 0) | (amt <= 0)
-        n_invalid += int(bad.sum())
-        if n_invalid:
-            issues.append(f"price/amount ≤0 або NaN: {n_invalid}")
+        n_bad_px = int(bad.sum())
+        n_invalid += n_bad_px
+        if n_bad_px:
+            issues.append(f"price/amount ≤0 або NaN: {n_bad_px}")
     if "side" in df.columns:
         side_norm = df["side"].astype(str).str.lower()
         bad_side = ~side_norm.isin({"buy", "sell", "1", "-1"})
@@ -282,14 +319,11 @@ def validate_trades(
         issues.append("немає колонки side")
         n_invalid += len(df)
     if "trade_id" in df.columns:
-        n_id_dup = int(df["trade_id"].duplicated().sum())
-        if n_id_dup:
-            issues.append(f"дублікати trade_id: {n_id_dup}")
-            n_invalid += n_id_dup
-        # Покриття за aggTrade id: унікальний ключ угоди — `trade_id`, і він
+        # Покриття за aggTrade id: `trade_id` — справжній ключ угоди, і він
         # монотонний з кроком 1, тож розриви = угоди, яких у кеші немає. Саме
         # так виявляється тиха втрата потоку (аудит 2026-09-11: BTCUSDT 39.3%,
         # ETHUSDT 49.8% — дедуп за мілісекундним індексом + часовий курсор).
+        # Дублікати trade_id уже враховані вище (n_id_dup → n_invalid).
         ids = pd.to_numeric(df["trade_id"], errors="coerce")
         real = ids[ids > 0]
         if len(real) > 1:
