@@ -98,6 +98,11 @@ def run_pairs_portfolio(
     if method == "erc":
         w_arr = erc_weights(returns_df.values)
         weights = [float(w) for w in w_arr]
+    elif method == "hrp":
+        from scalper_hft.portfolio.hrp import hrp_weights
+
+        w_arr = hrp_weights(returns_df.values)
+        weights = [float(w) for w in w_arr]
 
     port_ret = allocate_portfolio(
         returns_df,

@@ -599,25 +599,32 @@ def cmd_run(args: argparse.Namespace) -> None:
 
 
 def cmd_is_report(args: argparse.Namespace) -> None:
-    """Генерація Implementation Shortfall (IS) звіту."""
+    """Генерація Implementation Shortfall (IS) звіту + chase shadow (L0)."""
     from scalper_hft.config import get_settings
+    from scalper_hft.live.chase_shadow import build_from_store_frame, format_live_chase_gap
     from scalper_hft.live.is_report import build_from_orders, calibrate_slippage_bps
     from scalper_hft.live.store import PaperStore
 
     settings = get_settings()
     days = int(getattr(args, "days", 7) or 7)
+    db = Path(getattr(args, "db", None) or "results/paper_pairs.sqlite")
 
-    with PaperStore() as store:
+    with PaperStore(db) as store:
         orders = store.recent_orders(limit=10_000)
+        shadow_frame = store.all_shadow_legging()
     if orders is None or orders.empty:
         print("Немає ордерів для аналізу IS.")
         return
+    cutoff = pd.Timestamp.utcnow() - pd.Timedelta(days=days)
     if "ts" in orders.columns:
-        cutoff = pd.Timestamp.utcnow() - pd.Timedelta(days=days)
         orders = orders[pd.to_datetime(orders["ts"], utc=True) >= cutoff]
+    if shadow_frame is not None and not shadow_frame.empty and "ts" in shadow_frame.columns:
+        shadow_frame = shadow_frame[pd.to_datetime(shadow_frame["ts"], utc=True) >= cutoff]
 
     report = build_from_orders(orders, model_slippage_bps=settings.slippage_bps)
     print(report.summary())
+    shadow = build_from_store_frame(shadow_frame)
+    print(format_live_chase_gap(shadow, paper_blended_tca_bps=report.blended_tca_bps))
     if report.coverage_ok:
         rec = calibrate_slippage_bps(report)
         print(f"  Рекомендований SLIPPAGE_BPS (з IS): {rec:.2f}")

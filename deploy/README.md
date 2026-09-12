@@ -14,7 +14,7 @@ Paper pairs крутиться як systemd **user**-юніт з git-тегу. �
 
 ```bash
 # clone на тег, не на випадковий tip
-git clone --branch paper-v0.1.0 <repo-url> ~/PycharmProjects/scalper-hft
+git clone --branch paper-v0.2.0 <repo-url> ~/PycharmProjects/scalper-hft
 cd ~/PycharmProjects/scalper-hft
 uv sync --frozen
 cp docs/env/vps-paper.env.example .env   # заповнити ключі локально; DRY_RUN=true

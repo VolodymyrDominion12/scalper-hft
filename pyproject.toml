@@ -29,6 +29,9 @@ ml = [
     "scikit-learn>=1.4",
     "lightgbm>=4.3",
 ]
+research = [
+    "duckdb>=1.0.0",
+]
 dashboard = [
     "streamlit>=1.30",
     "bcrypt>=4.0",

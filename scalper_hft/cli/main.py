@@ -310,8 +310,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument(
         "--method",
         default="equal",
-        choices=["equal", "erc"],
-        help="Алокація: рівні ваги або Equal Risk Contribution (Narang гл. 6)",
+        choices=["equal", "erc", "hrp"],
+        help="Алокація: рівні ваги, Equal Risk Contribution або Hierarchical Risk Parity",
     )
     p.add_argument(
         "--turnover-rate", type=float, default=0.0, help="Штраф за зміну ваг при місячному ребалансі (частка капіталу)"
@@ -356,6 +356,7 @@ def main(argv: list[str] | None = None) -> None:
 
     p = sub.add_parser("is-report", help="Implementation Shortfall (IS) звіт по paper-трейдах")
     p.add_argument("--days", type=int, default=7, help="Скільки днів ордерів аналізувати (за ts)")
+    p.add_argument("--db", default="results/paper_pairs.sqlite", help="Шлях до paper SQLite")
     p.set_defaults(func=_cli_pkg.cmd_is_report)
 
     p = sub.add_parser("experiments", help="Каталог val→OOS експериментів (sparse_basket / ml_strategy)")
@@ -480,6 +481,16 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--leg2", default="ETHUSDT")
     p.add_argument("--lookback", type=int, default=240)
     p.set_defaults(func=_cli_pkg.cmd_quintile, interval="1h")
+
+    p = sub.add_parser("factor-audit", help="Аудит прогнозуючої сили альфа-фактора (Alphalens/Qlib IC tearsheet)")
+    add_common(p)
+    p.add_argument("--factor", default="zscore", choices=["zscore", "momentum", "reversion"], help="Тип альфа-фактора")
+    p.add_argument("--lookback", type=int, default=24, help="Вікно розрахунку фактора (за замовч. 24)")
+    p.add_argument("--horizons", default="1,2,4,8,24", help="Горизонти прогнозу через кому (за замовч. 1,2,4,8,24)")
+    p.add_argument("--quantiles", type=int, default=5, help="Кількість квантилів (за замовч. 5)")
+    p.add_argument("--leg1", default=None, help="Перша нога для спреду пар (опціонально)")
+    p.add_argument("--leg2", default=None, help="Друга нога для спреду пар (опціонально)")
+    p.set_defaults(func=_cli_pkg.cmd_factor_audit, interval="1h")
 
     p = sub.add_parser("coint-scan", help="Скан коінтеграції символів")
     add_common(p)

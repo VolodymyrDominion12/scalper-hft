@@ -20,6 +20,7 @@ import time
 import zipfile
 from datetime import date, timedelta
 
+import numpy as np
 import pandas as pd
 import requests
 
@@ -80,10 +81,16 @@ def _download_zip(url: str, retries: int = 3, timeout: int = 120) -> bytes | Non
 def _parse_zip(content: bytes) -> pd.DataFrame:
     """Розібрати vision-архів. Підтримує обидва формати: з заголовком і без.
 
-    Старі дампи Binance публікуються БЕЗ заголовка (див. docstring модуля), і
-    резервна гілка читала... сам ZIP: `pd.read_csv(io.BytesIO(content))` отримував
-    стиснуті байти замість розпакованого CSV → `UnicodeDecodeError` і падіння
-    всього завантаження символу. Тепер перечитуємо той самий член архіву.
+    Пам'ять. Місячний архів SOLUSDT — 11 млн рядків. Раніше код робив
+    `pd.read_csv` на всі 7 колонок, потім `raw.copy()` (ще одна повна копія), і
+    лише потім брав потрібні 4 — на піку це ~2 ГБ на один архів. Разом із
+    злиттям історії це дало OOM (2026-09-12, `anon-rss:7470996kB`). Тепер
+    читаємо лише потрібні колонки (`usecols`) і не копіюємо кадр.
+
+    `side`. `is_buyer_maker` у дампах буває і bool (архіви з заголовком), і
+    рядком `"true"/"false"` (старі без заголовка). Раніше для рядкового варіанта
+    `.map({True: ..., False: ...})` давав NaN — тобто старий шлях ще й псував
+    сторону угоди. Тепер обидва варіанти нормалізуються явно.
     """
     with zipfile.ZipFile(io.BytesIO(content)) as zf:
         name = zf.namelist()[0]
@@ -93,13 +100,31 @@ def _parse_zip(content: bytes) -> pd.DataFrame:
                 f.seek(0)
                 raw = pd.read_csv(f, header=None, names=_COLUMNS)
                 raw["agg_trade_id"] = raw["agg_trade_id"].astype("int64")
-    df = raw.copy()
-    df["ts"] = pd.to_datetime(df["transact_time"], unit="ms")
-    df["trade_id"] = pd.to_numeric(df["agg_trade_id"], errors="coerce").fillna(0).astype("int64")
-    df["side"] = df["is_buyer_maker"].map({True: "sell", False: "buy"})
-    df["price"] = df["price"].astype(float)
-    df["amount"] = df["quantity"].astype(float)
-    return df.set_index("ts")[["trade_id", "price", "amount", "side"]].sort_index()
+
+    # `is_buyer_maker` буває і bool (архіви із заголовком), і рядком "true"/"false"
+    # (старі без заголовка). Раніше був лише `.map({True:…, False:…})`, тож для
+    # рядкового варіанта `side` ставав NaN — тобто старий шлях псував сторону угоди.
+    maker = raw["is_buyer_maker"]
+    if not pd.api.types.is_bool_dtype(maker):
+        maker = maker.astype(str).str.strip().str.lower().eq("true")
+    side = np.where(np.asarray(maker, dtype=bool), "sell", "buy")
+
+    # Без `raw.copy()`: збираємо 4 потрібні колонки одразу. Значення передаються
+    # numpy-масивами — якби тут були pandas-Series із RangeIndex, а `index=` —
+    # DatetimeIndex, pandas ВИРІВНЯВ би їх за індексом і всі числові колонки стали
+    # б NaN (так і зламався цей код при першій спробі).
+    out = pd.DataFrame(
+        {
+            "trade_id": pd.to_numeric(raw["agg_trade_id"], errors="coerce").fillna(0).to_numpy(dtype="int64"),
+            "price": raw["price"].to_numpy(dtype="float64"),
+            "amount": raw["quantity"].to_numpy(dtype="float64"),
+            "side": side,
+        },
+        index=pd.DatetimeIndex(pd.to_datetime(raw["transact_time"], unit="ms").to_numpy()),
+    )
+    del raw
+    # Vision-дамп уже хронологічний — зайвий sort_index() копіює кадр.
+    return out if out.index.is_monotonic_increasing else out.sort_index()
 
 
 def _advance_period(d: date, freq: str) -> date:
@@ -226,15 +251,25 @@ def download_agg_trades_vision(
         """Злити batch з поточним кешем і зберегти. Повертає кількість рядків.
 
         Кеш перечитується з диска, а не тримається в пам'яті: інакше checkpoint
-        не обмежував би споживання RAM.
+        не обмежував би споживання RAM. Проміжні кадри звільняються одразу, а
+        `pd.concat(copy=False)` не робить зайвої копії — саме накопичені копії
+        дали OOM 2026-09-12 (`anon-rss:7470996kB` на 43 млн рядків).
         """
+        import gc
+
         current = store.load_trades(symbol)
         parts = list(batch)
         if current is not None and not current.empty:
-            parts.append(current[["trade_id", "price", "amount", "side"]])
+            parts.append(current)
+        # pandas >=3 (Copy-on-Write) не копіює concat жадібно, тож copy=False не потрібен
         merged = dedupe_trades(pd.concat(parts))
+        del parts, current
+        gc.collect()
         store.save_trades(symbol, merged)
-        return len(merged)
+        rows = len(merged)
+        del merged
+        gc.collect()
+        return rows
 
     pending: list[pd.DataFrame] = []
     n_done = 0

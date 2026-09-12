@@ -116,10 +116,17 @@ def load_trades(path: Path) -> pd.DataFrame | None:
     df = _safe_load(path)
     if df is None or df.empty:
         return None
-    for col in _TRADES_COLUMNS:
-        if col not in df.columns:
-            df[col] = float("nan")
-    out = df[_TRADES_COLUMNS].copy()
+    if list(df.columns) == _TRADES_COLUMNS:
+        # Кадр уже має рівно потрібні колонки в потрібному порядку, тож `.copy()`
+        # тут — зайва ПОВНА копія. На кеші aggTrades у 43 млн рядків це ~2 ГБ, і
+        # саме накопичені копії призвели до OOM під час злиття (2026-09-12,
+        # `Out of memory: Killed process ... anon-rss:7470996kB`).
+        out = df
+    else:
+        for col in _TRADES_COLUMNS:
+            if col not in df.columns:
+                df[col] = float("nan")
+        out = df[_TRADES_COLUMNS].copy()
     if out["trade_id"].isna().any():
         # старі кеші без id — синтетичні унікальні ідентифікатори
         out["trade_id"] = pd.RangeIndex(1, len(out) + 1)
@@ -151,13 +158,19 @@ def dedupe_trades(df: pd.DataFrame) -> pd.DataFrame:
         return df[~df.index.duplicated(keep="last")].sort_index()
 
     real = df["trade_id"] > 0  # від'ємні id — синтетичні (див. downloader._trade_id)
-    real_part = df[real]
-    synth_part = df[~real]
-    if not real_part.empty:
-        real_part = real_part[~real_part["trade_id"].duplicated(keep="last")]
-    if not synth_part.empty and synth_part.index.duplicated().any():
-        synth_part = synth_part[~synth_part.index.duplicated(keep="last")]
-    out = pd.concat([real_part, synth_part]) if not synth_part.empty else real_part
+    if bool(real.all()):
+        # Швидкий шлях (норма для vision-дампів): один прохід drop_duplicates
+        # замість трьох повних копій (маска → зріз → concat). На 43 млн рядків
+        # це різниця в кілька гігабайт пікової RAM.
+        out = df.drop_duplicates(subset=["trade_id"], keep="last")
+    else:
+        real_part = df[real].drop_duplicates(subset=["trade_id"], keep="last")
+        synth_part = df[~real]
+        if synth_part.index.duplicated().any():
+            synth_part = synth_part[~synth_part.index.duplicated(keep="last")]
+        out = pd.concat([real_part, synth_part]) if not synth_part.empty else real_part
+    if out.index.is_monotonic_increasing:
+        return out
     return out.sort_index()
 
 
@@ -197,7 +210,8 @@ def save_trades(path: Path, df: pd.DataFrame, *, strict: bool = True) -> None:
             if strict and stream_is_critical(report):
                 raise ValueError(f"Відмова у збереженні битих aggTrades {path.name}: {report.summary()}")
             logger.warning("Якість aggTrades %s: %s", path.name, report.summary())
-    _atomic_parquet(path, df[_TRADES_COLUMNS])
+    payload = df if list(df.columns) == _TRADES_COLUMNS else df[_TRADES_COLUMNS]
+    _atomic_parquet(path, payload)
     logger.info("Збережено aggTrades: %s (%d рядків)", path, len(df))
 
 

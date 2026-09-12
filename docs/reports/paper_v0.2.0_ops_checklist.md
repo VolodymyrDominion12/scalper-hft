@@ -1,9 +1,9 @@
 # Чекліст: тег `paper-v0.2.0` і 8 тижнів Paper-Gate
 
-Дата: 2026-09-11 · Ops, не код альфи.
+Дата: 2026-09-12 · Ops, не код альфи.
 Конфіг: **pairs_arb LINK/BTC 1h maker**, `lookback=120`, `regime_scale=True`,
 `regime_scale_factor=0.25`, `MAKER_FILL_SEED=42`, `ENABLE_VOL_TARGET=true`,
-`USE_EXIT_LADDERS=false`, `DRY_RUN=true`.
+`USE_EXIT_LADDERS=false`, `DRY_RUN=true`, paper `legging_mode=strict_both`.
 
 Джерела: [IMPROVEMENT_PLAN_2026.md](../IMPROVEMENT_PLAN_2026.md) W0-OPS ·
 [DEPLOY_PLAN.md](../DEPLOY_PLAN.md) фаза 2 ·
@@ -13,6 +13,11 @@
 (годинник **скидається** — R1 змінив модель філу).
 
 Це **не** дозвіл на live. Немає `DRY_RUN=false` у юнітах і немає тегу `live-v*`.
+
+**Стан тегів (2026-09-12):** `paper-v0.2.0` уже в git; `main` попереду (є L0 shadow-TCA).
+L0 **не змінює філи** (Hotfix A / логи). Якщо 8 тижнів ще **не** стартували — краще
+задеплоїти **новий мінорний тег** `paper-v0.2.1` з L0 і з нього стартувати годинник.
+Якщо v0.2.0 уже крутиться: drain не обов’язковий; мінорний тег, sqlite той самий.
 
 ---
 
@@ -147,18 +152,21 @@ git describe --tags --exact-match
 
 | Коли | Що |
 |---|---|
-| Щотижня (напр. пн) | `paper-audit` + `is-report --days 7` |
+| Щотижня (напр. пн) | `paper-audit` + `is-report --days 7 --db results/paper_pairs.sqlite` |
 | Після crash/reboot | snapshot restore, `hold:same_bar`, sqlite не порожній |
-| Hotfix A (логи/Telegram) | мінорний тег `paper-v0.2.1`, позиції тримати |
+| Hotfix A (логи/Telegram/L0 shadow) | мінорний тег `paper-v0.2.1`, позиції тримати |
 | Hotfix B (execution/risk) | `no_new_entries` → idle → новий мінорний тег |
-| Hotfix C (z / lookback / regime_scale / Kalman / chase) | **заборонено**; новий major-тег і годинник з нуля |
+| Hotfix C (z / lookback / regime_scale / Kalman / chase як дефолт paper) | **заборонено**; новий major-тег і годинник з нуля |
 
 ```bash
 # на VPS, той самий MAKER_FILL_SEED=42
 uv run python -m scalper_hft.cli paper-audit \
   --db results/paper_pairs.sqlite --dd-mult 1.5
-uv run python -m scalper_hft.cli is-report --days 7
+uv run python -m scalper_hft.cli is-report --days 7 --db results/paper_pairs.sqlite
 ```
+
+У звіті має бути рядок `Chase shadow:`. `LIVE_CHASE_HOLD` **не** валить Paper Gate
+(paper лишається maker), але **блокує live chase** до окремого PASS.
 
 Tracking error потребує кривої BT за **той самий** період (`--bt-equity ts,equity.csv`).
 Без неї audit все одно друкує fill-rate і maxDD paper.
@@ -176,7 +184,7 @@ Tracking error потребує кривої BT за **той самий** пе�
 
 ## 6. Критерії виходу з Paper-Gate
 
-Усі пункти — на **одному** тезі `paper-v0.2.0` (або мінорних A/B без зміни альфи).
+Усі пункти — на **одному** тезі `paper-v0.2.0` / `paper-v0.2.1` (мінорні A/B без зміни альфи).
 
 - [ ] ≥ 8 тижнів безперервного paper на VPS (журнал без gap > 1h-бара).
 - [ ] Tracking error (paper vs BT equity) **< 3% на тиждень**.
@@ -186,7 +194,9 @@ Tracking error потребує кривої BT за **той самий** пе�
 - [ ] Rolling ADF p-value спреду < 0.05 (входи не вбиті kill > 1 раз/міс).
 - [ ] Blended TCA maker (IS + miss) **< 3 bps** (`is-report`; mid ≠ fill).
 - [ ] Немає «рестарт обнулив equity».
-- [ ] `USE_EXIT_LADDERS` лишився `false`; Kalman/chase не дефолт.
+- [ ] `USE_EXIT_LADDERS` лишився `false`; Kalman/chase не дефолт paper.
+- [ ] L0: у `is-report` є `Chase shadow`. Перед live-soak **немає** `LIVE_CHASE_HOLD`
+      (або є окремий PASS на chase). Paper Gate сам по собі від HOLD не падає.
 
 **Пройдений Gate ≠ live.** Live — окремий тег `live-v*`, окремі ключі, окремий юніт,
 і лише після **явного** запиту.

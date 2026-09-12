@@ -123,3 +123,7 @@ Hyperliquid. Деталі: [Binance FAQ](https://www.binance.com/en/support/faq/
   + purgedcv/oos-lab для перехресної перевірки.
 - **ML**: LightGBM walk-forward + hmmlearn (roadmap).
 - **Live**: ccxt, paper/testnet за замовчуванням.
+
+## 11. Дослідження екосистеми інструментів (2026)
+
+Детальний аналіз відкритого та комерційного ПЗ (HFTbacktest, NautilusTrader, Qlib, VectorBT, Hummingbot, DuckDB, Riskfolio-Lib, Bookmap, Tardis) та план запозичень для `scalper-hft` див. у [ECOSYSTEM_RESEARCH_2026.md](ECOSYSTEM_RESEARCH_2026.md).

@@ -12,6 +12,7 @@ import pandas as pd
 from scalper_hft.config import get_settings
 from scalper_hft.live.account import PaperAccount
 from scalper_hft.live.fills import (
+    FillDecision,
     both_or_neither,
     decide_fill,
     dump_fill_rng_state,
@@ -45,6 +46,7 @@ class PendingOrder:
     placed_ts: pd.Timestamp
     bars_waited: int = 0
     decision_mid: float = 0.0  # mid/close бару рішення (arrival)
+    shadow_logged: bool = False  # L0: XOR уже записаний у shadow_legging
 
     def to_snapshot(self) -> dict[str, Any]:
         return {
@@ -58,6 +60,7 @@ class PendingOrder:
             "placed_ts": str(self.placed_ts),
             "bars_waited": int(self.bars_waited),
             "decision_mid": float(self.decision_mid),
+            "shadow_logged": bool(self.shadow_logged),
         }
 
     @classmethod
@@ -74,6 +77,7 @@ class PendingOrder:
             placed_ts=pd.Timestamp(data["placed_ts"]),
             bars_waited=int(data.get("bars_waited") or 0),
             decision_mid=float(data.get("decision_mid") or limit),
+            shadow_logged=bool(data.get("shadow_logged") or False),
         )
 
     def arrival_mid(self) -> float:
@@ -329,6 +333,60 @@ class PairsEngine:
         if self.is_journal:
             self.is_journal.log_unfilled(ts, self.pid, o.symbol, o.side, o.arrival_mid(), cancel_mid, is_maker=is_maker)
 
+    def _maybe_log_chase_shadow(
+        self,
+        ts: pd.Timestamp,
+        o1: PendingOrder,
+        o2: PendingOrder,
+        d1: FillDecision,
+        d2: FillDecision,
+        mid1: float,
+        mid2: float,
+    ) -> None:
+        """L0: один XOR-івент на pending. Не змінює філи / рахунок."""
+        if self.legging_mode != "strict_both":
+            return
+        if o1.shadow_logged or o2.shadow_logged:
+            return
+        from scalper_hft.live.chase_shadow import evaluate_chase_shadow
+
+        event = evaluate_chase_shadow(
+            d1,
+            d2,
+            side1=o1.side,
+            side2=o2.side,
+            limit1=o1.limit_price,
+            limit2=o2.limit_price,
+            mid1=mid1,
+            mid2=mid2,
+            symbol1=o1.symbol,
+            symbol2=o2.symbol,
+            max_drift_bps=self.max_drift_bps,
+            maker_fee=self.account.maker_fee,
+            taker_fee=self.account.taker_fee,
+            arrival1=o1.arrival_mid(),
+            arrival2=o2.arrival_mid(),
+        )
+        if event is None:
+            return
+        o1.shadow_logged = True
+        o2.shadow_logged = True
+        if self.store is None:
+            return
+        self.store.log_shadow_legging(
+            ts,
+            self.pid,
+            event.action,
+            drift_bps=event.drift_bps,
+            chased_symbol=event.chased_symbol,
+            chased_side=event.chased_side,
+            chase_fill_px=event.chase_fill_px,
+            maker_symbol=event.maker_symbol,
+            extra_fee_bps=event.extra_fee_bps,
+            chase_is_bps=event.chase_is_bps,
+            extra_cost_bps=event.extra_cost_bps,
+        )
+
     def _resolve_pending(self, ts: pd.Timestamp, high1: float, low1: float, high2: float, low2: float) -> str:
         if self.pending is None:
             return "no_pending"
@@ -337,6 +395,7 @@ class PairsEngine:
         mid2 = 0.5 * (high2 + low2)
         d1 = decide_fill(o1.side, o1.limit_price, high1, low1, mid=mid1, rng=self._fill_rng)
         d2 = decide_fill(o2.side, o2.limit_price, high2, low2, mid=mid2, rng=self._fill_rng)
+        self._maybe_log_chase_shadow(ts, o1, o2, d1, d2, mid1, mid2)
 
         if self.legging_mode == "strict_both":
             d1, d2 = both_or_neither(d1, d2)

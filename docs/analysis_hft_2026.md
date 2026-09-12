@@ -254,7 +254,7 @@ L2 queue у live, async OMS, colocation — Phase 6.5 / Phase 4. Не блоку
 | `portfolio_var_limit` у частковому runner | `pairs_runner.py` | 🔴 | ✅ 2026-09-12 |
 | Worker code version | `research/code_version.py` | 🟡 | ✅ hash у worker |
 | `IMPACT_K=0` | `CostModel` | 🟡 | відкрито (`from_settings` = 0.0; bare `CostModel()` = 0.1) |
-| Live chase vs paper `strict_both` | `pairs_runner.PairsLiveRunner` | 🔴 до live | відкрито (Phase 6.6 L0) |
+| Live chase vs paper `strict_both` | `pairs_runner.PairsLiveRunner` | 🔴 до live | ✅ shadow-TCA (`chase_shadow`, paper лишається strict_both) |
 | `risk_budget` не в live | `portfolio/` | 🟡 | відкрито |
 | AAVEUSDT sweep bias | research | 🟡 | W1-X |
 | `mypy strict` частково | `pyproject.toml` | 🟢 | |
@@ -268,9 +268,10 @@ L2 queue у live, async OMS, colocation — Phase 6.5 / Phase 4. Не блоку
 Нове, чого не було в §2:
 
 1. **Paper vs live execution gap.** `PairsEngine` дефолт `strict_both`; `PairsLiveAdapter` /
-   `PairsLiveRunner` — `legging_mode="chase"` (taker IOC другої ноги). Це правильний захист
-   від одноногої книги на біржі, але 8-тижневий paper **не** накопичує цей taker-cost.
-   Не вмикати live, поки chase не в shadow-TCA або не вирівняний з paper.
+   `PairsLiveRunner` — `legging_mode="chase"` (taker IOC другої ноги). **L0 закрито в коді:**
+   paper логує контрфактичний chase у `shadow_legging` (один XOR на pending), без зміни філів.
+   `paper-audit` / `is-report` друкують extra bps і `LIVE_CHASE_HOLD`, якщо paper TCA + extra > 3 bps.
+   Live chase після Gate — лише якщо shadow не тримає HOLD.
 2. **Тег ≠ Gate.** `paper-v0.2.0` є в git; `main` на ~7 комітів попереду — так і має бути.
    Відкритий пункт — безперервний прогін на VPS, не створення тега.
 3. **Narang pipeline частково бібліотека:** ERC / `risk_budget.py` не в live-циклі (одна пара —

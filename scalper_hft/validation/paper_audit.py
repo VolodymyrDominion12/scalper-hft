@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from scalper_hft.config import get_settings
+from scalper_hft.live.chase_shadow import ChaseShadowReport
 from scalper_hft.live.is_report import ISReport
 from scalper_hft.live.store import PaperStore
 from scalper_hft.validation.forensics import ForensicsReport, analyze_trades, trades_from_paper_frames
@@ -31,7 +32,7 @@ PAPER_GATE_THRESHOLDS: dict[str, float] = {
 
 
 def check_paper_gate(
-    audit: "PaperAudit",
+    audit: PaperAudit,
     *,
     thresholds: dict[str, float] | None = None,
 ) -> tuple[bool, list[str]]:
@@ -54,8 +55,7 @@ def check_paper_gate(
     te_limit = float(t.get("tracking_error_weekly_pct", 0.03))
     if audit.tracking_error is not None and audit.tracking_error > te_limit:
         failures.append(
-            f"tracking_error={audit.tracking_error:.4%} > {te_limit:.4%} "
-            f"(max допустимий: {te_limit:.0%}/тиждень)"
+            f"tracking_error={audit.tracking_error:.4%} > {te_limit:.4%} (max допустимий: {te_limit:.0%}/тиждень)"
         )
 
     # 2. Fill rate
@@ -81,8 +81,7 @@ def check_paper_gate(
         tca = audit.is_report.blended_tca_bps
         if tca > tca_max:
             failures.append(
-                f"blended_tca_bps={tca:.2f} > {tca_max:.1f} bps "
-                f"(реальні T-costs перевищують модель → live = збиток)"
+                f"blended_tca_bps={tca:.2f} > {tca_max:.1f} bps (реальні T-costs перевищують модель → live = збиток)"
             )
 
     return len(failures) == 0, failures
@@ -96,7 +95,6 @@ def format_gate_result(passed: bool, failures: list[str]) -> str:
     for f in failures:
         lines.append(f"  • {f}")
     return "\n".join(lines)
-
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +111,7 @@ class PaperAudit:
     fill_gap: float | None
     forensics: ForensicsReport
     is_report: ISReport | None = None
+    chase_shadow: ChaseShadowReport | None = None
 
     def summary(self) -> str:
         te = "—" if self.tracking_error is None else f"{self.tracking_error:.4%}"
@@ -129,6 +128,13 @@ class PaperAudit:
         )
         if self.is_report is not None:
             lines += "\n  " + self.is_report.summary().replace("\n", "\n  ")
+        if self.chase_shadow is not None:
+            from scalper_hft.live.chase_shadow import format_live_chase_gap
+
+            paper_tca = None if self.is_report is None else self.is_report.blended_tca_bps
+            lines += "\n  " + format_live_chase_gap(self.chase_shadow, paper_blended_tca_bps=paper_tca).replace(
+                "\n", "\n  "
+            )
         return lines
 
 
@@ -194,6 +200,7 @@ def audit_paper_vs_backtest(
     trades: pd.DataFrame | None = None,
     dd_mult: float = DD_MULT_DEFAULT,
     is_report: ISReport | None = None,
+    chase_shadow: ChaseShadowReport | None = None,
 ) -> PaperAudit:
     """Порівняння paper-кривої з бектестом за той самий (або вирівняний) період."""
     paper = _as_float_series(paper_equity) if paper_equity is not None else pd.Series(dtype=float)
@@ -225,6 +232,7 @@ def audit_paper_vs_backtest(
         fill_gap=fill_gap,
         forensics=analyze_trades(trades),
         is_report=is_report,
+        chase_shadow=chase_shadow,
     )
 
 
@@ -279,9 +287,11 @@ def audit_paper_store(
     stats = store.fill_stats()
     orders = store.all_orders()
     trades = trades_from_paper_frames(store.all_trades(), orders)
+    from scalper_hft.live.chase_shadow import build_from_store_frame
     from scalper_hft.live.is_report import build_from_orders
 
     is_rep = build_from_orders(orders, model_slippage_bps=get_settings().slippage_bps)
+    shadow = build_from_store_frame(store.all_shadow_legging())
     return audit_paper_vs_backtest(
         equity,
         paper_fill_rate=fill_rate(stats),
@@ -290,6 +300,7 @@ def audit_paper_store(
         trades=trades,
         dd_mult=dd_mult,
         is_report=is_rep,
+        chase_shadow=shadow,
     )
 
 

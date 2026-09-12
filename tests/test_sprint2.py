@@ -363,6 +363,23 @@ class TestErc:
         assert res.metrics is not None
         assert res.details["method"] == "erc"
 
+    def test_pairs_portfolio_hrp_runs(self):
+        """run_pairs_portfolio з method='hrp' не падає на синтетиці."""
+        from scalper_hft.backtest.execution import CostModel
+        from scalper_hft.backtest.pairs_portfolio import run_pairs_portfolio
+        from scalper_hft.strategies.pairs_arb import PairsArb
+
+        data = {"A": _make_klines(300, seed=1), "B": _make_klines(300, seed=2), "C": _make_klines(300, seed=3)}
+        cfg = [
+            {"leg1": "A", "leg2": "B", "strategy": PairsArb(entry_z=2.0, exit_z=0.3, lookback=60, regime_scale=False)},
+            {"leg1": "B", "leg2": "C", "strategy": PairsArb(entry_z=2.0, exit_z=0.3, lookback=60, regime_scale=False)},
+        ]
+        res = run_pairs_portfolio(data, cfg, position_pct=0.1, cost=CostModel(), method="hrp", turnover_rate=0.0005)
+        assert res.metrics is not None
+        assert res.details["method"] == "hrp"
+        assert len(res.details["weights"]) == 2
+        assert np.isclose(sum(res.details["weights"]), 1.0)
+
 
 # ── 6. Feature importance (AFML Ch.8) ────────────────────────────────────────
 

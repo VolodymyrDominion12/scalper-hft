@@ -259,7 +259,7 @@ Gate = 8 тижнів **на VPS**, не факт створення тега.
 |---|---|---|---|
 | DOC-1 | Одна книга: `VALIDATED_PAIRS` = LINK/BTC; прибрати 4-парний «стартовий портфель» | P0 | ✅ цей коміт (Phase 1) |
 | DOC-2 | TODO / DESIGN / AGENTS / `pyproject` / CLI: продукт = MFT pairs, не HFT-скальп | P0 | ✅ 2026-09-12 |
-| L0 | Live `PairsLiveRunner` hardcode `legging_mode="chase"` vs paper `strict_both`. Chase — свідомий захист від одноногої позиції, але **Paper Gate не міряє taker-вартість другої ноги**. Перед live-soak: або shadow-TCA chase у paper, або live теж `strict_both` до окремого PASS | P0 (до L1) | 📋 |
+| L0 | Live `PairsLiveRunner` hardcode `legging_mode="chase"` vs paper `strict_both`. Chase — свідомий захист від одноногої позиції, але **Paper Gate не міряє taker-вартість другої ноги**. Перед live-soak: або shadow-TCA chase у paper, або live теж `strict_both` до окремого PASS | P0 (до L1) | ✅ 2026-09-12 `chase_shadow` (paper лишається strict_both) |
 | JOB-1 | `job succeeded` ≠ усі клітинки здорові: fail/warn при високій частці `error`/`degenerate` | P1 | 📋 |
 | APP-1 | `run_cell_audit` ще качає trades/funding (R6 закрив лише `run_backtest`) | P1 | 📋 |
 | REG-1 | 17 імен у `REGISTRY`; default sweep без відхилених (`--include-rejected`) | P1 | 📋 |
@@ -302,4 +302,4 @@ Gate = 8 тижнів **на VPS**, не факт створення тега.
 | 6.3 | Regime portfolio (selector OOS iter7) | 📋 Після Gate |
 | 6.4 | Live execution (лише після Gate + явний запит) | 📋 |
 | 6.5 | HFT track (L2/Tardis/Nautilus — окремий продукт) | 🔜 |
-| 6.6 | Doc honesty; chase-cost vs paper; job integrity; registry quarantine | 📋 Аудит 2026-09-12 |
+| 6.6 | Doc honesty; chase-cost vs paper; job integrity; registry quarantine | L0 ✅; решта 📋 |

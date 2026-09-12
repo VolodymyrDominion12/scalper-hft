@@ -4,6 +4,7 @@ runtime snapshot, рахунки по біржах, відкриті позиц�
 v2 backward-compatible: існуючі SQLite файли мігрують автоматично
 через ALTER TABLE (SQLite ≥ 3.37 / Python 3.12).
 v3: orders.mid / orders.decision_mid для чесного IS.
+v4: shadow_legging (L0 chase-TCA, не змінює філи paper).
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from typing import Any
 
 import pandas as pd
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class PaperStore:
@@ -27,6 +28,7 @@ class PaperStore:
         - accounts, positions, bots (нові в v2)
         - поля exchange і mode в equity/orders/trades (додаються міграцією)
         v3 — orders.mid (ціна оцінки) і orders.decision_mid (arrival).
+        v4 — shadow_legging (контрфактичний live chase).
 
     Path за замовчуванням results/paper_pairs.sqlite.
     """
@@ -133,6 +135,20 @@ class PaperStore:
                 last_heartbeat TEXT,
                 config_json TEXT NOT NULL DEFAULT '{}'
             );
+            CREATE TABLE IF NOT EXISTS shadow_legging (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                pair TEXT NOT NULL,
+                action TEXT NOT NULL,
+                drift_bps REAL NOT NULL,
+                chased_symbol TEXT NOT NULL,
+                chased_side TEXT NOT NULL,
+                chase_fill_px REAL NOT NULL,
+                maker_symbol TEXT NOT NULL,
+                extra_fee_bps REAL NOT NULL,
+                chase_is_bps REAL NOT NULL,
+                extra_cost_bps REAL NOT NULL
+            );
             """
         )
         self._conn.commit()
@@ -160,6 +176,25 @@ class PaperStore:
                 cur.execute(f"ALTER TABLE {table} ADD COLUMN {col_def}")
             except sqlite3.OperationalError:
                 pass  # колонка вже існує — ок
+
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS shadow_legging (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                pair TEXT NOT NULL,
+                action TEXT NOT NULL,
+                drift_bps REAL NOT NULL,
+                chased_symbol TEXT NOT NULL,
+                chased_side TEXT NOT NULL,
+                chase_fill_px REAL NOT NULL,
+                maker_symbol TEXT NOT NULL,
+                extra_fee_bps REAL NOT NULL,
+                chase_is_bps REAL NOT NULL,
+                extra_cost_bps REAL NOT NULL
+            )
+            """
+        )
 
         # Записати версію схеми (таблиця вже є після _init())
         tbl_exists = cur.execute(
@@ -309,6 +344,47 @@ class PaperStore:
 
     def all_months(self) -> pd.DataFrame:
         return self._read_sql("SELECT pair, month, pnl FROM months ORDER BY month, pair")
+
+    def log_shadow_legging(
+        self,
+        ts: pd.Timestamp,
+        pair: str,
+        action: str,
+        *,
+        drift_bps: float,
+        chased_symbol: str,
+        chased_side: str,
+        chase_fill_px: float,
+        maker_symbol: str,
+        extra_fee_bps: float,
+        chase_is_bps: float,
+        extra_cost_bps: float,
+    ) -> None:
+        """Контрфактичний chase/unwind. Не входить у fill_stats / orders."""
+        self._write(
+            "INSERT INTO shadow_legging (ts, pair, action, drift_bps, chased_symbol, chased_side, "
+            "chase_fill_px, maker_symbol, extra_fee_bps, chase_is_bps, extra_cost_bps) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(ts),
+                pair,
+                action,
+                float(drift_bps),
+                chased_symbol,
+                chased_side,
+                float(chase_fill_px),
+                maker_symbol,
+                float(extra_fee_bps),
+                float(chase_is_bps),
+                float(extra_cost_bps),
+            ),
+        )
+
+    def all_shadow_legging(self) -> pd.DataFrame:
+        return self._read_sql(
+            "SELECT ts, pair, action, drift_bps, chased_symbol, chased_side, chase_fill_px, "
+            "maker_symbol, extra_fee_bps, chase_is_bps, extra_cost_bps FROM shadow_legging ORDER BY id"
+        )
 
     def fill_stats(self, pair: str | None = None) -> dict[str, int]:
         if pair:

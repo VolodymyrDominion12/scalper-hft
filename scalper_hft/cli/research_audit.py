@@ -1016,3 +1016,58 @@ def cmd_regime_matrix(args: argparse.Namespace) -> None:
             row[strat] = round(float(cell["sharpe"]), 3) if cell else None
         rows.append(row)
     print(pd.DataFrame(rows).to_string(index=False) if rows else "Матриця порожня.")
+
+
+def cmd_factor_audit(args: argparse.Namespace) -> None:
+    """Аудит прогнозуючої сили альфа-фактора (Alphalens/Qlib IC tearsheet)."""
+    import numpy as np
+
+    from scalper_hft.data.research import load_research_data
+    from scalper_hft.research.factor_tearsheet import (
+        format_tearsheet_table,
+        run_factor_tearsheet,
+    )
+    from scalper_hft.validation.audit_extensions import pair_frame_from_klines, pairs_spread
+
+    horizons = tuple(int(x.strip()) for x in getattr(args, "horizons", "1,2,4,8,24").split(","))
+    lookback = int(getattr(args, "lookback", 24))
+
+    # Перевірка: парний спред чи одиничний актив
+    if getattr(args, "leg1", None) and getattr(args, "leg2", None):
+        b1 = load_research_data(args.leg1, args.interval or "1h", args.days)
+        b2 = load_research_data(args.leg2, args.interval or "1h", args.days)
+        df = pair_frame_from_klines(b1.klines, b2.klines)
+        spread = pairs_spread(df)
+        mean = spread.rolling(lookback, min_periods=max(2, lookback // 2)).mean()
+        std = spread.rolling(lookback, min_periods=max(2, lookback // 2)).std(ddof=0).replace(0, np.nan)
+        # z-score спреду (для mean-reversion фактор протилежний до відхилення)
+        factor = -((spread - mean) / std)
+        prices = np.exp(spread)
+        factor_name = f"spread_z_reversion({args.leg1}/{args.leg2})"
+    else:
+        symbol = args.symbol or "BTCUSDT"
+        b = load_research_data(symbol, args.interval or "1h", args.days)
+        prices = b.klines["close"]
+        factor_type = getattr(args, "factor", "zscore")
+        if factor_type == "momentum":
+            factor = prices.pct_change(lookback)
+            factor_name = f"momentum({symbol}, lb={lookback})"
+        elif factor_type == "reversion":
+            mean = prices.rolling(lookback, min_periods=max(2, lookback // 2)).mean()
+            std = prices.rolling(lookback, min_periods=max(2, lookback // 2)).std(ddof=0).replace(0, np.nan)
+            factor = -((prices - mean) / std)
+            factor_name = f"mean_reversion({symbol}, lb={lookback})"
+        else:
+            mean = prices.rolling(lookback, min_periods=max(2, lookback // 2)).mean()
+            std = prices.rolling(lookback, min_periods=max(2, lookback // 2)).std(ddof=0).replace(0, np.nan)
+            factor = (prices - mean) / std
+            factor_name = f"zscore({symbol}, lb={lookback})"
+
+    result = run_factor_tearsheet(
+        factor=factor,
+        prices=prices,
+        horizons=horizons,
+        factor_name=factor_name,
+        quantiles=int(getattr(args, "quantiles", 5)),
+    )
+    print("\n" + format_tearsheet_table(result) + "\n")
