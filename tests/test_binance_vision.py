@@ -274,3 +274,41 @@ def test_cli_download_passes_vision_checkpoint_flag(monkeypatch) -> None:
 
     assert seen == {"symbol": "SOLUSDT", "freq": "monthly", "checkpoint_every": 1}
     assert cli_main is not None  # модуль імпортується без циклів
+
+
+def test_parse_zip_values_match_raw_csv(monkeypatch) -> None:
+    """Парсер мусить віддавати ТІ САМІ значення, що й сирий CSV.
+
+    Регресія (2026-09-12): при спробі прибрати зайву копію кадру значення
+    передавались pandas-Series із RangeIndex, а `index=` — DatetimeIndex, тож
+    pandas вирівняв їх за індексом і всі числові колонки стали NaN. Наявні тести
+    цього не ловили, бо перевіряли лише КІЛЬКІСТЬ рядків.
+    """
+    import io
+    import zipfile
+
+    from scalper_hft.data.binance_vision import _COLUMNS, _parse_zip
+
+    day = "2026-08-10"
+    base = int(pd.Timestamp(f"{day} 00:00", tz="UTC").timestamp() * 1000)
+    rows = "\n".join(
+        f"{1000 + i},{100.0 + i},{1.5 + i},{i},{i},{base + i * 1000},{'true' if i % 2 else 'false'}" for i in range(4)
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("SYN.csv", rows)
+
+    out = _parse_zip(buf.getvalue())
+    # еталон читаємо з ТОГО САМОГО члена архіву (передати ZIP-байти в read_csv —
+    # це рівно та пастка, яку колись мав прод-код: UnicodeDecodeError)
+    with zipfile.ZipFile(io.BytesIO(buf.getvalue())) as zf:
+        with zf.open(zf.namelist()[0]) as f:
+            raw = pd.read_csv(f, header=None, names=_COLUMNS)
+
+    assert len(out) == len(raw) == 4
+    assert out["trade_id"].to_numpy().tolist() == raw["agg_trade_id"].to_numpy().tolist()
+    assert out["price"].to_numpy().tolist() == [float(x) for x in raw["price"]]
+    assert out["amount"].to_numpy().tolist() == [float(x) for x in raw["quantity"]]
+    # "true" у is_buyer_maker означає, що покупець — мейкер, тобто це SELL
+    assert out["side"].to_numpy().tolist() == ["buy", "sell", "buy", "sell"]
+    assert not out[["trade_id", "price", "amount"]].isna().to_numpy().any()

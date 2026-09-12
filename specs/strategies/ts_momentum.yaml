@@ -1,0 +1,69 @@
+name: ts_momentum
+version: "1.0"
+status: candidate
+family: momentum
+
+hypothesis: >
+  Часовий momentum: активи з накопиченим додатним поверненням за `lookback`
+  барів продовжують зростати, з від'ємним — падати (Moskowitz–Ooi–Pedersen,
+  time-series momentum). Механізми: поступове поширення інформації,
+  risk-management-поведінка інституцій та стадний ефект. Edge має перекривати
+  round-trip витрати: на 1d це 10 bps taker / 4 bps maker проти типового
+  хвильового руху в десятки відсотків, на 1m — ні (momentum на дрібних ТФ
+  повністю з'їдається комісіями).
+
+edge_conditions:
+  - name: quantile_break
+    description: >
+      Повернення за lookback перевищує верхній/нижній квантиль власного
+      rolling-розподілу (top_pct=0.2) на OOS-вікні.
+  - name: cost_covered
+    description: >
+      Середній PnL на угоду після комісій (taker 5 bps/бік, maker 2 bps/бік)
+      > 0 на OOS-вікні walk-forward.
+  - name: oos_positivity
+    description: >
+      Частка OOS-вікон з Sharpe > 0 не менше 50% на горизонті ≥4h.
+
+params:
+  lookback:
+    default: 20
+    min: 5
+    max: 60
+    step: 5
+    description: Горизонт накопиченого повернення (барів).
+  top_pct:
+    default: 0.2
+    min: 0.1
+    max: 0.4
+    step: 0.1
+    description: Частка хвоста розподілу повернень, що вважається сигналом.
+  quantile_window:
+    default: 3
+    min: 2
+    max: 6
+    step: 1
+    description: Довжина rolling-вікна квантиля у кратних lookback.
+  signal_smooth:
+    default: 1
+    min: 1
+    max: 5
+    step: 1
+    description: EMA-згладжування позиції (1 = без згладжування).
+  allow_short:
+    default: true
+    description: False — long-only (лонг при пробої верху, інакше поза ринком).
+
+invariants:
+  no_lookahead: true
+  signal_values: [-1, 0, 1]
+  no_nan_output: true
+
+preferred_regimes: ["trend_up", "trend_down"]
+
+notes: >
+  Виділено з `cross_momentum` (там цей механізм працював у single-symbol гілці,
+  але capability contract його блокує — клітинка з назвою cross_momentum
+  рахувала б інший механізм). Перше застосування: momentum на денних барах,
+  історія 6.8 року (нативний 1d-кеш), walk-forward train=250/test=125 —
+  див. experiments/iter9_daily_long_history.py та docs/reports/iter9_*.md.

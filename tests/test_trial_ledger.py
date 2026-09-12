@@ -21,24 +21,29 @@ def test_record_and_count_trials(tmp_path: Path) -> None:
 
 
 def test_effective_n_trials_uses_ledger_floor(tmp_path: Path) -> None:
+    """n_trials = max(варіанти цього аудиту, накопичений журнал).
+
+    Регрес 2026-09-12: раніше сюди йшов повний декартів добуток `param_space`
+    × «магічну» 50, тобто n_trials ~2·10⁶ для supertrend, хоча аудит запускає
+    ОДНУ дефолтну конфігурацію. DSR з такою множинністю вимагав річного Sharpe
+    ~4.7 — гейт ставав нездоланним (FAIL у 100% клітинок).
+    """
     from scalper_hft.validation.trial_ledger import effective_n_trials, record_trial
 
     p = tmp_path / "ledger.jsonl"
-    # без журналу → оцінка combos×backtests_per_combo
-    n0 = effective_n_trials(None, param_combinations=10, backtests_per_combo=50)
-    assert n0 == 500
+    # без журналу → рівно варіанти цього аудиту (без множників)
+    n0 = effective_n_trials(None, param_combinations=10)
+    assert n0 == 10
     # журнал порожній → те саме
-    n1 = effective_n_trials(p, param_combinations=10, backtests_per_combo=50)
-    assert n1 == 500
-    # дописали 700 спроб для цієї комірки → n_trials має зрости до 700
+    assert effective_n_trials(p, param_combinations=10) == 10
+    # дописали 700 спроб для цієї стратегії → n_trials має зрости до 700
     record_trial(p, strategy="mean_reversion", symbol="BTCUSDT", purpose="audit_cell", n_trials=700)
-    n2 = effective_n_trials(
-        p, param_combinations=10, backtests_per_combo=50, strategy="mean_reversion", symbol="BTCUSDT"
-    )
+    n2 = effective_n_trials(p, param_combinations=10, strategy="mean_reversion")
     assert n2 == 700
-    # інша комірка не впливає
-    n3 = effective_n_trials(p, param_combinations=10, backtests_per_combo=50, strategy="pairs_arb", symbol="BTCUSDT")
-    assert n3 == 500
+    # інша стратегія не бачить чужих спроб
+    assert effective_n_trials(p, param_combinations=10, strategy="pairs_arb") == 10
+    # мінімум 1 навіть при нулі варіантів
+    assert effective_n_trials(None, param_combinations=0) == 1
 
 
 def test_record_trial_none_path_noop() -> None:
@@ -59,6 +64,6 @@ def test_empty_or_dot_path_is_disabled_not_cwd() -> None:
         assert count_trials(disabled) == 0
         record_trial(disabled, strategy="s", symbol="x", purpose="t")  # не падає, нічого не пише
         assert count_trials(disabled) == 0
-        # effective_n_trials повертає оцінку combos×backtests_per_combo
-        n = effective_n_trials(disabled, param_combinations=10, backtests_per_combo=50)
-        assert n == 500
+        # effective_n_trials повертає варіанти цього аудиту (журнал вимкнено)
+        n = effective_n_trials(disabled, param_combinations=10)
+        assert n == 10

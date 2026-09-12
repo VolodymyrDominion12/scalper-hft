@@ -55,7 +55,9 @@ def _pairs_lookback(strategy: Strategy) -> int:
 class QuintileAudit:
     spearman: float
     monotonic: bool
-    pass_: bool
+    # None = тест не застосовний (дискретний сигнал / мало даних): це НЕ FAIL,
+    # інакше будь-яка directional-стратегія автоматично отримувала "quintile_fail".
+    pass_: bool | None
     error: str | None = None
     summary: str = ""
     on_spread: bool = False
@@ -96,28 +98,43 @@ def run_quintile_audit(
     trades: pd.DataFrame | None = None,
     funding: pd.DataFrame | None = None,
 ) -> QuintileAudit:
-    from scalper_hft.validation.quintile import quintile_spread_study
+    from scalper_hft.validation.quintile import discrete_signal_study, quintile_spread_study
 
     try:
         if has_pair_legs(df):
             z, fwd_ret = pairs_z_and_forward(df, lookback=_pairs_lookback(strategy))
             on_spread = True
-        elif getattr(strategy, "name", "") == "pairs_arb":
+            q_res = quintile_spread_study(z.astype(float), fwd_ret)
+            ok = q_res.monotonic and abs(q_res.spearman) >= QUINTILE_SPEARMAN_MIN
+            return QuintileAudit(
+                float(q_res.spearman),
+                bool(q_res.monotonic),
+                bool(ok),
+                summary=q_res.summary(),
+                on_spread=on_spread,
+            )
+        if getattr(strategy, "name", "") == "pairs_arb":
             return QuintileAudit(0.0, False, False, error="потрібні колонки leg1/leg2 (−Δspread)")
-        else:
-            z = strategy.generate_signals(df, trades=trades, funding=funding).astype(float)
-            fwd_ret = df["close"].pct_change().shift(-1).fillna(0.0)
-            on_spread = False
-            if z.abs().sum() <= 5:
-                return QuintileAudit(0.0, False, False, error="недостатньо сигналів")
-        q_res = quintile_spread_study(z.astype(float), fwd_ret)
-        ok = q_res.monotonic and abs(q_res.spearman) >= QUINTILE_SPEARMAN_MIN
+        # Directional-стратегії: сигнал дискретний ({-1,0,+1}), тому квінтилі
+        # вироджуються (2–3 біни → ρ=±1 незалежно від наявності інформації).
+        # Замість цього — монотонність середнього forward-return за знаком
+        # сигналу + Welch t на спреді країв. N/A (pass_=None) ставимо ЛИШЕ коли
+        # тест структурно незастосовний (замало кошиків); помилки даних і далі
+        # валять комірку (pass_=False).
+        sig = strategy.generate_signals(df, trades=trades, funding=funding).astype(float)
+        if sig.abs().sum() <= 5:
+            return QuintileAudit(0.0, False, False, error="недостатньо сигналів")
+        fwd_ret = df["close"].pct_change().shift(-1).fillna(0.0)
+        try:
+            d_res = discrete_signal_study(sig, fwd_ret)
+        except ValueError as exc:
+            return QuintileAudit(0.0, False, None, error=f"тест не застосовний: {exc}")
         return QuintileAudit(
-            float(q_res.spearman),
-            bool(q_res.monotonic),
-            ok,
-            summary=q_res.summary(),
-            on_spread=on_spread,
+            float(d_res.spearman),
+            bool(d_res.monotonic),
+            bool(d_res.pass_),
+            summary=d_res.summary(),
+            on_spread=False,
         )
     except Exception as exc:  # noqa: BLE001
         return QuintileAudit(0.0, False, False, error=str(exc)[:120])

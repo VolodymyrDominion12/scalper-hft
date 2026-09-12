@@ -41,6 +41,8 @@
 
 ## ⏳ Відкриті задачі (актуальний backlog)
 
+**Останній research-цикл:** iter9 ([reports/iter9_strategy_selection.md](reports/iter9_strategy_selection.md)) —
+відбір стратегій/ТФ/інструментів + 6 виправлених дефектів контуру.
 **Поточний цикл:** [IMPROVEMENT_PLAN_2026.md](IMPROVEMENT_PLAN_2026.md) (Wave 0 → paper-v0.2.0).
 R1–R8: [CHANGE_PLAN_REVIEW.md](CHANGE_PLAN_REVIEW.md). H1–H8:
 [CHANGE_PLAN_HEALTH.md](CHANGE_PLAN_HEALTH.md). Архів A–E: [CHANGE_PLAN.md](CHANGE_PLAN.md).
@@ -63,6 +65,11 @@ VPS: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
 - [ ] **W0-OPS** Тег `paper-v0.2.0` + 8 тижнів paper LINK/BTC (див. ROADMAP Phase 6.0)
 - [x] **Phase 6.1** `portfolio_var_limit` regression fix + docs sync (analysis_hft, ROADMAP)
 - [x] **L0** Shadow-TCA chase у paper (`strict_both` не змінюється; `paper-audit` / `is-report`)
+
+### 0b. Після iter9 (research backlog)
+- [ ] Pre-registration гіпотези `ts_momentum` 1d (`docs/reports/hypothesis_ts_momentum.md`) до наступного прогону
+- [ ] Розширення універсуму momentum-портфеля до 30–50 перпів (єдиний шлях підняти t-стат)
+- [ ] Нативна 4h-історія (не лише 1d) для 4h-комірок поза 3-річним 1m-кешем
 
 ### 1. Paper-валідація та моніторинг (Phase 1 Gate)
 - [ ] Безперервний моніторинг paper pairs (`results/paper_pairs.sqlite`) протягом **≥8 тижнів** без розходження з бектестом — **після тегу з R1+R3**.

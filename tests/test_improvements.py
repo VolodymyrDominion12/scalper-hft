@@ -2,6 +2,7 @@
 
 import numpy as np
 import pandas as pd
+import pytest
 
 # ── Vectorized microstructure ──────────────────────────────────────────────────
 
@@ -393,6 +394,60 @@ class TestPairsSpreadAlpha:
         td = run_time_decay_audit(df, strategy, cost=CostModel())
         assert td.pass_ is False
         assert td.error is not None and "leg1" in td.error
+
+
+class TestDiscreteSignalStudy:
+    """Квінтильний тест на дискретному сигналі вироджується → для directional
+    стратегій використовується `discrete_signal_study` (монотонність + Welch t)."""
+
+    def test_quintile_is_degenerate_on_discrete_signal(self) -> None:
+        from scalper_hft.validation.quintile import quintile_spread_study
+
+        rng = np.random.default_rng(0)
+        n = 20_000
+        z = pd.Series(rng.choice([-1.0, 0.0, 1.0], size=n, p=[0.1, 0.8, 0.1]))
+        # forward-return БЕЗ жодного зв'язку з сигналом
+        fwd = pd.Series(rng.normal(0.0, 0.005, n))
+        res = quintile_spread_study(z, fwd)
+        # 2–3 кошики: Spearman завжди ±1 — тест нічого не перевіряє
+        assert len(res.means) <= 3
+        assert abs(res.spearman) > 0.99
+        assert res.monotonic is True
+
+    def test_discrete_study_detects_real_signal_and_noise(self) -> None:
+        from scalper_hft.validation.quintile import discrete_signal_study
+
+        rng = np.random.default_rng(1)
+        n = 20_000
+        z = pd.Series(rng.choice([-1.0, 0.0, 1.0], size=n, p=[0.15, 0.7, 0.15]))
+        noise = pd.Series(rng.normal(0.0, 0.005, n))
+        with_edge = noise + 0.001 * z
+
+        r_noise = discrete_signal_study(z, noise)
+        r_edge = discrete_signal_study(z, with_edge)
+        assert r_edge.pass_ is True
+        assert r_edge.spread > 0
+        assert abs(r_edge.t_stat) > 2
+        assert r_noise.t_stat < 2  # справжнього ефекту немає
+
+    def test_not_applicable_is_na_and_error_is_fail(self) -> None:
+        """N/A (pass_=None) — лише структурна незастосовність; помилки даних — FAIL."""
+        from scalper_hft.strategies import get_strategy
+        from scalper_hft.validation.audit_extensions import run_quintile_audit
+        from scalper_hft.validation.quintile import discrete_signal_study
+
+        # < 2 непорожніх кошиків → ValueError (структурно незастосовно)
+        sig = pd.Series([0.0] * 100 + [1.0] * 5)
+        with pytest.raises(ValueError):
+            discrete_signal_study(sig, pd.Series(np.zeros(105)))
+
+        idx = pd.date_range("2024-01-01", periods=200, freq="1h")
+        close = pd.Series(100.0 + np.arange(200), index=idx)
+        df = pd.DataFrame({"open": close, "high": close, "low": close, "close": close, "volume": 1.0}, index=idx)
+        # монотонний ряд: сигналів замало → це помилка даних (FAIL), не N/A
+        q = run_quintile_audit(df, get_strategy("supertrend"))
+        assert q.pass_ is False
+        assert q.error is not None
 
 
 class TestPaperStoreWALMode:

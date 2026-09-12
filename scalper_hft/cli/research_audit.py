@@ -10,7 +10,6 @@ import pandas as pd
 from scalper_hft.cli._common import (
     _apply_use_kalman,
     _enqueue_job,
-    _param_combinations,
     fail,
 )
 from scalper_hft.config import get_settings
@@ -119,8 +118,9 @@ def cmd_overfit(args: argparse.Namespace) -> None:
     ho_s = f"{audit.holdout_sharpe:.3f}" if audit.holdout_sharpe is not None else "n/a"
     print(f"  Buy&Hold Sharpe: {bench_s} | Holdout Sharpe: {ho_s}")
     if audit.quintile_spearman is not None:
-        q_flag = "PASS" if audit.quintile_pass else "FAIL"
-        print(f"  Quintile: {q_flag} | ρ={audit.quintile_spearman:+.3f}")
+        # pass_=None → тест незастосовний (дискретний сигнал directional-стратегії)
+        q_flag = "N/A" if audit.quintile_pass is None else ("PASS" if audit.quintile_pass else "FAIL")
+        print(f"  Quintile/directional: {q_flag} | ρ={audit.quintile_spearman:+.3f}")
     if audit.time_decay_pass is not None:
         print(f"  Time-decay: {'PASS' if audit.time_decay_pass else 'FAIL/WARN'}")
     if audit.stress_pass is not None:
@@ -293,7 +293,7 @@ def cmd_report(args: argparse.Namespace) -> None:
     from scalper_hft.config import get_settings
     from scalper_hft.strategies import get_strategy
     from scalper_hft.validation.benchmark import buy_and_hold_sharpe
-    from scalper_hft.validation.deflated_sharpe import deflated_sharpe_ratio, estimate_n_trials
+    from scalper_hft.validation.deflated_sharpe import deflated_sharpe_ratio
     from scalper_hft.validation.sensitivity import parameter_sensitivity
     from scalper_hft.validation.walk_forward import run_walk_forward
 
@@ -325,8 +325,23 @@ def cmd_report(args: argparse.Namespace) -> None:
     )
     # DSR на конкатенованих OOS-дохідностях walk-forward (як у audit_cell):
     # full-sample equity забруднена IS-вікнами і системно завищує DSR.
+    # n_trials = варіанти, реально перебрані цим прогоном (--trials = явна
+    # декларація дослідника), плюс накопичений журнал спроб. Раніше тут стояв
+    # ПОВНИЙ декартів добуток param_space — див. trial_ledger.effective_n_trials.
     oos_ret = wf.oos_returns.dropna() if wf.oos_returns is not None else pd.Series(dtype=float)
-    n_trials = estimate_n_trials(_param_combinations(strategy), args.trials or 1)
+    from scalper_hft.validation.trial_ledger import (
+        default_path as _default_ledger_path,
+    )
+    from scalper_hft.validation.trial_ledger import effective_n_trials
+
+    _raw_ledger = getattr(settings, "trial_ledger_path", None)
+    _ledger_path = _default_ledger_path()
+    if _raw_ledger is not None and str(_raw_ledger).strip() not in ("", "."):
+        _ledger_path = _raw_ledger
+    n_trials = max(
+        int(args.trials or 1),
+        int(effective_n_trials(_ledger_path, param_combinations=1, strategy=args.strategy)),
+    )
     dsr = deflated_sharpe_ratio(oos_ret.values, n_trials=n_trials) if len(oos_ret) >= 2 else 0.0
 
     sens_md = ""

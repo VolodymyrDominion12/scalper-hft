@@ -26,6 +26,7 @@ EXPECTED_FAMILIES: dict[str, str] = {
     "hmm_reversion": "mean_reversion",
     "sparse_basket": "relative_value",
     "cross_momentum": "momentum",
+    "ts_momentum": "momentum",
     "supertrend": "momentum",
     "stoch_rsi": "mean_reversion",
     "smc_fvg": "flow",
@@ -33,8 +34,10 @@ EXPECTED_FAMILIES: dict[str, str] = {
 }
 
 
-def test_registry_has_seventeen_named_strategies() -> None:
-    assert len(REGISTRY) == 17
+def test_registry_has_eighteen_named_strategies() -> None:
+    # 17 → 18: iter9 додав `ts_momentum` (TSMOM, винесений з single-symbol
+    # гілки cross_momentum, яку блокує capability contract).
+    assert len(REGISTRY) == 18
     assert set(REGISTRY) == set(EXPECTED_FAMILIES)
 
 

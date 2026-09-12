@@ -57,7 +57,10 @@ def _ok(**over: object) -> CellAudit:
 def test_default_train_test_known_and_fallback() -> None:
     assert default_train_test("1m") == (4000, 2000)
     assert default_train_test("4h") == (200, 100)
-    assert default_train_test("1d") == (2000, 500)
+    # 1d більше НЕ падає у fallback (2000, 500): на 3 роках денних барів такого
+    # train не існує, тож усі 1d-клітинки завершувались status=error без вікон
+    assert default_train_test("1d") == (200, 100)
+    assert default_train_test("unknown") == (2000, 500)
 
 
 def test_resolve_wf_windows_auto_and_override() -> None:
@@ -71,6 +74,8 @@ def test_resolve_wf_windows_auto_and_override() -> None:
 def test_min_trades_for_interval() -> None:
     assert min_trades_for("1m") == 100
     assert min_trades_for("1h") == 30
+    # 1d: 40 угод на 3 роках денних барів недосяжно для трендової системи
+    assert min_trades_for("1d") == 15
     assert min_trades_for("unknown") == 40
 
 

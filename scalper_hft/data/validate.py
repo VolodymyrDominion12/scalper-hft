@@ -25,6 +25,10 @@ class BarQualityReport:
     n_spikes: int = 0
     spike_rate: float = 0.0
     max_flat_run: int = 0
+    # Поріг «критичної» частки спайків для ЦЬОГО таймфрейму (див.
+    # `spike_rate_limit_for`). Тримаємо в репорті, бо `bars_are_critical`
+    # викликається без інтервалу (storage.save_klines).
+    spike_rate_limit: float = field(default_factory=lambda: SPIKE_RATE_CRITICAL)
 
     def summary(self) -> str:
         status = "ok" if self.ok else "FAIL"
@@ -44,7 +48,36 @@ SPIKE_MAD_MULT = 20.0
 # Критично, якщо таких барів більше ніж ця частка: справжні «хвости» крипто
 # дають ~0.0005% (ETHUSDT: 7 із 1.59M), а синтетична історія — 0.2–6%
 # (BNBUSDT: 86633 із 1.59M = 5.5%).
+# ⚠️ Поріг відкалібровано на 1-ХВИЛИННИХ барах (1.59M барів = ~1600 дозволених
+# спайків). Для старших ТФ серія коротша в тисячі разів, і той самий відсоток
+# означає 2–3 бари на всю історію — менше, ніж реальна кількість ринкових
+# обвалів. Через це `save_klines` ВІДМОВЛЯВСЯ зберігати справжню денну історію
+# (BNBUSDT 1d: 4 спайки з 2407 = 0.166% > 0.1%) і денний ТФ був недоступний
+# для досліджень. Для 1d/1w використовуємо вищий поріг.
 SPIKE_RATE_CRITICAL = 0.001
+SPIKE_RATE_CRITICAL_BY_INTERVAL: dict[str, float] = {
+    "2h": 0.002,
+    "4h": 0.003,
+    "6h": 0.004,
+    "8h": 0.005,
+    "12h": 0.006,
+    "1d": 0.010,
+    "3d": 0.015,
+    "1w": 0.020,
+}
+
+
+def spike_rate_limit_for(interval: str | None) -> float:
+    """Критична частка «спайкових» барів для конкретного таймфрейму.
+
+    Денні рухи ±30% — це ринкова реальність крипто (2020-03-12 −40%,
+    2021-05-19 −30%), а не ознака синтетичної історії; на 2500 денних барах
+    вони дають 0.1–0.2%, тобто формально «критично» за порогом 1m. Для старших
+    ТФ ліміт вищий (див. таблицю), для 1m/5m/15m/30m/1h лишається як був.
+    """
+    if not interval:
+        return SPIKE_RATE_CRITICAL
+    return SPIKE_RATE_CRITICAL_BY_INTERVAL.get(str(interval).lower(), SPIKE_RATE_CRITICAL)
 # «Плита»: довгі серії O=H=L=C (ціна не рухається взагалі). Мертвий ринок
 # такого не дає; testnet — дає тисячами барів підряд.
 FLAT_RUN_CRITICAL = 240
@@ -134,12 +167,14 @@ def validate_bars(
 
     # ── Неринкові бари (спайки / «плити») ───────────────────────────────────
     n_spikes, spike_rate, flat = 0, 0.0, 0
+    spike_limit = spike_rate_limit_for(interval)
     if "close" in df.columns and len(df) > 30:
         n_spikes, spike_rate = _spike_stats(df["close"])
-        if spike_rate > SPIKE_RATE_CRITICAL:
+        if spike_rate > spike_limit:
             issues.append(
                 f"неринкові рухи ціни: {n_spikes} барів ({spike_rate:.2%}) "
-                f"> |r| {SPIKE_ABS_MIN:.0%} — схоже на testnet/синтетичну історію"
+                f"> |r| {SPIKE_ABS_MIN:.0%} (ліміт ТФ {spike_limit:.2%}) — "
+                f"схоже на testnet/синтетичну історію"
             )
         flat = _flat_run(df["close"])
         if flat >= FLAT_RUN_CRITICAL:
@@ -148,7 +183,20 @@ def validate_bars(
             issues.append(f"довга серія однакових close: {flat} барів")
 
     ok = not issues
-    return BarQualityReport(len(df), n_dup, n_ohlc, n_gaps, n_future, monotonic, ok, issues, n_spikes, spike_rate, flat)
+    return BarQualityReport(
+        len(df),
+        n_dup,
+        n_ohlc,
+        n_gaps,
+        n_future,
+        monotonic,
+        ok,
+        issues,
+        n_spikes,
+        spike_rate,
+        flat,
+        spike_limit,
+    )
 
 
 def bars_are_critical(report: BarQualityReport) -> bool:
@@ -163,7 +211,7 @@ def bars_are_critical(report: BarQualityReport) -> bool:
         or report.n_duplicates
         or report.n_ohlc_violations
         or report.n_future
-        or report.spike_rate > SPIKE_RATE_CRITICAL
+        or report.spike_rate > report.spike_rate_limit
         or report.max_flat_run >= FLAT_RUN_CRITICAL
     )
 

@@ -110,6 +110,40 @@ CREATE TABLE IF NOT EXISTS sweep_results (
 );
 """
 
+# Колонки, додані ПІСЛЯ першої версії схеми. `CREATE TABLE IF NOT EXISTS` не
+# чіпає вже наявну таблицю, тому старий `results/sweep.db` (створений до появи
+# цих полів) валив будь-який `--resume`-прогін:
+#   sqlite3.OperationalError: no such column: code_hash
+# на першій же перевірці `already_done` — sweep не стартував узагалі, а слід
+# лишався лише у трасуванні (джоба/лог звітували «успіх»).
+# Міграція — additive only: ALTER TABLE ... ADD COLUMN з дефолтом, старі рядки
+# отримують дефолт, дані не втрачаються.
+_ADDED_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("n_raw_signals", "INTEGER DEFAULT 0"),
+    ("n_filtered", "INTEGER DEFAULT 0"),
+    ("filter_attribution", "TEXT DEFAULT ''"),
+    ("code_hash", "TEXT DEFAULT ''"),
+)
+
+
+def migrate_sweep_schema(conn: sqlite3.Connection) -> list[str]:
+    """Додати відсутні колонки до наявної `sweep_results`. Повертає список доданих.
+
+    Ідемпотентна: якщо колонка вже є — нічого не робить. Якщо таблиці немає,
+    повертає [] (її створить `_CREATE_TABLE`).
+    """
+    have = {str(row[1]) for row in conn.execute("PRAGMA table_info(sweep_results)")}
+    if not have:
+        return []
+    added: list[str] = []
+    for name, ddl in _ADDED_COLUMNS:
+        if name in have:
+            continue
+        conn.execute(f"ALTER TABLE sweep_results ADD COLUMN {name} {ddl}")
+        added.append(name)
+    return added
+
+
 _UPSERT_SQL = """
 INSERT INTO sweep_results
     (strategy, symbol, interval, days, mode, n_bars, n_trades,
@@ -203,6 +237,15 @@ class SweepStore:
         self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute(_CREATE_TABLE)
+        # Старий кеш sweep.db міг бути створений до появи code_hash та
+        # filter-trace колонок — без міграції `already_done` падає.
+        self.migrated_columns = migrate_sweep_schema(self._conn)
+        if self.migrated_columns:
+            import logging
+
+            logging.getLogger(__name__).info(
+                "SweepStore: оновлено схему %s (+%s)", self.path, ", ".join(self.migrated_columns)
+            )
         self._conn.commit()
 
     def upsert(self, row: SweepRow) -> None:

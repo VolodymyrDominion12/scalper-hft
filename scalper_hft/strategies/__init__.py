@@ -28,6 +28,7 @@ from scalper_hft.strategies.taxonomy import (
     PreferredRegime,
     regime_capital_weight,
 )
+from scalper_hft.strategies.ts_momentum import TimeSeriesMomentum
 
 REGISTRY: dict[str, type[Strategy]] = {
     cls.name: cls
@@ -45,6 +46,7 @@ REGISTRY: dict[str, type[Strategy]] = {
         HmmReversionScalper,
         SparseBasketArb,
         CrossMomentum,
+        TimeSeriesMomentum,
         SupertrendStrategy,
         StochRsiStrategy,
         SmcFvgStrategy,
@@ -79,6 +81,7 @@ __all__ = [
     "Exp3Bandit",
     "exp3_select_signals",
     "CrossMomentum",
+    "TimeSeriesMomentum",
     "SupertrendStrategy",
     "StochRsiStrategy",
     "SmcFvgStrategy",

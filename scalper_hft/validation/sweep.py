@@ -64,8 +64,18 @@ def _preload_cell_data(
     needs_trades: bool,
     needs_funding: bool,
 ) -> tuple[pd.DataFrame, pd.DataFrame | None, pd.DataFrame | None]:
-    """Кеш symbol×interval у межах ProcessPool-воркера (один read parquet)."""
-    key = (symbol, interval)
+    """Кеш symbol×interval у межах ProcessPool-воркера (один read parquet).
+
+    ⚠️ Ключ кеша включає `needs_trades`/`needs_funding`. Раніше ключ був
+    `(symbol, interval)` і перша ж клітинка без фандінгу (напр. `supertrend`)
+    клала в кеш `(klines, None, None)`; усі наступні клітинки з тим самим
+    (symbol, interval), які фандінг ПОТРЕБУЮТЬ, діставали `None` і падали з
+    `MissingDataError` («заявлено ['funding','ohlcv'], але відсутні: funding»).
+    Оскільки стратегії — зовнішній вимір перебору, це вимикало УСЮ carry-сім'ю
+    у будь-якому sweep, де перед нею є стратегія без `needs_funding`
+    (перевірено: 47/49 клітинок funding_carry → status=error).
+    """
+    key = (symbol, interval, bool(needs_trades), bool(needs_funding))
     cached = _WORKER_DATA_CACHE.get(key)
     if cached is not None:
         return cached

@@ -181,17 +181,22 @@ def load_funding(path: Path) -> pd.DataFrame | None:
     return df[["fundingRate"]]
 
 
-def save_klines(path: Path, df: pd.DataFrame, *, strict: bool = True) -> None:
+def save_klines(path: Path, df: pd.DataFrame, *, strict: bool = True, interval: str | None = None) -> None:
     """Зберегти klines у parquet. Fail-closed (strict=True, за замовчуванням):
     критичні дефекти (порожній датасет, немонотонний індекс, дублікати,
     OHLC-порушення, майбутні бари, НЕРИНКОВІ рухи/«плити») → ValueError,
     файл НЕ пишеться.
     Дірки (gaps) — лише warning: легітимні для тонких символів, downloader
-    їх дозаповнює інкрементально."""
+    їх дозаповнює інкрементально.
+    interval: потрібен для порогів якості, що залежать від таймфрейму
+    (частка «спайкових» барів на 1d інша, ніж на 1m — див.
+    `validate.spike_rate_limit_for`). Без нього застосовується 1m-поріг, і
+    справжня денна історія з 4 обвалами на 2500 барів відкидалась як «бита».
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     from scalper_hft.data.validate import bars_are_critical, validate_bars
 
-    report = validate_bars(df)
+    report = validate_bars(df, interval=interval)
     if not report.ok:
         if strict and bars_are_critical(report):
             raise ValueError(f"Відмова у збереженні битих барів {path.name}: {report.summary()}")

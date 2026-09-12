@@ -222,6 +222,9 @@ Paper Gate ≥8 тижнів на конфігурації LINK/BTC 1h maker + r
 | W1-K | Kalman vs OLS bake-off → `docs/reports/kalman_ols_bakeoff_2026.md` | 📋 |
 | W1-X | Cross-symbol sweep BTC/ETH/LINK для відхилених стратегій | 📋 |
 | W1-VA | Value-added test (ΔSharpe портфеля vs LINK/BTC core) | 📋 |
+| W9-1 | `ts_momentum` 1d: pre-registration + незалежне вікно (розширення універсуму до 30–50 перпів) — [iter9](reports/iter9_strategy_selection.md) | 📋 |
+| W9-2 | Vol-targeting overlay для momentum-портфеля: pre-registered A/B (σ-вікно 20–90, t_NW 2.05–2.54 — пост-хок) | 📋 |
+| W9-3 | Нативна 4h-історія (не лише 1d) для аудиту 4h-комірок поза 3-річним 1m-кешем | 📋 |
 
 Дефолти (`use_kalman`, chase, ERC) **не** змінювати без PASS звіту.
 

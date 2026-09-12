@@ -87,6 +87,14 @@ STRATEGY_BOOK: tuple[StrategyRecord, ...] = (
         "мета-модель, 1h+",
     ),
     StrategyRecord(
+        "ts_momentum",
+        "research",
+        "iter9 (2026-09-12): 1d momentum на 6y нативній історії — середній OOS SR +0.13 "
+        "(12/15 символів > 0), рівноважний портфель SR +0.76, з vol-targeting +0.96 (t_NW 2.2); "
+        "але останні 3 роки +0.02 — кандидат на моніторинг, НЕ validated",
+        "1d, maker, портфель 10+ символів",
+    ),
+    StrategyRecord(
         "cross_momentum",
         "research",
         "TSMOM / крос-секційний ранг; немає PASS у STATUS",

@@ -2,7 +2,7 @@
 # Ланцюг walk-forward sweep-прогонів: по одному на таймфрейм (train/test підібрані
 # під глибину 180 днів кожного ТФ). Пише у той самий results/sweep.db (mode=walkforward).
 set -u
-STRATEGIES="mean_reversion,market_maker,funding_carry,basis_reversion,hmm_reversion,cross_momentum,supertrend,stoch_rsi,smc_fvg"
+STRATEGIES="mean_reversion,market_maker,funding_carry,basis_reversion,hmm_reversion,cross_momentum,ts_momentum,supertrend,stoch_rsi,smc_fvg"
 SYMBOLS="BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,LINKUSDT,ADAUSDT,DOGEUSDT,AVAXUSDT,NEARUSDT,DOTUSDT,ATOMUSDT,UNIUSDT,LTCUSDT,AAVEUSDT"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 mkdir -p "$ROOT/results/full_matrix"

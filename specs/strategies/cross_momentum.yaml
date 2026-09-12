@@ -53,3 +53,8 @@ notes: >
   Переваги для портфеля: низька кореляція з pairs_arb (trend vs mean-reversion).
   Потребує OOS аудиту: crypto-momentum менш стабільний за equity через
   короткий цикл зворотного зв'язку між алго-трейдерами.
+  Уточнення (2026-09-12): single-symbol шлях у коді (rolling percentile) НЕ
+  використовується в матричних прогонах — capability contract вимагає
+  крос-секцію, бо інакше клітинка «cross_momentum» рахувала б інший механізм
+  (TSMOM). Для пер-символьного momentum-дослідження додано окрему стратегію
+  `ts_momentum` (specs/strategies/ts_momentum.yaml).

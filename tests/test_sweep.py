@@ -296,9 +296,100 @@ def test_sweep_store_load_coerces_numeric_columns(tmp_path) -> None:
         assert loaded["sharpe"].dtype == "float64"
 
 
+def test_sweep_store_migrates_legacy_schema(tmp_path) -> None:
+    """Старий sweep.db без code_hash/filter-колонок мусить мігрувати, не падати.
+
+    Регрес: `CREATE TABLE IF NOT EXISTS` не оновлює наявну таблицю, тому
+    `--resume` падав на `already_done` з `sqlite3.OperationalError:
+    no such column: code_hash`, і жодна клітинка не запускалась.
+    """
+    import sqlite3
+
+    from scalper_hft.research.sweep_store import SweepStore
+
+    db = tmp_path / "legacy.db"
+    legacy = sqlite3.connect(db)
+    legacy.execute(
+        """
+        CREATE TABLE sweep_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            strategy TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            interval TEXT NOT NULL,
+            days INTEGER DEFAULT 0,
+            mode TEXT DEFAULT 'backtest',
+            n_bars INTEGER DEFAULT 0,
+            n_trades INTEGER DEFAULT 0,
+            sharpe REAL,
+            status TEXT DEFAULT 'ok',
+            error TEXT DEFAULT '',
+            run_ts TEXT DEFAULT '',
+            UNIQUE(strategy, symbol, interval, days, mode)
+        )
+        """
+    )
+    legacy.execute(
+        "INSERT INTO sweep_results (strategy, symbol, interval, days, mode, sharpe, status) "
+        "VALUES ('mean_reversion','BTCUSDT','5m',10,'backtest',1.5,'ok')"
+    )
+    legacy.commit()
+    legacy.close()
+
+    with SweepStore(db) as store:
+        assert "code_hash" in store.migrated_columns
+        assert "filter_attribution" in store.migrated_columns
+        # Головне: already_done більше не падає і бачить старий рядок
+        assert store.already_done("mean_reversion", "BTCUSDT", "5m", days=10, mode="backtest") is True
+        loaded = store.load()
+    assert len(loaded) == 1
+    assert loaded["code_hash"].iloc[0] in ("", None)
+
+    # Ідемпотентність: другий відкривач нічого не додає
+    with SweepStore(db) as store2:
+        assert store2.migrated_columns == []
+
+
 def _sweep_df(rows: list[dict]) -> pd.DataFrame:
     base = {"status": "ok", "symbol": "BTCUSDT", "n_trades": 50}
     return pd.DataFrame([{**base, **r} for r in rows])
+
+
+def test_preload_cell_data_cache_separates_optional_streams(monkeypatch) -> None:
+    """Кеш symbol×interval НЕ можна переюзувати між клітинками з різними needs_*.
+
+    Регрес 2026-09-12: ключ був `(symbol, interval)`, тому перша клітинка без
+    фандінгу (напр. `supertrend`) клала `(klines, None, None)`, і кожна наступна
+    carry-клітинка на тому ж ТФ діставала funding=None → MissingDataError
+    (47 із 49 клітинок `funding_carry` у sweep → status=error, тобто вся
+    carry-сім'я не тестувалась узагалі).
+    """
+    from scalper_hft.validation import sweep as sweep_mod
+
+    funding = pd.DataFrame({"fundingRate": [0.0001, -0.0002]}, index=pd.to_datetime(["2024-01-01", "2024-01-02"]))
+    klines = pd.DataFrame({"close": [1.0, 2.0]})
+
+    def fake_ensure(*_a, **_kw):
+        return klines
+
+    class FakeStore:
+        def load_trades(self, _symbol):
+            return None
+
+        def load_funding(self, _symbol):
+            return funding
+
+    monkeypatch.setattr("scalper_hft.data.access.ensure_klines", fake_ensure)
+    monkeypatch.setattr("scalper_hft.data.store.get_store", lambda: FakeStore())
+    sweep_mod._WORKER_DATA_CACHE.clear()
+
+    _k, _t, f_without = sweep_mod._preload_cell_data(
+        "BTCUSDT", "1h", 30, "1m", needs_trades=False, needs_funding=False
+    )
+    _k2, _t2, f_with = sweep_mod._preload_cell_data("BTCUSDT", "1h", 30, "1m", needs_trades=False, needs_funding=True)
+
+    assert f_without is None
+    assert f_with is not None and len(f_with) == 2, "funding мусить бути завантажений, а не взятий з кеша без нього"
+    sweep_mod._WORKER_DATA_CACHE.clear()
 
 
 def test_sweep_winners_haircut_prefers_oos_metric() -> None:

@@ -18,6 +18,7 @@ scalper_hft/
 ├── features/    RSI, EMA, BB, ATR, VWAP, волатильність + CVD, OB-imbalance, spread
 ├── strategies/  pairs_arb (валідований) · mean_reversion · cvd_momentum · ob_imbalance
 │                · market_maker · funding_* · ml_strategy · ensemble · hmm_reversion
+│                · ts_momentum (1d momentum, iter9)
 │                · sparse_basket · cross_momentum · basis_reversion
 ├── portfolio/   ERC, risk budget (модулі; risk budget ще не в live-циклі)
 ├── backtest/    векторизований рушій + подієвий (maker) + метрики + CostModel

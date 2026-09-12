@@ -127,3 +127,11 @@
 | basis_reversion | XRPUSDT | 2023-09-12 | 2026-09-11 | iter7:strategy_rating/wf:1h |
 | ensemble | XRPUSDT | 2023-09-12 | 2026-09-11 | iter7:strategy_rating/wf:1h |
 | regime_supervisor | XRPUSDT | 2023-09-12 | 2026-09-11 | iter7:strategy_rating/wf:1h |
+| cross_momentum | DOGEUSDT | 2023-09-12 | 2026-09-11 | audit_cell/cscv |
+| cross_momentum | ADAUSDT | 2023-09-12 | 2026-09-11 | audit_cell/cscv |
+| cross_momentum | AVAXUSDT | 2023-09-12 | 2026-09-11 | audit_cell/cscv |
+| cross_momentum | NEARUSDT | 2023-09-12 | 2026-09-11 | audit_cell/cscv |
+| cross_momentum | DOTUSDT | 2023-09-12 | 2026-09-11 | audit_cell/cscv |
+| cross_momentum | ATOMUSDT | 2023-09-12 | 2026-09-11 | audit_cell/cscv |
+| cross_momentum | SOLUSDT | 2023-09-12 | 2026-09-11 | audit_cell/cscv |
+| cross_momentum | XRPUSDT | 2023-09-12 | 2026-09-11 | audit_cell/cscv |

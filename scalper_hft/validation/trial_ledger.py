@@ -2,18 +2,20 @@
 
 Проблема (overfitting-audit SKILL / Bailey–López de Prado): DSR коригує
 спостережуваний Sharpe на кількість спроб (n_trials). Раніше n_trials брали
-з `estimate_n_trials(combos, backtests_per_combo=50)` — де 50 була магічною
-константою, що не відображала реальну кількість перебраних варіантів у сесії.
+з `estimate_n_trials(combos, backtests_per_combo=50)`, де combos — ПОВНИЙ
+декартів добуток `param_space`, а 50 — магічна константа: для supertrend це
+давало ~2·10⁶ спроб на клітинку, яку взагалі не підбирали (DSR>0.95 вимагав
+річного Sharpe ~4.7, тобто гейт був нездоланним за побудовою).
 
 Цей модуль — append-only JSONL-журнал: кожен бектест/аудит/оптимізація
-дописує рядок. Потім `count_trials(...)` дає чесну кількість спроб для
-конкретної комірки (або глобально), яка стає нижньою межею n_trials для DSR.
+дописує рядок. Потім `count_trials(...)` дає чесну кількість спроб,
+яка стає нижньою межею n_trials для DSR.
 
 Використання:
     record_trial(path, strategy="mean_reversion", symbol="BTCUSDT",
-                 purpose="audit_cell", n_trials=50, score=0.42)
-    n = count_trials(path, strategy="mean_reversion", symbol="BTCUSDT")
-    # n_trials для DSR = max(estimate_n_trials(combos, 50), n)
+                 purpose="audit_cell", n_trials=36, score=0.42)
+    n = count_trials(path, strategy="mean_reversion")
+    # n_trials для DSR = max(варіанти цього аудиту, n)
 """
 
 from __future__ import annotations
@@ -108,21 +110,31 @@ def effective_n_trials(
     ledger_path: Path | None,
     *,
     param_combinations: int,
-    backtests_per_combo: int,
+    backtests_per_combo: int = 1,
     strategy: str | None = None,
     symbol: str | None = None,
 ) -> int:
-    """Чесна n_trials для DSR: max(оцінка з combos, реальний лічильник журналу).
+    """Чесна n_trials для DSR: max(варіантів цього аудиту, лічильник журналу).
 
-    Якщо журнал порожній/відсутній — повертає оцінку з combos × backtests_per_combo
-    (зворотна сумісність із «магічною» 50). Якщо журнал має більше — бере його
-    (дослідник реально перебрав більше, ніж підказує формула).
+    `param_combinations` — кількість конфігурацій, які РЕАЛЬНО прогнали в межах
+    цього аудиту (baseline + сітка sensitivity + CSCV-варіанти), а не розмір
+    теоретичного простору параметрів `param_space`.
+
+    ⚠️ Історія: раніше сюди передавали ПОВНИЙ декартів добуток `param_space`
+    (напр. supertrend → 40 824) і множили на «магічну» `backtests_per_combo=50`,
+    тобто n_trials ≈ 2·10⁶ навіть коли жодного підбору параметрів не робилося
+    (audit_cell завжди запускає дефолтну конфігурацію). DSR з такою
+    множинністю вимагає річного Sharpe ≈ 3.8–4.9 на OOS — гейт ставав
+    нездоланним для будь-якої реальної стратегії, а вердикт втрачав
+    розрізнювальну здатність (FAIL у 100% клітинок, `results/audit_verdicts.jsonl`).
+    Тепер множинність = те, що справді перебрали: варіанти цього аудиту +
+    накопичений журнал спроб (усі символи стратегії — вибір символу теж part of
+    the search). Поріг DSR (0.95) не змінюється, лише прибирається фіктивне
+    завищення числа спроб.
     """
-    from scalper_hft.validation.deflated_sharpe import estimate_n_trials
-
-    estimate = estimate_n_trials(param_combinations, backtests_per_combo)
+    estimate = max(int(param_combinations), 1) * max(int(backtests_per_combo), 1)
     ledger = count_trials(ledger_path, strategy=strategy, symbol=symbol)
-    return max(estimate, ledger)
+    return max(estimate, ledger, 1)
 
 
 __all__ = ["default_path", "record_trial", "count_trials", "effective_n_trials"]

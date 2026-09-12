@@ -194,7 +194,7 @@ class ParquetStore:
     def save_klines(self, symbol: str, interval: str, df: pd.DataFrame) -> None:
         from scalper_hft.data.storage import klines_path, save_klines
 
-        save_klines(klines_path(self.data_dir, symbol, interval), df)
+        save_klines(klines_path(self.data_dir, symbol, interval), df, interval=interval)
 
     def load_spot_klines(self, symbol: str, interval: str) -> pd.DataFrame | None:
         from scalper_hft.data.storage import load_klines, spot_klines_path
@@ -204,7 +204,7 @@ class ParquetStore:
     def save_spot_klines(self, symbol: str, interval: str, df: pd.DataFrame) -> None:
         from scalper_hft.data.storage import save_klines, spot_klines_path
 
-        save_klines(spot_klines_path(self.data_dir, symbol, interval), df)
+        save_klines(spot_klines_path(self.data_dir, symbol, interval), df, interval=interval)
 
     # ── trades / funding ──────────────────────────────────────────────────────
     def load_trades(self, symbol: str) -> pd.DataFrame | None:

@@ -36,6 +36,15 @@ WF_TRAIN_TEST: dict[str, tuple[int, int]] = {
     "30m": (500, 250),
     "1h": (500, 200),
     "4h": (200, 100),
+    # 1d: 3 роки кешу = ~1095 барів. train=200 (~6.6 міс) покриває warm-up
+    # найдовших індикаторів набору (EMA-100 / BB-100 / ST lookback-240),
+    # test=100 (~3.3 міс) дає 8 OOS-вікон на 3 роки. Без цього запису
+    # get(interval, DEFAULT_TRAIN_TEST) підставляв (2000, 500) → на денних
+    # даних жодного вікна не існує і ВСІ денні клітинки падали з
+    # "Дані коротші за train+purge+test" (status=error), тобто найдешевший
+    # за витратами таймфрейм був недоступний для аудиту взагалі.
+    "1d": (200, 100),
+    "1w": (50, 25),
 }
 DEFAULT_TRAIN_TEST: tuple[int, int] = (2000, 500)
 MIN_TRADES: dict[str, int] = {
@@ -45,6 +54,10 @@ MIN_TRADES: dict[str, int] = {
     "30m": 40,
     "1h": 30,
     "4h": 20,
+    # 1d: за 3 роки трендова система дає 20–60 угод; поріг 4h (20) вимагав би
+    # торгувати майже кожен день. 15 угод — статистичний мінімум для OOS-вікон.
+    "1d": 15,
+    "1w": 8,
 }
 DEFAULT_MIN_TRADES = 40
 OOS_SHARPE_MIN = 0.3
@@ -52,7 +65,9 @@ OOS_POS_FRAC_MIN = 0.5
 DSR_MIN = 0.95
 SMOOTHNESS_MIN = 0.30
 PBO_MAX = 0.5
-DSR_BACKTESTS_PER_COMBO = 50
+# Видалено DSR_BACKTESTS_PER_COMBO=50 (2026-09-12): «магічний» множник, який
+# разом із повним декартовим добутком param_space роздував n_trials для DSR до
+# ~10⁶ навіть без жодного підбору параметрів. Див. trial_ledger.effective_n_trials.
 CSCV_VARIANTS = 20  # варіантів параметрів для PBO у audit_cell (with_cscv=True)
 # AFML Ch.7/11: ненульовий purge/embargo за замовчуванням — 1% OOS-вікна
 # (мін. 1 бар). 0 лишає аудит «AFML-shaped, але не AFML-strict»: позиції,
@@ -551,14 +566,17 @@ def audit_cell(
         # equity — та забруднена IS-вікнами і завищує DSR)
         ret = wf.oos_returns.dropna() if wf.oos_returns is not None else pd.Series(dtype=float)
         if len(ret) >= 2:
-            combos = 1
-            for _lo, _hi, _s in ps.values():
-                step_f = float(_s) if _s else 1.0
-                combos *= max(int((float(_hi) - float(_lo)) / step_f) + 1, 1)
-            combos = min(max(combos, 1), 100_000)
-            # Чесна n_trials: max(оцінка combos×backtests_per_combo, реальний
-            # лічильник журналу спроб) — замість «магічної» 50. Журнал append-only,
-            # опційний (TRIAL_LEDGER_PATH). Записуємо цей аудит як спробу.
+            # n_trials = скільки конфігурацій РЕАЛЬНО прогнали, а не розмір
+            # теоретичного простору param_space: сам аудит оцінює baseline +
+            # сітку sensitivity (sens_n) + CSCV-варіанти, а історію попередніх
+            # прогонів дає журнал спроб (усі символи стратегії — вибір символу
+            # теж частина пошуку). Деталі й причина зміни — у docstring
+            # trial_ledger.effective_n_trials (стара формула combos×50 давала
+            # n_trials ~2·10⁶ → DSR>0.95 вимагав річного Sharpe ~4.7).
+            variants_this_audit = 1 + int(sens_n) + (CSCV_VARIANTS if with_cscv else 0)
+            from scalper_hft.validation.trial_ledger import (
+                default_path as _default_ledger_path,
+            )
             from scalper_hft.validation.trial_ledger import effective_n_trials, record_trial
 
             raw_ledger = getattr(settings, "trial_ledger_path", None)
@@ -566,7 +584,10 @@ def audit_cell(
             # конфігу НЕ можна ловити через `raw_ledger and ...` — інакше журнал
             # "вимкнено" перетворюється на спробу відкрити '.' як файл
             # (IsADirectoryError, валило overfit-аудит без TRIAL_LEDGER_PATH).
-            ledger_path = None
+            # Якщо TRIAL_LEDGER_PATH не задано — пишемо у дефолтний журнал
+            # (інакше множинність спроб ніде не фіксується і DSR знову стає
+            # залежним від того, чи налаштував дослідник env-змінну).
+            ledger_path = _default_ledger_path()
             if raw_ledger is not None:
                 raw_s = str(raw_ledger).strip()
                 if raw_s and raw_s != ".":
@@ -574,10 +595,8 @@ def audit_cell(
             n_trials = int(
                 effective_n_trials(
                     ledger_path,
-                    param_combinations=combos,
-                    backtests_per_combo=DSR_BACKTESTS_PER_COMBO,
+                    param_combinations=variants_this_audit,
                     strategy=strategy_name,
-                    symbol=symbol,
                 )
             )
             if n_trials_floor is not None and n_trials_floor > 0:
@@ -587,7 +606,7 @@ def audit_cell(
                 strategy=strategy_name,
                 symbol=symbol,
                 purpose=f"audit_cell{'/cscv' if with_cscv else ''}",
-                n_trials=combos,
+                n_trials=variants_this_audit,
                 score=float(wf.avg_oos_sharpe),
             )
             dsr = float(deflated_sharpe_ratio(ret.to_numpy(dtype=float), n_trials=n_trials))

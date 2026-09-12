@@ -37,7 +37,12 @@ class CrossMomentum(Strategy):
     name = "cross_momentum"
     family = "momentum"
     preferred_regimes = frozenset({"trend_up", "trend_down"})
-    requires = frozenset({"multi_symbol"})
+    # Fail-fast контракт (Phase 5.2): cross-sectional momentum БЕЗ крос-секції —
+    # це інша стратегія (TSMOM). Тихо підміняти її не можна: у матричному
+    # прогоні така клітинка виглядала б як «cross_momentum», а рахувала б
+    # time-series momentum. Тому потрібні або ≥3 колонки `{sym}_close`, або
+    # leg1+leg2. TSMOM-механізм винесено в окрему стратегію `ts_momentum`.
+    requires: frozenset[str] = frozenset({"multi_symbol"})
 
     param_space = {
         "lookback": (5.0, 60.0, 5.0),

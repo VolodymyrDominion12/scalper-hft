@@ -25,7 +25,7 @@ class _FillOnTouch:
         return 0.0
 
 
-def _event_chase_leg2() -> FillDecision:
+def _event_chase_leg2() -> tuple[FillDecision, FillDecision]:
     return FillDecision(True, 100.0, "filled"), FillDecision(False, 50.0, "unfilled_no_touch")
 
 
