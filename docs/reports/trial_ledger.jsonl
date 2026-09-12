@@ -32,3 +32,6 @@
 {"ts": "2026-09-12T14:58:58+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell/cscv", "n_trials": 22, "score": 0.5}
 {"ts": "2026-09-12T15:14:44+00:00", "strategy": "ts_momentum", "symbol": "AVAXUSDT", "purpose": "audit_cell/cscv", "n_trials": 33, "score": 0.05905251366968978}
 {"ts": "2026-09-12T15:16:32+00:00", "strategy": "ts_momentum", "symbol": "AVAXUSDT", "purpose": "audit_cell/cscv", "n_trials": 33, "score": 0.39217404813324835}
+{"ts": "2026-09-12T15:19:59+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell/cscv", "n_trials": 22, "score": 0.5}
+{"ts": "2026-09-12T15:19:59+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell", "n_trials": 2, "score": 0.5}
+{"ts": "2026-09-12T15:19:59+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell/cscv", "n_trials": 22, "score": 0.5}
