@@ -70,6 +70,8 @@ VPS: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
 - [x] Pre-registration гіпотези `ts_momentum` 1d (`docs/reports/hypothesis_ts_momentum.md`) — iter10 2026-09-12
 - [x] Розширення універсуму momentum-портфеля (27 нових перпів, H1 FAIL t_NW 1.70 — імена не в paper) — iter11
 - [x] Нативна 4h-історія CORE_15; long-only PASS (Sharpe +1.01, t_NW +2.49) — iter11
+- [x] **iter12 improvement loop**: two-stage vol-target overlay (FAIL — post-hoc підтверджено) +
+  value-added pairs⊕ts (FAIL — pairs деградував на свіжих 3y) + per-symbol attribution — [iter12](reports/iter12_improvement_cycle.md) 2026-09-12
 
 ### 1. Paper-валідація та моніторинг (Phase 1 Gate)
 - [ ] Безперервний моніторинг paper pairs (`results/paper_pairs.sqlite`) протягом **≥8 тижнів** без розходження з бектестом — **після тегу з R1+R3**.

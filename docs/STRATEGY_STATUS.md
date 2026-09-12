@@ -3,6 +3,28 @@
 Оновлюється після кожного аудиту. Методологія: повний цикл інвестігейт →
 реалізація → тест → аудит (walk-forward + Deflated Sharpe + CSCV/PBO + stress/cohort + paper-replay).
 
+## 🔄 Iteration 12 — improvement loop: two-stage vol-target + value-added (2026-09-12)
+
+Повний звіт: [reports/iter12_improvement_cycle.md](reports/iter12_improvement_cycle.md).
+Pre-registration: [reports/hypothesis_iter12.md](reports/hypothesis_iter12.md).
+
+**Цикл «аналіз → покращення → тест» на перевикористаному OOS iter11 (two-stage protocol):**
+
+- **H12-A two-stage vol-target overlay — FAIL.** Сітка σ={20,40,60}; selection half
+  2019-22 обрав σ=60 (майже плоско: 1.15-1.17); validation half 2023-26: vt SR **+0.99**
+  < plain **+1.11**, t_NW 1.55 < 2.0. → overlay лишається **пост-хок**, НЕ monitoring.
+  Причина: overlay з iter11 був підігнаний під повну вибірку; на held-out половині не узагальнюється.
+- **H12-B value-added pairs⊕ts — FAIL.** Спільний span 1095d, corr pairs↔ts = **−0.08**.
+  pairs_arb LINK/BTC на свіжих 3y: SR **+0.04** (edge деградував), ts_momentum 1d: SR **+1.06**.
+  Combined 50/50: SR +0.16, DD −2.07% — слабка нога pairs тягне вниз; диверсифікація зменшує
+  DD vs pairs (−4.58%) але не б'є ts standalone.
+- **H12-C attribution.** Портфель ts_momentum 1d CORE_15 тягнуть DOGE/NEAR/XRP/SOL
+  (contribution +0.09…+0.12); найгірші — LTC (−0.02, єдиний негативний), DOT/LINK (слабкі).
+
+**Висновок:** нових прибуткових комірок не виявлено; monitoring-набір (pairs_arb LINK/BTC +
+ts_momentum 1d/4h long-only CORE_15) лишається оптимальним. Покращення не додають вартості
+на held-out — це саме та перевірка на overfitting, яку вимагав цикл.
+
 ## 🔄 Iteration 11 — незалежне підтвердження long-only (2026-09-12)
 
 Повний звіт: [reports/iter11_improvement_cycle.md](reports/iter11_improvement_cycle.md).
