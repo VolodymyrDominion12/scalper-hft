@@ -60,7 +60,8 @@ VPS: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
 - [x] **R8** Покажчики ROADMAP/TODO/DESIGN на CHANGE_PLAN_REVIEW
 - [x] **W0-TCA** IS: mid ≠ fill + opportunity cost unfilled + секція в `paper-audit`
 - [x] **W0-Q** Quintile/time-decay пар на −Δspread, не на `close` ноги
-- [ ] **W0-OPS** Тег `paper-v0.2.0` + 8 тижнів paper LINK/BTC
+- [ ] **W0-OPS** Тег `paper-v0.2.0` + 8 тижнів paper LINK/BTC (див. ROADMAP Phase 6.0)
+- [x] **Phase 6.1** `portfolio_var_limit` regression fix + docs sync (analysis_hft, ROADMAP)
 
 ### 1. Paper-валідація та моніторинг (Phase 1 Gate)
 - [ ] Безперервний моніторинг paper pairs (`results/paper_pairs.sqlite`) протягом **≥8 тижнів** без розходження з бектестом — **після тегу з R1+R3**.

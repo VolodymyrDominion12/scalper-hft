@@ -1,4 +1,8 @@
-# scalper-hft — високочастотна скальпінг-система (Binance USDT-M futures)
+# scalper-hft — MFT квант-платформа для Binance USDT-M futures
+
+> Чесна позиція: це **mid-frequency** (хвилини–години) research + paper/live шар,
+> не субмілісекундний HFT. Валідований кандидат: `pairs_arb LINK/BTC 1h maker`.
+> Роадмап: [docs/ROADMAP.md](docs/ROADMAP.md) · HFT/MFT аудит: [docs/analysis_hft_2026.md](docs/analysis_hft_2026.md).
 
 Проєкт створено за моделлю книги **"Inside the Black Box" (R. Narang)**:
 Alpha → Risk → Transaction Cost → Portfolio Construction → Execution, на фундаменті

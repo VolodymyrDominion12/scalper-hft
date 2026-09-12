@@ -271,12 +271,15 @@ class ImplementationShortfallTracker:
     Забезпечує зворотний зв'язок між реальними виконаннями та CostModel.
     """
 
-    def __init__(self, alpha_decay: float = 0.05) -> None:
+    def __init__(self, alpha_decay: float = 0.05, persist_path: str | None = None) -> None:
         self.alpha_decay = alpha_decay
+        self.persist_path = persist_path
         self.records: list[dict[str, float]] = []
         self._ewma_is_bps: float = 0.0
         self._ewma_vol: float = 0.0
         self._count: int = 0
+        if self.persist_path:
+            self.load()
 
     def record_execution(
         self,
@@ -319,6 +322,9 @@ class ImplementationShortfallTracker:
             if vol_frac > 0:
                 self._ewma_vol = (1.0 - self.alpha_decay) * self._ewma_vol + self.alpha_decay * vol_frac
         self._count += 1
+        
+        if self.persist_path:
+            self.save()
 
         return is_bps
 
@@ -347,3 +353,39 @@ class ImplementationShortfallTracker:
             vol_ref=self._ewma_vol if self._ewma_vol > 0 else base.vol_ref,
             vol_exp=base.vol_exp,
         )
+
+    def save(self) -> None:
+        """Зберегти стан трекера у JSON."""
+        if not self.persist_path:
+            return
+        import json
+        from pathlib import Path
+        path = Path(self.persist_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "alpha_decay": self.alpha_decay,
+            "ewma_is_bps": self._ewma_is_bps,
+            "ewma_vol": self._ewma_vol,
+            "count": self._count,
+            "records": self.records[-1000:],  # Зберігаємо лише останні 1000 записів
+        }
+        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    def load(self) -> None:
+        """Відновити стан трекера з JSON."""
+        if not self.persist_path:
+            return
+        import json
+        from pathlib import Path
+        path = Path(self.persist_path)
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            self.alpha_decay = data.get("alpha_decay", self.alpha_decay)
+            self._ewma_is_bps = data.get("ewma_is_bps", 0.0)
+            self._ewma_vol = data.get("ewma_vol", 0.0)
+            self._count = data.get("count", 0)
+            self.records = data.get("records", [])
+        except Exception:
+            pass

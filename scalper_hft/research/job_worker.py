@@ -163,6 +163,11 @@ def worker_loop(
     )
     while stop is None or not stop[0]:
         store.touch_worker()
+        current_hash = worker_code_hash()
+        if current_hash != _code_hash:
+            logger.info("code_hash changed %s -> %s, exiting worker to restart", _code_hash, current_hash)
+            sys.exit(0)
+
         job = store.claim(pid=os.getpid())
         if job is None:
             time.sleep(idle_sleep)

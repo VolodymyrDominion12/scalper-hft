@@ -1,12 +1,13 @@
 # Роадмап scalper-hft
 
-Стан на 2026-08-30 (після ітерацій 8–11 та Спринтів 1–5). Цей документ — план розвитку після
+Стан на 2026-09-12 (після Wave 0, Phase 5 та аудиту HFT/MFT). Цей документ — план розвитку після
 аудиту коду, стратегій і live-шару. Детальний статус стратегій:
 [STRATEGY_STATUS.md](STRATEGY_STATUS.md), пари — [pairs_audit.md](pairs_audit.md), синтез підходів — [book_approaches_synthesis.md](book_approaches_synthesis.md).
+Порівняння з практиками HFT/MFT: [analysis_hft_2026.md](analysis_hft_2026.md).
 
-> **Поточний цикл (2026-09-11):** [IMPROVEMENT_PLAN_2026.md](IMPROVEMENT_PLAN_2026.md) —
-> Wave 0 (TCA + R5–R7) → тег `paper-v0.2.0` → 8 тижнів paper. Не нові альфи.
-> Попередній код-цикл R1–R8: [CHANGE_PLAN_REVIEW.md](CHANGE_PLAN_REVIEW.md) (R1–R3, R8 закриті).
+> **Поточний цикл (2026-09-12):** [IMPROVEMENT_PLAN_2026.md](IMPROVEMENT_PLAN_2026.md) —
+> Wave 0 (код) ✅ → **W0-OPS** (тег `paper-v0.2.0` + 8 тижнів paper) ⏳. Не нові альфи.
+> Код-цикл R1–R8: [CHANGE_PLAN_REVIEW.md](CHANGE_PLAN_REVIEW.md). Phase 6 — closure нижче.
 
 ## Чесний вердикт
 
@@ -110,6 +111,16 @@ paper-replay реверсує і рахує daily-loss на mark-to-market. Те
 | 3 | Live-адаптер ніг pairs (код, `DRY_RUN=true` за замовчуванням) | план |
 | 4 | Тег `live-v*` + ключі IP-whitelist | лише після Gate і явного запиту |
 
+## Phase 2.5 — Execution Intelligence & Empirical Cost Modeling (MFT Standard)
+
+1. **Implementation Shortfall (IS) Feedback Loop**: збір метрик з `live/fills.py` для оновлення `CostModel`.
+2. **Dynamic Market Impact Model**: Заміна константного slippage на функцію Square-Root Law (Almgren-Chriss).
+
+## Phase 3.5 — Structural Risk & Cointegration Defense
+
+1. **Cointegration Break Detector**: Інтеграція динамічного (rolling) ADF/Johansen тесту в live-рушій `pairs_arb` для паузи при втраті коінтеграції.
+2. **Portfolio-Level Risk & ERC**: Portfolio-level VaR та динамічний Vol-Targeting (Equal Risk Contribution) безпосередньо в циклі `PortfolioRunner`.
+
 ## Phase 4 — HFT та L2 Order Book інфраструктура (наступний етап)
 
 1. **Глибина стакана**: тривале накопичення depth5 снапшотів через активний рекордер.
@@ -176,6 +187,67 @@ Paper Gate ≥8 тижнів на конфігурації LINK/BTC 1h maker + r
 
 ---
 
+## Phase 6 — Closure & MFT maturity (2026-09 → 2026-11)
+
+Після Wave 0 (код) пріоритет — **закрити Paper Gate**, не розширювати альфи.
+Деталі критеріїв: [IMPROVEMENT_PLAN_2026.md](IMPROVEMENT_PLAN_2026.md) §«Критерії виходу».
+Чекліст ops: [reports/paper_v0.2.0_ops_checklist.md](reports/paper_v0.2.0_ops_checklist.md).
+
+### 6.0 — Paper Gate closure [P0, ops]
+
+| ID | Що | Статус |
+|---|---|---|
+| PG-1 | Тег `paper-v0.2.0` на VPS (`scripts/deploy_paper.sh`, новий sqlite) | ⏳ |
+| PG-2 | Конфіг: LINK/BTC 1h maker, `lookback=120`, `regime_scale=0.25`, той самий `MAKER_FILL_SEED` | ⏳ |
+| PG-3 | ≥8 тижнів без скидання sqlite / зміни z/lb/regime_scale | ⏳ |
+| PG-4 | Щотижня: `paper-audit` + `is-report --days 7`; blended TCA < 3 bps | ⏳ |
+
+**Готово коли:** 8 тижнів журналу на одному тегу. Це **не** дозвіл на live.
+
+### 6.1 — Code hygiene [P0, код]
+
+| ID | Що | Статус |
+|---|---|---|
+| H1 | `portfolio_var_limit`: `getattr` у `_portfolio_var_ok` (частковий runner у тестах) | ✅ |
+| H2 | Актуалізація [analysis_hft_2026.md](analysis_hft_2026.md) (закриті GAP-2/3/5/6) | ✅ |
+| H3 | Оновлення дати та Phase 6 у цьому ROADMAP | ✅ |
+
+### 6.2 — Wave 1 research (паралельно з paper, не чіпати демон) [P1]
+
+| ID | Що | Статус |
+|---|---|---|
+| W1-K | Kalman vs OLS bake-off → `docs/reports/kalman_ols_bakeoff_2026.md` | 📋 |
+| W1-X | Cross-symbol sweep BTC/ETH/LINK для відхилених стратегій | 📋 |
+| W1-VA | Value-added test (ΔSharpe портфеля vs LINK/BTC core) | 📋 |
+
+Дефолти (`use_kalman`, chase, ERC) **не** змінювати без PASS звіту.
+
+### 6.3 — Regime portfolio (після Paper Gate) [P2]
+
+| ID | Що | Статус |
+|---|---|---|
+| RS-1 | `RegimeStrategyMap` з OOS iter7 (selector +2.64, PBO=0.004 — exploratory) | 📋 |
+| RS-2 | `funding_carry` у пулі дітей; taxonomy priors з емпіричної матриці | 📋 |
+| RS-3 | `cell_audit --audit-mode final` на selector перед paper | 📋 |
+
+### 6.4 — Live execution (лише після Gate + явний запит) [P2]
+
+| ID | Що | Статус |
+|---|---|---|
+| L1 | `PairsLiveRunner` soak test (мін. ноціонал, reconcile, KillSwitch) | 📋 |
+| L2 | Fill quality dashboard (IS bps, fill-rate, drift) | 📋 |
+| L3 | Тег `live-v*`, IP-whitelist ключів | 📋 |
+
+### 6.5 — HFT track (окремий продукт, не блокує pairs) [P3]
+
+| ID | Що | Статус |
+|---|---|---|
+| HFT-1 | L2 archive `quality_ok` → revival `ob_imbalance` / `market_maker` OOS | ⏳ |
+| HFT-2 | Nautilus benchmark vs `event_engine` fill parity | 📋 |
+| HFT-3 | Tardis.dev історія для queue model (Phase 4) | 📋 |
+
+---
+
 ## Що категорично не робити
 
 - Не вмикати live на `mean_reversion` / `cvd_momentum` / `funding_carry` / `basis_reversion` / 1m pairs — усі відхилені.
@@ -202,3 +274,9 @@ Paper Gate ≥8 тижнів на конфігурації LINK/BTC 1h maker + r
 | 5.2 | vol-target у paper; max_leverage у рушії; partial-fill; capability basket/l2/multi_symbol | ✅ Код цього циклу |
 | 5.3 | preferred_regimes з OOS-матриці; supervisor на haircut-рострі; ML PurgedKFold/CPCV; стрес у report | ✅ Код цього циклу |
 | 5.4 | валідація trades/funding/depth; queue calibration з depth5 (MM/OBI ще ні) | ✅ Код цього циклу (revival ⏳) |
+| 6.0 | Paper Gate closure (`paper-v0.2.0`, 8 тижнів VPS) | ⏳ Ops |
+| 6.1 | Code hygiene (portfolio VaR regression, docs sync) | ✅ 2026-09-12 |
+| 6.2 | Wave 1 research (Kalman, cross-symbol, value-added) | 📋 Паралельно з paper |
+| 6.3 | Regime portfolio (selector OOS iter7) | 📋 Після Gate |
+| 6.4 | Live execution (лише після Gate + явний запит) | 📋 |
+| 6.5 | HFT track (L2/Tardis/Nautilus — окремий продукт) | 🔜 |

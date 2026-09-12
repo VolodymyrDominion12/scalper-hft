@@ -59,6 +59,8 @@ class PairsArb(Strategy):
         dynamic_half_life: bool = False,
         regime_scale: bool = True,
         regime_scale_factor: float = 0.25,
+        coint_gate: bool = False,
+        coint_window: int = 1440,
     ) -> None:
         super().__init__(
             entry_z=entry_z,
@@ -72,6 +74,8 @@ class PairsArb(Strategy):
             dynamic_half_life=bool(dynamic_half_life),
             regime_scale=bool(regime_scale),
             regime_scale_factor=float(regime_scale_factor),
+            coint_gate=bool(coint_gate),
+            coint_window=int(coint_window),
         )
         self.betas: pd.Series | None = None
 
@@ -143,6 +147,11 @@ class PairsArb(Strategy):
         if bool(self.get("regime_scale", True)):
             factor = float(self.get("regime_scale_factor", 0.25))
             sig = self._apply_regime_scale(sig, df, factor=factor)
+
+        # ── Cointegration Gate: блокуємо входи при втраті коінтеграції (ADF) ──
+        if bool(self.get("coint_gate", False)):
+            coint_window = int(self.get("coint_window", 1440))
+            sig = self._apply_adf_coint_gate(sig, spread_series, window=coint_window)
 
         return sig
 
@@ -230,3 +239,43 @@ class PairsArb(Strategy):
         # lock entry-time scale на час угоди (ffill); поза позицією — байдуже (sig==0)
         entry_scale = entry_scale.ffill().fillna(1.0)
         return (sig_f * entry_scale).clip(-1.0, 1.0)
+
+    @staticmethod
+    def _apply_adf_coint_gate(sig: pd.Series, spread: pd.Series, window: int = 1440, step: int = 60) -> pd.Series:
+        """Перевіряє коінтеграцію спреду через ADF тест (p-value).
+        
+        Оскільки ADF тест повільний, він обчислюється лише кожні `step` барів (напр. кожні 60 хв).
+        Якщо p-value > 0.05, коінтеграція вважається розірваною -> блокуємо НОВІ входи.
+        """
+        import warnings
+        try:
+            from statsmodels.tsa.stattools import adfuller
+        except ImportError:
+            return sig
+
+        if len(spread) < window + step:
+            return sig
+
+        p_values = pd.Series(index=spread.index, dtype=float)
+        
+        # Sparse calculation to avoid huge backtest overhead
+        calc_indices = np.arange(window, len(spread), step)
+        if len(calc_indices) == 0 or calc_indices[-1] != len(spread) - 1:
+            calc_indices = np.append(calc_indices, len(spread) - 1)
+            
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            for i in calc_indices:
+                slice_data = spread.iloc[i - window : i].dropna()
+                if len(slice_data) > window // 2:
+                    try:
+                        res = adfuller(slice_data.values, maxlag=1, autolag=None)
+                        p_values.iloc[i] = res[1]
+                    except Exception:
+                        p_values.iloc[i] = 1.0
+                
+        p_values = p_values.ffill().fillna(0.0)
+        block = p_values > 0.05
+        
+        holding = sig.shift(1).fillna(0.0) != 0.0
+        return sig.where(~block | holding, other=0)

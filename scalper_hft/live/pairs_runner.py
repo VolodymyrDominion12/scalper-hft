@@ -20,7 +20,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-
 import pandas as pd
 
 from scalper_hft.config import get_settings
@@ -434,6 +433,7 @@ class PairsPaperRunner:
         reconcile: bool = True,
         control: ControlState | None = None,
         persist: bool = True,
+        portfolio_weight: float = 1.0,
     ) -> str:
         ctrl = control if control is not None else load_control(self.control_path)
         if ctrl.pause:
@@ -457,6 +457,7 @@ class PairsPaperRunner:
             return "hold:same_bar"
         sig_df = pd.DataFrame({"leg1": common["l1_close"], "leg2": common["l2_close"]}, index=common.index)
         signal = 0.0 if ctrl.flatten else float(self.strategy.generate_signals(sig_df).iloc[-1])
+        signal *= portfolio_weight
         row = common.iloc[-1]
         action = self.engine.on_bar(
             ts,
@@ -644,7 +645,8 @@ class PairsPortfolioRunner:
         - portfolio_var_limit == 0.0 (дефолт, backward-compatible)
         - недостатньо даних у вікні (< 10 точок → чекаємо накопичення)
         """
-        if self.portfolio_var_limit <= 0.0:
+        limit = float(getattr(self, "portfolio_var_limit", 0.0))
+        if limit <= 0.0:
             return True
         win = list(self._equity_window)
         if len(win) < 10:
@@ -653,11 +655,11 @@ class PairsPortfolioRunner:
         returns = np.diff(arr) / arr[:-1]
         # Hist-VaR(95%): 5-й перцентиль доходності → втрата (додатнє число)
         var_95 = float(-np.quantile(returns, 0.05))
-        if var_95 > self.portfolio_var_limit:
+        if var_95 > limit:
             logger.warning(
                 "Portfolio hist-VaR(95%%) = %.4f > limit %.4f — halting new entries",
                 var_95,
-                self.portfolio_var_limit,
+                limit,
             )
             return False
         return True
@@ -702,6 +704,23 @@ class PairsPortfolioRunner:
         for r in self.runners:
             r.engine.portfolio_block_entries = halt
             r.engine.control_block_entries = ctrl.no_new_entries
+            
+        # ERC (Equal Risk Contribution) ваги на основі 7-денної волатильності
+        bars_7d = int(7 * 24 * 3600 / pd.Timedelta(self.interval).total_seconds()) if hasattr(pd, "Timedelta") else 168
+        vols = []
+        for r in self.runners:
+            spread = r.engine._spread_hist
+            if len(spread) >= bars_7d // 2:
+                vols.append(spread.diff().tail(bars_7d).std())
+            else:
+                vols.append(0.0)
+                
+        weights = [1.0 / max(len(self.runners), 1)] * len(self.runners)
+        if all(v > 0 for v in vols):
+            inv_vols = [1.0 / v for v in vols]
+            total_inv = sum(inv_vols)
+            weights = [iv / total_inv for iv in inv_vols]
+
         if var_halt:
             prefix = "halt:portfolio_var "
         elif halt:
@@ -709,7 +728,8 @@ class PairsPortfolioRunner:
         else:
             prefix = ""
         action = prefix + " || ".join(
-            r.step(now=now, reconcile=False, control=ctrl, persist=False) for r in self.runners
+            r.step(now=now, reconcile=False, control=ctrl, persist=False, portfolio_weight=w) 
+            for w, r in zip(weights, self.runners)
         )
         self._persist_if_needed(action)
         return action

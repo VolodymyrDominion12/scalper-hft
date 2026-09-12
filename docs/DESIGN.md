@@ -96,7 +96,8 @@ Paper/testnet за замовчуванням (`DRY_RUN=true`).
 6. ✅ MCP-сервер для трейдінгу та Streamlit дашборд.
 
 ### Наступні кроки (Roadmap):
-1. **Wave 0** — код TCA + R4–R7 закритий; тег `paper-v0.2.0`: [IMPROVEMENT_PLAN_2026.md](IMPROVEMENT_PLAN_2026.md).
+1. **Wave 0** — код TCA + R4–R7 закритий; **W0-OPS** (тег `paper-v0.2.0`): [IMPROVEMENT_PLAN_2026.md](IMPROVEMENT_PLAN_2026.md).
+   Phase 6 closure: [ROADMAP.md](ROADMAP.md#phase-6--closure--mft-maturity-2026-09--2026-11).
 2. **Цикл R1–R8** (R1–R7 закриті в коді): [CHANGE_PLAN_REVIEW.md](CHANGE_PLAN_REVIEW.md).
 3. **Paper-Gate**: 8 тижнів paper LINK/BTC 1h maker на тому тегу (`paper-audit` vs та сама модель філу).
 4. **VPS / research split**: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
