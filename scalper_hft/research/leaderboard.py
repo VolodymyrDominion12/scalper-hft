@@ -123,6 +123,10 @@ def _tier_for_row(
     if _is_pairs_single_symbol(strategy, symbol):
         return "rejected"
     mined = f"{symbol} {notes}".lower()
+    # Two-stage / pre-registered гейт не пройдено — не піднімати в candidate
+    # через високий in-sample або validation Sharpe без t_NW/CI.
+    if "fail gate" in mined:
+        return "rejected"
     post_hoc_subset = "top10" in mined or "smooth3" in mined or "smooth=3" in mined
     rides_on_core = "full45" in mined or "h2;" in mined
     # portfolio-construction evidence (value-added комбінації рукавів) — не

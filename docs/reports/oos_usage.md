@@ -150,3 +150,6 @@
 | pairs_arb | LINK/BTC | 2023-09-12 | 2026-09-12 | iter12:value-added/3y |
 | ts_momentum | PORTFOLIO_CORE15 | 2019-11-08 | 2026-09-12 | iter13:weekly/1w |
 
+| cross_momentum | PORTFOLIO_CORE15 | 2019-11-08 | 2026-09-12 | iter14:cs/1d |
+| ts_momentum | PORTFOLIO_SKIPMOM_12_1 | 2019-11-08 | 2026-09-12 | iter14:skipmom-12-1/1d |
+| pairs_arb | NEWPAIRS_CORE15 | 2023-09-12 | 2026-09-12 | iter14:coint-scan/1h |

@@ -75,6 +75,8 @@ VPS: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
 - [x] **iter13 weekly momentum**: ts_momentum 1w CORE_15 (H13-A FAIL — validation t_NW 1.11<2.0,
   CI містить 0; H13-B value-added 1w⊕1d PASS як construction evidence, corr +0.09, combined SR +1.51) —
   [iter13](reports/iter13_weekly_momentum.md) 2026-09-12
+- [x] **iter14 CS / 12-1 / друга пара**: H14-A/B/C усі FAIL (CS val t_NW 1.46, skip-month 0.82,
+  нові пари −5…−8% ret). Paper на наявному наборі — [iter14](reports/iter14_improvement_cycle.md) 2026-09-12
 
 ### 1. Paper-валідація та моніторинг (Phase 1 Gate)
 - [ ] Безперервний моніторинг paper pairs (`results/paper_pairs.sqlite`) протягом **≥8 тижнів** без розходження з бектестом — **після тегу з R1+R3**.

@@ -135,6 +135,29 @@ def test_post_hoc_top10_is_candidate_not_monitoring(tmp_path: Path) -> None:
     assert top10[0].tier == "candidate"
 
 
+def test_fail_gate_notes_are_rejected(tmp_path: Path) -> None:
+    """Two-stage FAIL не має ставати candidate через високий validation Sharpe."""
+    csv_dir = tmp_path / "iter14"
+    csv_dir.mkdir()
+    pd.DataFrame(
+        [
+            {
+                "variant": "cs_long_lb10",
+                "strategy": "cross_momentum",
+                "interval": "1d",
+                "port_sharpe": 0.81,
+                "t_newey_west": 1.46,
+                "mean_oos_wf": 0.81,
+                "notes": "H14-A two-stage val; lookback=10; short=False; FAIL gate; n=15 1d CS",
+            }
+        ]
+    ).to_csv(csv_dir / "variants.csv", index=False)
+    rows = build_leaderboard(tmp_path)
+    cs = [r for r in rows if "cs_long" in r.symbol.lower()]
+    assert cs
+    assert cs[0].tier == "rejected"
+
+
 def test_construction_evidence_is_candidate_not_monitoring(tmp_path: Path) -> None:
     """Value-added бленд рукавів (portfolio-construction evidence) — не paper-gate:
     слабкий рукав не промотується в monitoring через комбінацію (iter13 H13-B)."""

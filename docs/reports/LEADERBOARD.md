@@ -15,7 +15,7 @@
 - **🟢 Paper-ready**: 0 комірок
 - **🟡 Monitoring**: 3 комірок
 - **🔵 Candidate**: 17 комірок
-- **⛔ Rejected**: 61 комірок
+- **⛔ Rejected**: 68 комірок
 
 ## Топ комірок
 
@@ -42,15 +42,15 @@
 |  19 | 🔵 Candidate         | ts_momentum    | PORTFOLIO_weekly_ls_lb8      | 1w    | +0.000   | 80%    | +0.67     | +1.55  | CANDIDATE  | iter13 long-short контроль; lookback=8w; n=15/15 1w          |
 |  20 | 🔵 Candidate         | ts_momentum    | ADAUSDT                      | 1d    | +0.256   | 50%    | —         | —      | FAIL       | audit; DSR>0.95, OOS>0.3                                     |
 |  21 | 🔵 Candidate         | cross_momentum | ADAUSDT                      | 1d    | +0.256   | 50%    | —         | —      | FAIL       | audit; DSR>0.95, OOS>0.3                                     |
-|  22 | ⛔ Rejected          | ts_momentum    | PORTFOLIO_weekly_ls_lb13     | 1w    | +0.000   | 80%    | +0.61     | +1.32  | REJECTED   | iter13 long-short контроль; lookback=13w; n=15/15 1w         |
-|  23 | ⛔ Rejected          | ts_momentum    | PORTFOLIO_weekly_ls_lb26     | 1w    | +0.000   | 67%    | +0.38     | +0.78  | REJECTED   | iter13 long-short контроль; lookback=26w; n=15/15 1w         |
-|  24 | ⛔ Rejected          | ts_momentum    | PORTFOLIO_core15_ls_4h       | 4h    | +0.019   | 60%    | +0.32     | +0.88  | REJECTED   | H3_control; short=True; n=15/15 4h                           |
-|  25 | ⛔ Rejected          | ts_momentum    | PORTFOLIO_new30_ls_1d        | 1d    | -0.038   | 37%    | +0.18     | +0.46  | REJECTED   | H1_control; short=True; n=27/30 1d                           |
-|  26 | ⛔ Rejected          | supertrend     | ETHUSDT                      | 1h    | +0.076   | 52%    | —         | —      | FAIL       | audit; DSR>0.95, OOS>0.3                                     |
-|  27 | ⛔ Rejected          | supertrend     | BNBUSDT                      | 4h    | +0.075   | 43%    | —         | —      | FAIL       | audit; DSR>0.95, OOS>0.3                                     |
-|  28 | ⛔ Rejected          | cross_momentum | AVAXUSDT                     | 1d    | +0.059   | 50%    | —         | —      | FAIL       | audit; DSR>0.95, OOS>0.3                                     |
-|  29 | ⛔ Rejected          | ts_momentum    | DOTUSDT                      | 1d    | +0.065   | 75%    | —         | —      | FAIL       | audit; DSR>0.95, OOS>0.3                                     |
-|  30 | ⛔ Rejected          | cross_momentum | DOTUSDT                      | 1d    | +0.065   | 75%    | —         | —      | FAIL       | audit; DSR>0.95, OOS>0.3                                     |
+|  22 | ⛔ Rejected          | cross_momentum | PORTFOLIO_cs_long_lb10       | 1d    | +0.814   | —      | +0.81     | +1.46  | REJECTED   | H14-A two-stage val; lookback=10; short=False; FAIL gate; n= |
+|  23 | ⛔ Rejected          | ts_momentum    | PORTFOLIO_skipmom_12_0       | 1d    | +0.569   | —      | +0.57     | +1.05  | REJECTED   | H14-B control skip=0 lookback=252; short=False; FAIL gate    |
+|  24 | ⛔ Rejected          | ts_momentum    | PORTFOLIO_weekly_ls_lb13     | 1w    | +0.000   | 80%    | +0.61     | +1.32  | REJECTED   | iter13 long-short контроль; lookback=13w; n=15/15 1w         |
+|  25 | ⛔ Rejected          | ts_momentum    | PORTFOLIO_skipmom_12_1       | 1d    | +0.420   | —      | +0.42     | +0.82  | REJECTED   | H14-B 12-1 skip-month; lookback=252 skip=21; short=False; FA |
+|  26 | ⛔ Rejected          | ts_momentum    | PORTFOLIO_weekly_ls_lb26     | 1w    | +0.000   | 67%    | +0.38     | +0.78  | REJECTED   | iter13 long-short контроль; lookback=26w; n=15/15 1w         |
+|  27 | ⛔ Rejected          | ts_momentum    | PORTFOLIO_core15_ls_4h       | 4h    | +0.019   | 60%    | +0.32     | +0.88  | REJECTED   | H3_control; short=True; n=15/15 4h                           |
+|  28 | ⛔ Rejected          | ts_momentum    | PORTFOLIO_new30_ls_1d        | 1d    | -0.038   | 37%    | +0.18     | +0.46  | REJECTED   | H1_control; short=True; n=27/30 1d                           |
+|  29 | ⛔ Rejected          | supertrend     | ETHUSDT                      | 1h    | +0.076   | 52%    | —         | —      | FAIL       | audit; DSR>0.95, OOS>0.3                                     |
+|  30 | ⛔ Rejected          | supertrend     | BNBUSDT                      | 4h    | +0.075   | 43%    | —         | —      | FAIL       | audit; DSR>0.95, OOS>0.3                                     |
 
 ## Рекомендації для paper
 

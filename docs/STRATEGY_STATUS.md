@@ -3,6 +3,30 @@
 Оновлюється після кожного аудиту. Методологія: повний цикл інвестігейт →
 реалізація → тест → аудит (walk-forward + Deflated Sharpe + CSCV/PBO + stress/cohort + paper-replay).
 
+## 🔄 Iteration 14 — CS-momentum / 12-1 TSMOM / друга пара (2026-09-12)
+
+Повний звіт: [reports/iter14_improvement_cycle.md](reports/iter14_improvement_cycle.md).
+Pre-registration: [reports/hypothesis_iter14.md](reports/hypothesis_iter14.md).
+Три нові механізми (не реоптимізація `ts_momentum` CORE_15). Усі **FAIL** гейт.
+
+- **H14-A true CS-momentum 1d long-only CORE_15 — FAIL.** Selection 2019–22:
+  lookback 10/20/60 плато (SR 1.56). Validation 2023–26: SR **+0.81**, t_NW
+  **+1.46** < 2.0, CI **[−0.27, +1.84]** містить 0. Long-short контроль ≈ 0.
+  MaxDD **−59%** (концентрований alt-beta, не overlay). Не промотується.
+- **H14-B 12-1 skip-month TSMOM — FAIL.** Validation SR **+0.42**, t_NW **+0.82**,
+  CI містить 0, maxDD **−71%**. Контроль без skip слабко кращий (+0.57 / 1.05) —
+  skip не додає. Академічна специфікація на крипті не тримається.
+- **H14-C друга пара з IS coint-scan — FAIL.** Топ-3 нових (AVAX/NEAR, ADA/UNI,
+  AAVE/LINK): усі validation ret **−5…−8%**. AVAX/NEAR єдиний з WF pos 63%
+  (гейт вікон PASS), але cumulative PnL від'ємний → не candidate.
+- **H14-D value-added** vs ts_momentum 1d: corr CS **+0.60** / skip **+0.49**;
+  combined не б'є standalone ts.
+
+**Висновок:** нових комірок немає. Paper стартує на наявному наборі
+(`pairs_arb` LINK/BTC 1h validated + `ts_momentum` 1d/4h monitoring).
+Дешеві осі альфи вичерпано (iter9→14); наступний крок — **8 тижнів paper-gate**,
+не ще один sweep.
+
 ## 🔄 Iteration 13 — ts_momentum на тижневому ТФ (1w), two-stage (2026-09-12)
 
 Повний звіт: [reports/iter13_weekly_momentum.md](reports/iter13_weekly_momentum.md).
