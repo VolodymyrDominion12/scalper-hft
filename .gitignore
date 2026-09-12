@@ -11,6 +11,21 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
+# Rust / scalper_core та скомпільовані бінарники
+target/
+**/target/
+*.so
+*.pyd
+*.dylib
+*.dll
+**/*.rs.bk
+
+# Білд-артефакти пакування (maturin / wheels)
+build/
+dist/
+*.egg-info/
+wheels/
+
 # дані (великі parquet — локально)
 data/*.parquet
 data/.lock_*

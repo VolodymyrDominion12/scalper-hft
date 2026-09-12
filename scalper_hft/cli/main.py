@@ -63,6 +63,15 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--vision", action="store_true", help="Історичні aggTrades з data.binance.vision")
     p.add_argument("--vision-start", default=None, help="YYYY-MM-DD початок Vision-дампів")
     p.add_argument("--vision-freq", default="daily", choices=["daily", "monthly"])
+    p.add_argument(
+        "--vision-checkpoint-every",
+        type=int,
+        default=5,
+        dest="vision_checkpoint_every",
+        metavar="N",
+        help="Флаш кешу кожні N vision-архівів (0 = один запис у самому кінці). Для "
+        "--vision-freq monthly ставте 1 — тоді обрив коштує щонайбільше один архів",
+    )
     p.set_defaults(func=_cli_pkg.cmd_download)
 
     p = sub.add_parser("backtest", help="Запустити бектест")

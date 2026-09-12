@@ -65,7 +65,6 @@ def test_regime_supervisor_exp3_is_reproducible_by_default() -> None:
     за замовчуванням був None. Артефакт, що змінюється між прогонами, не є доказом.
     """
     import pandas as pd
-
     from scalper_hft.strategies import get_strategy
 
     n = 1200
@@ -92,7 +91,6 @@ def test_regime_supervisor_exp3_is_reproducible_by_default() -> None:
 def test_exp3_explicit_none_keeps_stochastic_opt_in() -> None:
     """Явний `seed=None` лишається opt-in у стохастичність (як було раніше)."""
     import pandas as pd
-
     from scalper_hft.strategies.bandit import Exp3Bandit, exp3_select_signals
 
     assert Exp3Bandit.DEFAULT_SEED is not None

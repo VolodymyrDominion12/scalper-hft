@@ -741,8 +741,14 @@ funding лише в `generate_signals`, тобто впливає на сигн�
   `is_report`/`paper_audit` і перевірка обробки `since` у ccxt
   (`ccxt/binance.py:4989-4990`: `if since is not None: request['startTime'] = since`).
 
-Скрипти аудиту: `/tmp/audit/sw_check.py`, `/tmp/audit/roll_check.py`,
-`/tmp/audit/pbo_dsr_check.py`, `/tmp/audit/csv_vs_parquet.py`, `/tmp/audit/repro_cell.py`.
+Чернеткові скрипти аудиту жили в `/tmp/audit/` (тимчасова тека — не збереглися). Логіка
+обох ключових перевірок натомість закріплена тестами, які лишаються в репо й падають на
+старій поведінці:
+
+- лаг вибору в regime-switch → `tests/test_iter7_switch_lag.py`
+  (`test_same_bar_selection_is_a_huge_fake_edge`, `test_shift_on_returns_does_not_remove_the_leak`);
+- цілісність артефактів і дедуп aggTrades → `tests/test_aggtrades_integrity.py`,
+  `tests/test_binance_vision.py`, `tests/test_wf_stream_coverage.py`.
 
 **Обмеження аудиту.** Семантика `startTime=0` на боці Binance узята з контракту REST API та
 сорсу ccxt; мережевих запитів не робилося (локальні наслідки — 2019-вікно, `hold:same_bar`

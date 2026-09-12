@@ -14,7 +14,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-
 from scalper_hft.strategies.base import MissingDataError, Strategy
 from scalper_hft.validation.walk_forward import (
     _stream_coverage,

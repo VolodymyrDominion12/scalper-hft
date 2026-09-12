@@ -685,6 +685,7 @@ def test_downloader_describe_source() -> None:
 
 def test_downloader_logs_source_on_klines_download(monkeypatch, caplog) -> None:
     import logging
+
     from scalper_hft.data import downloader as dl
 
     now = pd.Timestamp("2024-01-10 12:00:00")
@@ -704,6 +705,7 @@ def test_downloader_logs_source_on_klines_download(monkeypatch, caplog) -> None:
 
 def test_downloader_logs_source_on_agg_trades_download(monkeypatch, caplog) -> None:
     import logging
+
     from scalper_hft.data import downloader as dl
 
     now = pd.Timestamp("2024-01-10 12:00:00")
@@ -725,6 +727,7 @@ def test_downloader_logs_source_on_agg_trades_download(monkeypatch, caplog) -> N
 
 def test_downloader_logs_source_on_funding_download(monkeypatch, caplog) -> None:
     import logging
+
     from scalper_hft.data import downloader as dl
 
     now = pd.Timestamp("2024-01-10 12:00:00")

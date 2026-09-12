@@ -16,10 +16,7 @@ DOGEUSDT 95.2%); дефект був тихий, бо `validate_trades` пере
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
-import pytest
-
 from scalper_hft.data.downloader import Downloader
 from scalper_hft.data.storage import dedupe_trades
 

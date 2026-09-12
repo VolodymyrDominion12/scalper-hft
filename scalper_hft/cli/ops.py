@@ -86,7 +86,12 @@ def cmd_download(args: argparse.Namespace) -> None:
             start = (
                 date.fromisoformat(args.vision_start) if args.vision_start else date.today() - timedelta(days=args.days)
             )
-            tr = download_agg_trades_vision(sym, start=start, freq=args.vision_freq)
+            tr = download_agg_trades_vision(
+                sym,
+                start=start,
+                freq=args.vision_freq,
+                checkpoint_every=int(getattr(args, "vision_checkpoint_every", 5)),
+            )
             logger.info("vision aggTrades %s: %d трейдів", sym, len(tr) if tr is not None else 0)
 
 

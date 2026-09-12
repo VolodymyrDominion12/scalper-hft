@@ -20,7 +20,6 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import pytest
-
 from scalper_hft.validation import cell_audit as ca
 
 _DAYS = 1000

@@ -29,6 +29,27 @@ _BASE_URL = "https://data.binance.vision/data/futures/um"
 _HEADERS = {"User-Agent": "scalper-hft/0.1"}
 _COLUMNS = ["agg_trade_id", "price", "quantity", "first_trade_id", "last_trade_id", "transact_time", "is_buyer_maker"]
 _MIN_COMPLETE_DAY = pd.Timedelta(hours=20)
+# День вважається повним лише якщо в ньому є майже всі aggTrade id (крок 1).
+# Сама лише довжина проміжку не годиться: кеш BTCUSDT після дедупу за
+# мілісекундним індексом мав покриття 39.3%, але кожен день «виглядав повним»
+# за часом — тому vision пропускав би його і втрата лишалась би назавжди.
+_MIN_COMPLETE_COVERAGE = 0.99
+
+
+def _has_full_id_coverage(day_ids: pd.Series) -> bool:
+    """Чи покриває день aggTrade id майже без розривів.
+
+    Синтетичні (від'ємні) або відсутні id оцінити неможливо — повертаємо True,
+    щоб не перекачувати день щоразу (інакше цикл докачки ніколи не завершиться).
+    """
+    ids = pd.to_numeric(day_ids, errors="coerce")
+    real = ids[ids > 0]
+    if len(real) < 2:
+        return True
+    span = int(real.max() - real.min()) + 1
+    if span <= 0:
+        return True
+    return len(real) / span >= _MIN_COMPLETE_COVERAGE
 
 
 def _url_for(symbol: str, d: date, freq: str) -> str:
@@ -57,13 +78,20 @@ def _download_zip(url: str, retries: int = 3, timeout: int = 120) -> bytes | Non
 
 
 def _parse_zip(content: bytes) -> pd.DataFrame:
+    """Розібрати vision-архів. Підтримує обидва формати: з заголовком і без.
+
+    Старі дампи Binance публікуються БЕЗ заголовка (див. docstring модуля), і
+    резервна гілка читала... сам ZIP: `pd.read_csv(io.BytesIO(content))` отримував
+    стиснуті байти замість розпакованого CSV → `UnicodeDecodeError` і падіння
+    всього завантаження символу. Тепер перечитуємо той самий член архіву.
+    """
     with zipfile.ZipFile(io.BytesIO(content)) as zf:
         name = zf.namelist()[0]
         with zf.open(name) as f:
-            # архіви мають заголовок; перевіряємо і пропускаємо при потребі
             raw = pd.read_csv(f)
             if "transact_time" not in raw.columns:
-                raw = pd.read_csv(io.BytesIO(content), header=None, names=_COLUMNS)
+                f.seek(0)
+                raw = pd.read_csv(f, header=None, names=_COLUMNS)
                 raw["agg_trade_id"] = raw["agg_trade_id"].astype("int64")
     df = raw.copy()
     df["ts"] = pd.to_datetime(df["transact_time"], unit="ms")
@@ -83,7 +111,11 @@ def _advance_period(d: date, freq: str) -> date:
 
 
 def complete_trade_days(existing: pd.DataFrame | None, today: date) -> set[date]:
-    """UTC-дні з кешу, які вже виглядають повними (span ≥ 20 год, не today)."""
+    """UTC-дні з кешу, які вже виглядають повними (span ≥ 20 год і всі id, не today).
+
+    Обидві умови обов'язкові: довгий часовий проміжок сам по собі не означає
+    повноти — кеш з втраченими aggTrades може мати повний span і 39% угод.
+    """
     if existing is None or existing.empty:
         return set()
     idx = existing.index
@@ -91,13 +123,18 @@ def complete_trade_days(existing: pd.DataFrame | None, today: date) -> set[date]
         idx = pd.to_datetime(idx)
     if idx.tz is not None:
         idx = idx.tz_convert("UTC").tz_localize(None)
+    ids = existing["trade_id"] if "trade_id" in existing.columns else None
     out: set[date] = set()
     for day_ts, stamps in idx.to_series().groupby(idx.floor("D")):
         day = pd.Timestamp(day_ts).date()
         if day >= today:
             continue
-        if stamps.iloc[-1] - stamps.iloc[0] >= _MIN_COMPLETE_DAY:
-            out.add(day)
+        if stamps.iloc[-1] - stamps.iloc[0] < _MIN_COMPLETE_DAY:
+            continue
+        if ids is not None and not _has_full_id_coverage(ids.loc[stamps.index]):
+            logger.info("vision aggTrades: день %s неповний за aggTrade id — перекачаю", day)
+            continue
+        out.add(day)
     return out
 
 
@@ -145,12 +182,22 @@ def download_agg_trades_vision(
     start: date,
     end: date | None = None,
     freq: str = "daily",
+    *,
+    checkpoint_every: int = 5,
 ) -> pd.DataFrame:
     """Завантажити aggTrades з архівів Binance за [start, end] і зберегти в кеш.
 
     freq: 'daily' (файл на день) або 'monthly' (файл на місяць).
     Повні календарні дні в кеші не перекачуються.
+
+    checkpoint_every: після скількох архівів зливати накопичене в кеш.
+    Раніше функція збирала ВСІ архіви в пам'ять і викликала `save_trades` один
+    раз у самому кінці — тож обрив (Ctrl-C, OOM, битий архів) втрачав усе
+    завантажене для цього символу. Тепер кожні N архівів дані вже на диску, і
+    повторний запуск продовжує з місця обриву (повні дні пропускаються
+    `missing_vision_periods`). `0` = стара поведінка (один запис у кінці).
     """
+    from scalper_hft.data.storage import dedupe_trades
     from scalper_hft.data.store import get_store
 
     store = get_store()
@@ -175,7 +222,23 @@ def download_agg_trades_vision(
         f" ({preview})" if preview else "",
     )
 
-    frames: list[pd.DataFrame] = []
+    def _flush(batch: list[pd.DataFrame]) -> int:
+        """Злити batch з поточним кешем і зберегти. Повертає кількість рядків.
+
+        Кеш перечитується з диска, а не тримається в пам'яті: інакше checkpoint
+        не обмежував би споживання RAM.
+        """
+        current = store.load_trades(symbol)
+        parts = list(batch)
+        if current is not None and not current.empty:
+            parts.append(current[["trade_id", "price", "amount", "side"]])
+        merged = dedupe_trades(pd.concat(parts))
+        store.save_trades(symbol, merged)
+        return len(merged)
+
+    pending: list[pd.DataFrame] = []
+    n_done = 0
+    rows_saved = 0
     for current in periods:
         url = _url_for(symbol, current, freq)
         content = _download_zip(url)
@@ -183,26 +246,36 @@ def download_agg_trades_vision(
             logger.info("Файл не знайдено (404): %s", url)
             continue
         df = _parse_zip(content)
-        frames.append(df)
+        pending.append(df)
+        n_done += 1
         logger.info("%s: %d трейдів", url.split("/")[-1], len(df))
+        if checkpoint_every > 0 and n_done % checkpoint_every == 0:
+            rows_saved = _flush(pending)
+            pending = []
+            logger.info(
+                "vision aggTrades %s: checkpoint після %d архівів — у кеші %d трейдів",
+                symbol,
+                n_done,
+                rows_saved,
+            )
         time.sleep(0.3)  # ввічливість до архіву
 
-    if not frames:
+    # Дедуп за trade_id, а не за мілісекундним індексом (див. storage.dedupe_trades):
+    # у дампах Binance Vision кілька aggTrades регулярно ділять одну мілісекунду,
+    # і дедуп за індексом знищував би більшість потоку на активних символах.
+    if pending:
+        rows_saved = _flush(pending)
+
+    if n_done == 0:
         if existing is not None and not existing.empty:
             logger.info("vision aggTrades %s: нічого докачувати", symbol)
             return existing
         raise FileNotFoundError(f"Жодного файлу не завантажено для {symbol} з {start} по {end}")
 
-    # Дедуп за trade_id, а не за мілісекундним індексом (див. storage.dedupe_trades):
-    # у дампах Binance Vision кілька aggTrades регулярно ділять одну мілісекунду,
-    # і дедуп за індексом знищував би більшість потоку на активних символах.
-    from scalper_hft.data.storage import dedupe_trades
-
-    out = dedupe_trades(pd.concat(frames))
-    if existing is not None and not existing.empty:
-        out = dedupe_trades(pd.concat([out, existing[["trade_id", "price", "amount", "side"]]]))
-
-    store.save_trades(symbol, out)
+    out = store.load_trades(symbol)
+    if out is None:
+        raise FileNotFoundError(f"vision aggTrades {symbol}: кеш порожній після завантаження")
+    logger.info("vision aggTrades %s: у кеші %d трейдів", symbol, len(out))
     return out
 
 
