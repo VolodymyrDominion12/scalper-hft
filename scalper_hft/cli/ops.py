@@ -309,6 +309,24 @@ def cmd_mcp(args: argparse.Namespace) -> None:
     run_stdio()
 
 
+def cmd_leaderboard(args: argparse.Namespace) -> None:
+    """Згенерувати лідерборд комірок у docs/reports/LEADERBOARD.md."""
+    from pathlib import Path
+
+    from scalper_hft.research.leaderboard import leaderboard_dataframe, render_leaderboard_markdown
+
+    results_dir = Path(args.results_dir or "results")
+    top_n = int(args.top or 30)
+    md = render_leaderboard_markdown(results_dir, top_n=top_n)
+    out = Path(args.out or "docs/reports/LEADERBOARD.md")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(md, encoding="utf-8")
+    csv_out = results_dir / "leaderboard.csv"
+    leaderboard_dataframe(results_dir).to_csv(csv_out, index=False)
+    print(f"✅ Лідерборд: {out}")
+    print(f"   CSV: {csv_out}")
+
+
 def cmd_dashboard_hash(args: argparse.Namespace) -> None:
     """Генерація хешу паролю для DASHBOARD_PASSWORD_HASH."""
     import getpass

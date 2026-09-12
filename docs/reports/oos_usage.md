@@ -136,3 +136,10 @@
 | cross_momentum | SOLUSDT | 2023-09-12 | 2026-09-11 | audit_cell/cscv |
 | cross_momentum | XRPUSDT | 2023-09-12 | 2026-09-11 | audit_cell/cscv |
 | ts_momentum | AVAXUSDT | 2023-09-12 | 2026-09-11 | audit_cell/cscv |
+| ts_momentum | DOGEUSDT | 2023-09-12 | 2026-09-11 | audit_cell |
+| ts_momentum | ADAUSDT | 2023-09-12 | 2026-09-11 | audit_cell |
+| ts_momentum | NEARUSDT | 2023-09-12 | 2026-09-11 | audit_cell |
+| ts_momentum | DOTUSDT | 2023-09-12 | 2026-09-11 | audit_cell |
+| ts_momentum | ATOMUSDT | 2023-09-12 | 2026-09-11 | audit_cell |
+| ts_momentum | BTCUSDT | 2023-09-12 | 2026-09-11 | audit_cell |
+| ts_momentum | BNBUSDT | 2023-09-12 | 2026-09-11 | audit_cell |

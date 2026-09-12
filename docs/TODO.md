@@ -67,7 +67,7 @@ VPS: [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
 - [x] **L0** Shadow-TCA chase у paper (`strict_both` не змінюється; `paper-audit` / `is-report`)
 
 ### 0b. Після iter9 (research backlog)
-- [ ] Pre-registration гіпотези `ts_momentum` 1d (`docs/reports/hypothesis_ts_momentum.md`) до наступного прогону
+- [x] Pre-registration гіпотези `ts_momentum` 1d (`docs/reports/hypothesis_ts_momentum.md`) — iter10 2026-09-12
 - [ ] Розширення універсуму momentum-портфеля до 30–50 перпів (єдиний шлях підняти t-стат)
 - [ ] Нативна 4h-історія (не лише 1d) для 4h-комірок поза 3-річним 1m-кешем
 

@@ -46,6 +46,7 @@ nav = st.navigation(
     {
         "Дослідження": [
             st.Page("app_pages/research_hub.py", title="Каталог", icon=":material/library_books:"),
+            st.Page("app_pages/leaderboard.py", title="Лідерборд", icon=":material/leaderboard:"),
             st.Page("app_pages/finalists.py", title="Фіналісти", icon=":material/verified:"),
             st.Page("app_pages/cell.py", title="Комірка", icon=":material/candlestick_chart:", url_path="cell"),
         ],
@@ -70,4 +71,3 @@ if _pending_switch:
     st.switch_page(_pending_switch)
 
 nav.run()
-

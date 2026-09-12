@@ -396,6 +396,20 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--notify", action="store_true", help="Telegram-сповіщення після прогіну")
     p.set_defaults(func=_cli_pkg.cmd_paper_run)
 
+    p = sub.add_parser(
+        "paper-run-ts-momentum",
+        help="Paper портфель ts_momentum 1d long-only (15 перпів, pre-registration iter10)",
+    )
+    add_common(p)
+    p.add_argument("--symbols", default=None, help="CSV символів (за замовч. 15 з hypothesis)")
+    p.add_argument("--iterations", type=int, default=10)
+    p.add_argument("--sleep", type=int, default=3600, help="Пауза між кроками, сек (1d → 3600)")
+    p.add_argument("--daemon", action="store_true", help="Нескінченний цикл до SIGTERM")
+    p.add_argument("--control", default="results/control.json", help="control.json pause/flatten")
+    p.add_argument("--db", default="results/paper_ts_momentum.sqlite", help="SQLite журнал")
+    p.add_argument("--notify", action="store_true")
+    p.set_defaults(func=_cli_pkg.cmd_paper_run_ts_momentum, strategy="ts_momentum", interval="1d")
+
     p = sub.add_parser("paper-replay", help="Відтворення історії через risk-трейдера")
     add_common(p)
     p.add_argument("--position-pct", type=float, default=None, help="Частка капіталу на позицію")
@@ -593,6 +607,12 @@ def main(argv: list[str] | None = None) -> None:
 
     p = sub.add_parser("dashboard-hash", help="Згенерувати хеш паролю для DASHBOARD_PASSWORD_HASH")
     p.set_defaults(func=_cli_pkg.cmd_dashboard_hash)
+
+    p = sub.add_parser("leaderboard", help="Лідерборд комірок (audit + sweep + портфель)")
+    p.add_argument("--results-dir", default="results", help="Каталог results/")
+    p.add_argument("--out", default="docs/reports/LEADERBOARD.md", help="Шлях markdown-звіту")
+    p.add_argument("--top", type=int, default=30, help="Скільки рядків у таблиці")
+    p.set_defaults(func=_cli_pkg.cmd_leaderboard)
 
     job_p = sub.add_parser("job", help="Черга дослідницьких задач (SQLite + worker-процеси)")
     job_sub = job_p.add_subparsers(dest="job_cmd", required=True)

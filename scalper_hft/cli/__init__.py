@@ -31,6 +31,7 @@ from scalper_hft.cli.ops import (
     cmd_download_oi,
     cmd_is_report,
     cmd_job,
+    cmd_leaderboard,
     cmd_macro_recorder,
     cmd_mcp,
     cmd_migrate_to_parquet,
@@ -48,6 +49,7 @@ from scalper_hft.cli.paper import (
     cmd_paper_replay_pairs,
     cmd_paper_run,
     cmd_paper_run_pairs,
+    cmd_paper_run_ts_momentum,
 )
 from scalper_hft.cli.research import (
     cmd_backtest,
@@ -109,6 +111,7 @@ __all__ = [
     "cmd_hedge_ratio",
     "cmd_is_report",
     "cmd_job",
+    "cmd_leaderboard",
     "cmd_lift",
     "cmd_macro_recorder",
     "cmd_mcp",
@@ -125,6 +128,7 @@ __all__ = [
     "cmd_paper_replay_pairs",
     "cmd_paper_run",
     "cmd_paper_run_pairs",
+    "cmd_paper_run_ts_momentum",
     "cmd_plot",
     "cmd_quintile",
     "cmd_record_bookticker",

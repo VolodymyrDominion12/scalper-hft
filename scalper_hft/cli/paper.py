@@ -198,6 +198,59 @@ def cmd_paper_replay_pairs(args: argparse.Namespace) -> None:
         send_telegram(result.summary())
 
 
+def cmd_paper_run_ts_momentum(args: argparse.Namespace) -> None:
+    """Paper-моніторинг портфеля ts_momentum 1d long-only (pre-registration iter10)."""
+
+    import scalper_hft.config as _cfg
+    from scalper_hft.live.release import startup_banner
+    from scalper_hft.live.store import PaperStore
+    from scalper_hft.live.ts_momentum_portfolio_runner import (
+        DEFAULT_CONTROL_PATH,
+        DEFAULT_STORE_PATH,
+        TS_MOMENTUM_PAPER_PARAMS,
+        TS_MOMENTUM_PAPER_SYMBOLS,
+        TsMomentumPortfolioPaperRunner,
+    )
+
+    if not _cfg.get_settings().dry_run:
+        raise SystemExit(
+            "paper-run-ts-momentum — paper-only: при DRY_RUN=false відмова. "
+            "Див. docs/reports/hypothesis_ts_momentum.md."
+        )
+
+    store_path = Path(getattr(args, "db", None) or DEFAULT_STORE_PATH)
+    store = PaperStore(store_path)
+    control_path = Path(args.control) if getattr(args, "control", None) else None
+    params = dict(TS_MOMENTUM_PAPER_PARAMS)
+    if args.param_dict:
+        params.update(args.param_dict)
+
+    runner = TsMomentumPortfolioPaperRunner(
+        symbols=tuple(args.symbols.split(",")) if getattr(args, "symbols", None) else TS_MOMENTUM_PAPER_SYMBOLS,
+        interval=args.interval or "1d",
+        strategy_params=params,
+        store=store,
+        control_path=control_path or DEFAULT_CONTROL_PATH,
+    )
+    daemon = bool(getattr(args, "daemon", False))
+    banner = startup_banner(
+        mode="paper-ts-momentum",
+        extra=f"long-only lb={params.get('lookback', 20)} n={len(runner.symbols)}",
+    )
+    print(banner)
+    if args.notify:
+        from scalper_hft.live.telegram import send_telegram
+
+        send_telegram(banner)
+    result = runner.run(
+        iterations=args.iterations,
+        sleep_sec=args.sleep,
+        daemon=daemon,
+    )
+    print("\n" + result.summary())
+    store.close()
+
+
 def cmd_paper_audit(args: argparse.Namespace) -> None:
     """Phase 1: tracking error paper SQLite vs бектест + loss forensics."""
 

@@ -205,7 +205,26 @@ uv run python -m scalper_hft.cli dashboard
 * **Причина:** Токен застарів або `API_SECRET_KEY` на VPS відрізняється від локального.
 * **Рішення:** Згенеруйте новий токен на VPS командою `uv run python -m scalper_hft.cli api token --hours 720` та вставте його в поле налаштувань дашборду.
 
-### 3. Бот перестав оновлювати дані в базі
+### 3. ts_momentum портфель (iter10, long-only 1d)
+
+Окремий paper-бот для directional momentum-портфеля (15 перпів, не pairs):
+
+```bash
+# Локально або на VPS (DRY_RUN=true обов'язково)
+./scripts/paper_ts_momentum.sh --daemon
+
+# Або напряму:
+uv run python -m scalper_hft.cli paper-run-ts-momentum --daemon --sleep 3600
+```
+
+- **SQLite:** `results/paper_ts_momentum.sqlite` (pair=`TSMOM_PORTFOLIO`)
+- **Pre-registration:** `docs/reports/hypothesis_ts_momentum.md`
+- **Лідерборд:** `docs/reports/LEADERBOARD.md` або дашборд → «Лідерборд»
+- **Аудит:** `uv run python -m scalper_hft.cli paper-audit --db results/paper_ts_momentum.sqlite`
+
+Запускається **разом із** `pairs_arb` LINK/BTC, не замість нього.
+
+### 4. Бот перестав оновлювати дані в базі
 * **Причина:** Процес впав або завис.
 * **Рішення:** Перевірте логи юніта на VPS:
   ```bash
