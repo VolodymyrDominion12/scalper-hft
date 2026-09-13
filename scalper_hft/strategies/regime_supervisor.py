@@ -8,9 +8,13 @@
     4. Сигнал:         зважена сума сигналів суб-стратегій, кліпнута до [-1, 1].
 
 Три режими blend_mode:
-    "regime_soft"       — лише static prior із taxonomy (найпростіший, прозорий).
-    "contextual_hedge"  — ContextualHedgeBlend (рекомендований; онлайн, per-regime).
-    "exp3"              — Exp3Bandit (вибирає ONE best strategy per bar, не зважує).
+    "risk_overlay"      — v2.2, РЕКОМЕНДОВАНИЙ: risk-on = рівновага рукавів,
+                          risk-off (vol=high) = risk_off_scale × incumbent.
+                          Валідований на holdout (Tier-2): 4h, портфель 5 рукавів.
+    "regime_soft"       — static prior із taxonomy (селектор; НЕ валідований).
+    "contextual_hedge"  — ContextualHedgeBlend (онлайн, per-regime; дослідницький).
+    "exp3"              — Exp3Bandit (вибирає ONE best strategy per bar; дослідницький).
+    "best_prior"        — жорсткий вибір однієї стратегії за режимом (дослідницький).
 
 Без lookahead:
     - HMM: filtered_proba (forward-only), навчання лише на перших hmm_fit_bars.
@@ -45,6 +49,18 @@ DEFAULT_CHILDREN: str = "supertrend,stoch_rsi,funding_carry"
 # стає точним empirical switch (карта з політикою best_prior дає вагу 1 одній
 # стратегії, 0 решті). contextual_hedge/exp3 лишаються дослідницькими.
 DEFAULT_BLEND_MODE: str = "regime_soft"
+
+# ── risk_overlay (v2.2, цикл RS iter15–16) ───────────────────────────────────
+# Валідований як risk-шар, а не як селектор: risk-on = рівновага рукавів,
+# risk-off (vol == "high") = RISK_OFF_SCALE × incumbent. Пул і ТФ заморожені
+# результатами RS-2 (Tier-2 на holdout зі 11 свіжих символів): 4h,
+# ts_momentum(long-only),ts_momentum(ls),cross_momentum,funding_carry,supertrend.
+RISK_OVERLAY_CHILDREN: str = (
+    "ts_momentum:allow_short=False,ts_momentum:allow_short=True,"
+    "cross_momentum:lookback=10,funding_carry,supertrend"
+)
+DEFAULT_RISK_OFF_SCALE: float = 0.25
+RISK_OFF_VOL_LABEL: str = "high"
 
 
 def _map_audit(children: list[str], rmap: object | None) -> list[str]:
@@ -112,13 +128,18 @@ class RegimeSupervisor(Strategy):
     def __init__(self, **params: Any) -> None:
         super().__init__(**params)
 
+        # blend_mode визначає і дефолтний пул дітей: risk_overlay має ЗАМОРОЖЕНИЙ
+        # набір рукавів (валідований на holdout), інакше легко випадково взяти
+        # пул, на якому механізм не перевірявся.
+        self.blend_mode: str = str(self.get("blend_mode", DEFAULT_BLEND_MODE))
+        default_children = RISK_OVERLAY_CHILDREN if self.blend_mode == "risk_overlay" else DEFAULT_CHILDREN
+
         # Список суб-стратегій
-        strat_str = str(self.get("strategies", DEFAULT_CHILDREN))
+        strat_str = str(self.get("strategies", default_children))
         self._strat_names: list[str] = []
         self._strats: list[Strategy] = []
         self._load_strategies(strat_str)
 
-        self.blend_mode: str = str(self.get("blend_mode", DEFAULT_BLEND_MODE))
         self.needs_trades = any(s.needs_trades for s in self._strats)
         self.needs_funding = any(s.needs_funding for s in self._strats)
         self.requires = frozenset().union(*(s.requires for s in self._strats))
@@ -254,7 +275,9 @@ class RegimeSupervisor(Strategy):
             sig_df = self._apply_lazy_gating(sig_df, regime_df)
 
         # 3. Зважування
-        if self.blend_mode == "regime_soft":
+        if self.blend_mode == "risk_overlay":
+            result = self._blend_risk_overlay(sig_df, regime_df)
+        elif self.blend_mode == "regime_soft":
             result = self._blend_regime_soft(sig_df, regime_df)
         elif self.blend_mode == "best_prior":
             result = self._blend_best_prior(sig_df, regime_df)
@@ -276,6 +299,35 @@ class RegimeSupervisor(Strategy):
     # ────────────────────────────────────────────────────────────────────────
     # Blend implementations
     # ────────────────────────────────────────────────────────────────────────
+
+    def _blend_risk_overlay(self, sig_df: pd.DataFrame, regime_df: pd.DataFrame) -> pd.Series:
+        """Risk-overlay (v2.2): режимний шар масштабує ЕКСПОЗИЦІЮ, не вибирає стратегію.
+
+        Логіка (заморожена результатами циклу RS, iter15–iter16):
+            risk-on  (vol != "high") — рівновага всіх суб-стратегій: signal = mean(sig_i);
+            risk-off (vol == "high") — risk_off_scale × incumbent (перша суб-стратегія).
+
+        Гістерезису немає: `riskoff_gate` з dwell-підтвердженням дав гірший Sharpe
+        на обох універсумах (H16-B фальсифіковано), тож risk-off реагує негайно.
+
+        Каузальність: `regime_df` обчислений детектором на закритих барах (≤ t),
+        рушій зсуває сигнал на 1 бар — виконання з t+1. Жодного lookahead.
+
+        Чому це варіант `regime_soft`-родини, а не селектор: на holdout з 11 свіжих
+        символів (4h) ця схема дала port Sharpe +1.156 проти +0.610 в incumbent'а
+        (t_Newey–West +2.01, CI [+0.05, +2.15]), тоді як селекторні політики
+        (argmax/gap_dwell по станах) — від −0.14 до +0.08.
+        """
+        scale = float(self.get("risk_off_scale", DEFAULT_RISK_OFF_SCALE))
+        if scale < 0.0:
+            raise ValueError(f"risk_off_scale must be >= 0, got {scale}")
+        vol = regime_df.reindex(sig_df.index)["vol"].fillna("normal").astype(str)
+        risk_off = (vol == RISK_OFF_VOL_LABEL).to_numpy()
+
+        equal_weight = sig_df.mean(axis=1)          # risk-on: рівновага рукавів
+        incumbent = sig_df.iloc[:, 0]               # перша суб-стратегія = incumbent
+        out = equal_weight.where(~pd.Series(risk_off, index=sig_df.index), scale * incumbent)
+        return out.fillna(0.0).clip(-1.0, 1.0)
 
     def _blend_regime_soft(self, sig_df: pd.DataFrame, regime_df: pd.DataFrame) -> pd.Series:
         """Static soft-weights: taxonomy.preferred_regimes → вага в [unfavorable, 1].
@@ -482,6 +534,26 @@ class RegimeSupervisor(Strategy):
     # Helpers
     # ────────────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _parse_param_value(v: str) -> Any:
+        """Розібрати значення параметра суб-стратегії з рядка.
+
+        Пастка (виправлено в v2.2): раніше булеве значення лишалось РЯДКОМ, і
+        `bool("False") is True` — тобто `ts_momentum:allow_short=False` фактично
+        ВМИКАЛО шорти. Саме це розходження виявив reproducibility-гейт RS-3
+        (стратегія давала SR 0.77 замість 1.16 на тих самих даних). Тепер
+        true/false/yes/no/1/0 → bool, далі int, далі float, інакше рядок.
+        """
+        low = v.strip().lower()
+        if low in ("true", "yes", "on"):
+            return True
+        if low in ("false", "no", "off"):
+            return False
+        try:
+            return float(v) if "." in v or "e" in low else int(v)
+        except ValueError:
+            return v
+
     def _load_strategies(self, strat_str: str) -> None:
         """Парсинг і завантаження суб-стратегій."""
         from scalper_hft.strategies import get_strategy
@@ -496,10 +568,7 @@ class RegimeSupervisor(Strategy):
             for part in parts[1:]:
                 if "=" in part:
                     k, v = part.split("=", 1)
-                    try:
-                        p[k] = float(v) if "." in v else int(v)
-                    except ValueError:
-                        p[k] = v
+                    p[k] = self._parse_param_value(v)
             try:
                 strategy = get_strategy(name, **p)
                 self._strats.append(strategy)

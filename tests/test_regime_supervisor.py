@@ -272,7 +272,7 @@ def test_regime_supervisor_registry() -> None:
     assert sup.name == "regime_supervisor"
 
 
-@pytest.mark.parametrize("blend_mode", ["regime_soft", "contextual_hedge", "exp3", "best_prior"])
+@pytest.mark.parametrize("blend_mode", ["regime_soft", "contextual_hedge", "exp3", "best_prior", "risk_overlay"])
 def test_regime_supervisor_signals_shape(blend_mode: str, synthetic_df: pd.DataFrame) -> None:
     """generate_signals() повертає Series правильної форми для всіх blend_mode."""
     from scalper_hft.strategies import get_strategy
@@ -379,3 +379,135 @@ def test_regime_transition_matrix(synthetic_close: pd.Series) -> None:
     # Рядки нормовані (сума ≈ 1)
     row_sums = trans.sum(axis=1)
     np.testing.assert_allclose(row_sums.values, np.ones(len(row_sums)), atol=1e-9)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# risk_overlay (v2.2, цикл RS iter15–iter16): режимний шар = масштаб експозиції
+# ──────────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture()
+def overlay_df() -> pd.DataFrame:
+    """4h-ряд із чергуванням спокійних і вибухових ділянок (є режим vol=high)."""
+    np.random.seed(7)
+    n = 900
+    idx = pd.date_range("2024-01-01", periods=n, freq="4h")
+    vol = np.where((np.arange(n) // 60) % 3 == 0, 1.6, 0.25)  # кожна 3-тя ділянка — high-vol
+    close = pd.Series(100.0 + np.cumsum(np.random.randn(n) * vol), index=idx)
+    return pd.DataFrame(
+        {
+            "open": close * 0.999,
+            "high": close * 1.005,
+            "low": close * 0.995,
+            "close": close,
+            "volume": np.random.uniform(100, 1000, n),
+        }
+    )
+
+
+def test_risk_overlay_uses_frozen_sleeve_pool() -> None:
+    """risk_overlay без явних strategies бере ЗАМОРОЖЕНИЙ пул 5 рукавів (RS-2)."""
+    from scalper_hft.strategies.regime_supervisor import RISK_OVERLAY_CHILDREN, RegimeSupervisor
+
+    sup = RegimeSupervisor(blend_mode="risk_overlay", hmm_fit_bars=200)
+    assert sup.sub_strategies == [
+        "ts_momentum",
+        "ts_momentum",
+        "cross_momentum",
+        "funding_carry",
+        "supertrend",
+    ]
+    # а для селекторних режимів дефолтний пул НЕ змінюється
+    sup_soft = RegimeSupervisor(blend_mode="regime_soft", hmm_fit_bars=200)
+    assert "supertrend" in sup_soft.sub_strategies
+    assert RISK_OVERLAY_CHILDREN  # константа існує і не порожня
+
+
+def test_risk_overlay_scales_exposure_in_high_vol(overlay_df: pd.DataFrame) -> None:
+    """risk-on → рівновага рукавів; risk-off (vol=high) → scale × incumbent."""
+    from scalper_hft.strategies.regime_supervisor import DEFAULT_RISK_OFF_SCALE, RegimeSupervisor
+
+    sup = RegimeSupervisor(blend_mode="risk_overlay", hmm_fit_bars=200, min_dwell_bars=0)
+    sigs = sup.generate_signals(overlay_df)
+    regime = sup._detector.detect(overlay_df["close"])
+    sleeves = sup._collect_signals(overlay_df, None, None)
+    incumbent = sleeves.iloc[:, 0]
+    equal = sleeves.mean(axis=1)
+
+    risk_off = (regime["vol"].reindex(sigs.index).fillna("normal") == "high")
+    assert risk_off.any(), "синтетика має містити режим vol=high"
+    assert (~risk_off).any()
+
+    np.testing.assert_allclose(
+        sigs[risk_off].to_numpy(),
+        (DEFAULT_RISK_OFF_SCALE * incumbent[risk_off]).to_numpy(),
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(sigs[~risk_off].to_numpy(), equal[~risk_off].to_numpy(), atol=1e-12)
+    assert sigs.isna().sum() == 0
+    assert (sigs.abs() <= 1.0).all()
+
+
+def test_risk_overlay_custom_scale(overlay_df: pd.DataFrame) -> None:
+    """risk_off_scale масштабує рівно лінійно (0.5 → удвічі більше за 0.25)."""
+    from scalper_hft.strategies.regime_supervisor import RegimeSupervisor
+
+    sup_low = RegimeSupervisor(blend_mode="risk_overlay", hmm_fit_bars=200, risk_off_scale=0.25)
+    sup_high = RegimeSupervisor(blend_mode="risk_overlay", hmm_fit_bars=200, risk_off_scale=0.5)
+    regime = sup_low._detector.detect(overlay_df["close"])
+    risk_off = (regime["vol"].reindex(overlay_df.index).fillna("normal") == "high")
+    low = sup_low.generate_signals(overlay_df)[risk_off]
+    high = sup_high.generate_signals(overlay_df)[risk_off]
+    np.testing.assert_allclose(high.to_numpy(), 2.0 * low.to_numpy(), atol=1e-12)
+
+
+def test_risk_overlay_no_lookahead(overlay_df: pd.DataFrame) -> None:
+    """Мутація МАЙБУТНІХ барів не змінює сигнали минулого (лаг на рішенні)."""
+    from scalper_hft.strategies.regime_supervisor import RegimeSupervisor
+
+    sup = RegimeSupervisor(blend_mode="risk_overlay", hmm_fit_bars=200)
+    cutoff = 450
+    base = sup.generate_signals(overlay_df)
+
+    mutated = overlay_df.copy()
+    mutated.loc[overlay_df.index[cutoff]:, ["close", "open", "high", "low"]] *= 1.35
+    after = sup.generate_signals(mutated)
+
+    np.testing.assert_allclose(
+        base.iloc[:cutoff].to_numpy(),
+        after.iloc[:cutoff].to_numpy(),
+        atol=1e-12,
+        err_msg="risk_overlay має бути каузальним: майбутні бари не впливають на минулі сигнали",
+    )
+
+
+def test_strategy_param_parser_handles_boolean_false() -> None:
+    """Регресія v2.2: `name:allow_short=False` має ВИМКАТИ шорти, а не вмикати.
+
+    До фіксу значення лишалось рядком, а `bool("False") is True` — тому
+    `ts_momentum:allow_short=False` фактично торгував у шорт (саме це розходження
+    виявив reproducibility-гейт RS-3: SR 0.77 замість 1.16 на тих самих даних).
+    """
+    from scalper_hft.strategies.regime_supervisor import RegimeSupervisor
+
+    parse = RegimeSupervisor._parse_param_value
+    assert parse("False") is False
+    assert parse("false") is False
+    assert parse("no") is False
+    assert parse("True") is True
+    assert parse("20") == 20
+    assert parse("1.5") == 1.5
+    assert parse("abc") == "abc"
+
+    # Поведінково: перший рукав замороженого пулу не має шортів, другий має.
+    np.random.seed(3)
+    n = 700
+    idx = pd.date_range("2024-01-01", periods=n, freq="4h")
+    close = pd.Series(100.0 + np.cumsum(np.random.randn(n) * 0.6), index=idx)
+    df = pd.DataFrame(
+        {"open": close, "high": close * 1.01, "low": close * 0.99, "close": close, "volume": 1000.0}
+    )
+    sup = RegimeSupervisor(blend_mode="risk_overlay", hmm_fit_bars=200)
+    sleeves = sup._collect_signals(df, None, None)
+    assert (sleeves.iloc[:, 0] >= 0).all(), "incumbent-рукав (allow_short=False) не має шортів"
+    assert (sleeves.iloc[:, 1] < 0).any(), "контрольний рукав (allow_short=True) має мати шорти"

@@ -49,7 +49,9 @@ SLEEVES: list[tuple[str, str, dict]] = [
 SLEEVE_NAMES = [s[0] for s in SLEEVES]
 INCUMBENT = 0
 
-DETECTORS = ["det_rule", "det_vol", "det_mkt"]
+DETECTORS = ["det_rule", "det_vol", "det_mkt"]          # зареєстровані в RS-1
+EXTRA_DETECTORS = ["det_btcvol"]                          # додано в RS-2 (H16-B)
+ALL_DETECTORS = DETECTORS + EXTRA_DETECTORS
 POLICIES = [
     "incumbent", "equal", "best_single_train", "argmax", "gap_dwell", "soft_shrink",
     "riskoff_anchor", "oracle",
@@ -59,6 +61,7 @@ MIN_COND_BARS = 30   # мінімум барів стану в train, щоб о�
 MIN_TRADES_CELL = 30
 N_TRIALS_REGISTERED = 63  # 7 політик × 3 детектори × 3 ТФ (pre-registered)
 NEEDS_FUNDING = True
+FORCE_SLEEVES = False
 GAP_DEFAULT = 0.5
 DWELL_DEFAULT = 5
 TAU_DEFAULT = 1.0
@@ -137,24 +140,31 @@ def load_klines(symbol: str, interval: str, days: int) -> pd.DataFrame:
     """
     from scalper_hft.data.access import ensure_klines, klines_from_store
 
-    need = {"1d": days, "4h": days * 6, "1w": days // 7}.get(interval, days * 24)
+    # 500 барів відсіює обрізані/биті нативні файли (напр. SOLUSDT 1h на 37 барів),
+    # але НЕ вимагає повного вікна: у свіжих символів 4h покриває лише ~1200 днів з лістингу.
+    min_bars = 500
     if interval in ("1d", "4h", "1w"):
         try:
             df = klines_from_store(symbol, interval, days, base_interval=interval)
-            if df is not None and len(df) >= 0.5 * need:
+            if df is not None and len(df) >= min_bars:
                 return df
         except Exception:  # noqa: BLE001
             pass
     try:
         df = ensure_klines(symbol, interval, days, derive=False, readonly=True)
-        if df is not None and len(df) >= 0.5 * need:
+        if df is not None and len(df) >= min_bars:
             return df
     except Exception:  # noqa: BLE001
         pass
     return ensure_klines(symbol, interval, days, derive=False)
 
 
-def symbol_regimes(df: pd.DataFrame, detector: str, mkt_states: pd.Series | None) -> pd.Series:
+def symbol_regimes(
+    df: pd.DataFrame,
+    detector: str,
+    mkt_states: pd.Series | None,
+    btc_vol_states: pd.Series | None = None,
+) -> pd.Series:
     """Каузальні мітки стану (обчислені на закритих барах)."""
     from scalper_hft.features.regimes import market_structure, volatility_regime
 
@@ -166,6 +176,10 @@ def symbol_regimes(df: pd.DataFrame, detector: str, mkt_states: pd.Series | None
         if mkt_states is None:
             return pd.Series("risk_on", index=df.index, dtype=object)
         return mkt_states.reindex(df.index).ffill().fillna("risk_on").astype(str)
+    if detector == "det_btcvol":
+        if btc_vol_states is None:
+            return pd.Series("btc_mid", index=df.index, dtype=object)
+        return btc_vol_states.reindex(df.index).ffill().fillna("btc_mid").astype(str)
     raise ValueError(detector)
 
 
@@ -182,6 +196,34 @@ def market_states(interval: str, days: int) -> pd.Series:
     return out
 
 
+def btc_vol_states(interval: str, days: int) -> pd.Series:
+    """Терцилі перцентиля реалізованої волатильності BTC (низька/середня/висока) — H16-B."""
+    btc = load_klines("BTCUSDT", "1d", max(days, 2500))
+    close = btc["close"].astype(float)
+    rv = np.log(close / close.shift(1)).rolling(60, min_periods=30).std()
+    pct = rv.rolling(500, min_periods=100).apply(lambda x: (x[-1] >= x).mean(), raw=True)
+    out = pd.Series("btc_mid", index=btc.index, dtype=object)
+    out[pct < 0.33] = "btc_low"
+    out[pct > 0.66] = "btc_high"
+    return out
+
+
+def _load_trade_counts(interval: str, mode: str, symbol: str) -> dict[str, int]:
+    """Кількість угод рукавів із раніше збереженого CSV (або 0, якщо немає)."""
+    path = OUT / f"sleeve_trades_{mode}.csv"
+    if not path.exists():
+        return {name: 0 for name in SLEEVE_NAMES}
+    try:
+        d = pd.read_csv(path)
+        sub = d[(d["interval"] == interval) & (d["symbol"] == symbol) & (d["cost_mode"] == mode)]
+        counts = {name: 0 for name in SLEEVE_NAMES}
+        for _, r in sub.iterrows():
+            counts[str(r["sleeve"])] = int(r["n_trades"])
+        return counts
+    except Exception:  # noqa: BLE001
+        return {name: 0 for name in SLEEVE_NAMES}
+
+
 def sleeve_returns(
     symbol: str,
     interval: str,
@@ -194,6 +236,18 @@ def sleeve_returns(
     key = (symbol, interval, days, is_maker)
     if key in cache:
         return cache[key]
+    # Read-through кеш: повторні прогони (нові політики/детектори) не перераховують
+    # дорогий walk-forward. --force-sleeves змушує перерахувати.
+    mode = "maker" if is_maker else "taker"
+    cached_path = SLEEVE_DIR / f"{interval}_{mode}_{symbol}.parquet"
+    if not FORCE_SLEEVES and cached_path.exists():
+        try:
+            mat = pd.read_parquet(cached_path).reindex(columns=SLEEVE_NAMES)
+            trades = _load_trade_counts(interval, mode, symbol)
+            cache[key] = (mat, trades)
+            return mat, trades
+        except Exception:  # noqa: BLE001
+            pass
     from scalper_hft.backtest.execution import CostModel
     from scalper_hft.config import get_settings
     from scalper_hft.strategies import get_strategy
@@ -323,15 +377,24 @@ def _weights_for(
         w = shrink * soft + (1.0 - shrink) * (1.0 / n)
         return w, int(np.argmax(w)), "hold"
 
-    if policy == "riskoff_anchor":
-        risk_on = state in ("risk_on", "trend_up", "low", "normal")
-        if risk_on:
+    if policy in ("riskoff_anchor", "riskoff_gate"):
+        risk_off = state in ("risk_off", "btc_high", "high", "trend_down")
+        if policy == "riskoff_gate":
+            scale = float(RISK_OFF_SCALE)
+            if risk_off:
+                return _scaled_incumbent(n, scale), INCUMBENT, "de-risk"
             return np.full(n, 1.0 / n), None, "hold"
-        w = np.zeros(n)
-        w[INCUMBENT] = RISK_OFF_SCALE
-        return w, INCUMBENT, "de-risk"
+        if not risk_off:
+            return np.full(n, 1.0 / n), None, "hold"
+        return _scaled_incumbent(n, RISK_OFF_SCALE), INCUMBENT, "de-risk"
 
     raise ValueError(policy)
+
+
+def _scaled_incumbent(n: int, scale: float) -> np.ndarray:
+    w = np.zeros(n)
+    w[INCUMBENT] = scale
+    return w
 
 
 def _onehot(n: int, idx: int | None) -> np.ndarray:
@@ -352,8 +415,17 @@ def run_policy(
     tau: float = TAU_DEFAULT,
     shrink: float = SHRINK_DEFAULT,
     pool: list[tuple[pd.DataFrame, pd.Series]] | None = None,
+    position_pct: float = 0.01,
+    cost_per_side: float = 0.0004,
+    off_dwell: int = 6,
+    on_dwell: int = 12,
+    risk_off_scale: float = RISK_OFF_SCALE,
 ) -> dict:
     """Ковзний прогон політики: навчання на барах < fold_start, застосування у фолді.
+
+    ВАЖЛИВО: OOS-дохідності рукавів уже net-of-cost для РУКАВІВ, але re-weighting
+    політики — це ДОДАТКОВІ угоди. Тому з PnL політики віднімається вартість її
+    власного turnover: |Δw|₁ × position_pct × cost_per_side (як у двигуні).
 
     pool: додаткові (returns, state_dec) ІНШИХ символів — умовна статистика
     рахується на об'єднанні (cross-symbol transfer, HB-11). Train-вікно для пулу
@@ -368,6 +440,9 @@ def run_policy(
     cur: int | None = None
     cand: int | None = None
     run_len = 0
+    gate_mode = "on"      # для riskoff_gate: поточний стан (on/off)
+    off_run = 0
+    on_run = 0
 
     for fold_idx, (f_start, f_end) in enumerate(folds):
         train = np.arange(0, f_start)
@@ -402,7 +477,28 @@ def run_policy(
 
         for t in test:
             st = str(state_dec.iloc[t])
-            if policy == "gap_dwell":
+            if policy == "riskoff_gate":
+                # Асиметричний гістерезис: у risk-off — після off_dwell послідовних
+                # барів; назад у risk-on — лише після on_dwell послідовних НЕ-risk-off.
+                is_off = st in ("risk_off", "btc_high", "high", "trend_down")
+                if is_off:
+                    off_run += 1
+                    on_run = 0
+                    if off_run >= off_dwell:
+                        gate_mode = "off"
+                else:
+                    on_run += 1
+                    off_run = 0
+                    if on_run >= on_dwell:
+                        gate_mode = "on"
+                if gate_mode == "off":
+                    w = _scaled_incumbent(len(SLEEVE_NAMES), risk_off_scale)
+                    action = "de-risk" if w_prev[INCUMBENT] != risk_off_scale else "hold"
+                else:
+                    w = np.full(len(SLEEVE_NAMES), 1.0 / len(SLEEVE_NAMES))
+                    action = "re-risk" if abs(w_prev[INCUMBENT] - risk_off_scale) < 1e-12 else "hold"
+                cur = None
+            elif policy == "gap_dwell":
                 w, cur_new, action = _weights_for(policy, cond, st, cur, gap, dwell, tau, shrink)
                 if action.startswith("cand:"):
                     target = int(action.split(":")[1])
@@ -424,9 +520,10 @@ def run_policy(
                 cur = cur_new
             if action in ("switch", "exit", "de-risk"):
                 switch_bars += 1
-            turnover += float(np.abs(w - w_prev).sum())
+            step_turnover = float(np.abs(w - w_prev).sum())
+            turnover += step_turnover
             w_prev = w
-            pnl[t] = float(R.to_numpy(dtype=float)[t] @ w)
+            pnl[t] = float(R.to_numpy(dtype=float)[t] @ w) - step_turnover * position_pct * cost_per_side
 
         per_fold.append({"fold": fold_idx, "sharpe": sharpe(pnl[test], ppy), "n_bars": len(test)})
 
@@ -527,7 +624,15 @@ def main() -> int:
     ap.add_argument("--symbols", default=",".join(CORE15))
     ap.add_argument("--days", type=int, default=0, help="0 = дефолт на ТФ")
     ap.add_argument("--cost-modes", default="maker", help="maker,taker — база витрат (taker = cost-sensitivity)")
+    ap.add_argument("--detectors", default=",".join(DETECTORS), help="які детектори стану використовувати")
+    ap.add_argument("--policies", default="argmax,gap_dwell,soft_shrink,riskoff_anchor",
+                    help="політики, що проганяються з кожним детектором (рискові гілки)")
+    ap.add_argument("--off-dwell", type=int, default=6)
+    ap.add_argument("--on-dwell", type=int, default=12)
+    ap.add_argument("--risk-off-scale", type=float, default=RISK_OFF_SCALE)
     ap.add_argument("--max-symbols", type=int, default=0)
+    ap.add_argument("--force-sleeves", action="store_true", help="перерахувати walk-forward навіть якщо є кеш")
+    ap.add_argument("--out-tag", default="", help="суфікс артефактів (щоб не перезаписувати артефакти іншого універсуму)")
     ap.add_argument("--selfcheck", action="store_true", help="лише mutation-тест лага")
     args = ap.parse_args()
 
@@ -535,6 +640,8 @@ def main() -> int:
         return selfcheck()
 
     cost_modes = [c.strip() for c in args.cost_modes.split(",") if c.strip()]
+    det_list = [d.strip() for d in args.detectors.split(",") if d.strip()]
+    pol_list = [p.strip() for p in args.policies.split(",") if p.strip()]
     symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
     if args.max_symbols:
         symbols = symbols[: args.max_symbols]
@@ -544,11 +651,13 @@ def main() -> int:
     from scalper_hft.data.store import get_store
     from scalper_hft.strategies import get_strategy
 
-    global NEEDS_FUNDING
+    global NEEDS_FUNDING, FORCE_SLEEVES
     NEEDS_FUNDING = any(bool(getattr(get_strategy(n, **p), "needs_funding", False)) for _l, n, p in SLEEVES)
+    FORCE_SLEEVES = bool(args.force_sleeves)
     store = get_store()
     cache: dict = {}
     mkt_cache: dict[str, pd.Series] = {}
+    btc_vol_cache: dict[str, pd.Series] = {}
 
     summary_rows: list[dict] = []
     per_symbol_rows: list[dict] = []
@@ -563,7 +672,9 @@ def main() -> int:
         ppy = PPY[interval]
         if interval not in mkt_cache:
             mkt_cache[interval] = market_states(interval, max(days, 2500))
+            btc_vol_cache[interval] = btc_vol_states(interval, max(days, 2500))
         mkt = mkt_cache[interval]
+        btc_vol = btc_vol_cache[interval]
 
         per_symbol_pnl: dict[str, dict[str, pd.Series]] = {}
         sleeve_info: dict[str, dict] = {}
@@ -580,11 +691,9 @@ def main() -> int:
                 print(f"  skip {symbol} {interval}: мало даних ({len(R)})")
                 continue
             df = load_klines(symbol, interval, days)
-            states = symbol_regimes(df, "det_rule", mkt).reindex(R.index)
-            states_vol = symbol_regimes(df, "det_vol", mkt).reindex(R.index)
-            states_mkt = symbol_regimes(df, "det_mkt", mkt).reindex(R.index)
-            states_by_det = {"det_rule": states, "det_vol": states_vol, "det_mkt": states_mkt}
-            state_dec = {k: v.shift(1) for k, v in states_by_det.items()}
+            state_dec = {
+                d: symbol_regimes(df, d, mkt, btc_vol).reindex(R.index).shift(1) for d in det_list
+            }
 
             folds = compute_folds(R.index)
             sleeve_info[symbol] = trades
@@ -601,14 +710,23 @@ def main() -> int:
 
             per_symbol_pnl.setdefault(symbol, {})
             variants: list[tuple[str, str]] = [("incumbent", "-"), ("equal", "-"), ("best_single_train", "-"), ("oracle", "-")]
-            for det in DETECTORS:
-                for pol in ("argmax", "gap_dwell", "soft_shrink", "riskoff_anchor"):
+            for det in det_list:
+                for pol in pol_list:
                     variants.append((pol, det))
 
             for pol, det in variants:
                 key = pol if det == "-" else f"{pol}@{det}"
-                sd = state_dec[det] if det != "-" else state_dec["det_rule"]
-                res = run_policy(R, sd, pol, folds, ppy)
+                sd = state_dec[det] if det != "-" else state_dec[det_list[0]]
+                res = run_policy(
+                    R,
+                    sd,
+                    pol,
+                    folds,
+                    ppy,
+                    off_dwell=args.off_dwell,
+                    on_dwell=args.on_dwell,
+                    risk_off_scale=args.risk_off_scale,
+                )
                 per_symbol_pnl[symbol][key] = res["pnl"]
                 per_symbol_rows.append(
                     {
@@ -635,7 +753,7 @@ def main() -> int:
                         }
                     )
 
-            for det in DETECTORS:
+            for det in det_list:
                 ic_rows.append(
                     {
                         "symbol": symbol,
@@ -658,7 +776,8 @@ def main() -> int:
             port_mat[key] = mat.mean(axis=1).dropna()
         port_df = pd.DataFrame(port_mat)
         port_store[(cost_mode, interval)] = port_df
-        port_df.to_parquet(OUT / f"portfolio_returns_{interval}_{cost_mode}.parquet")
+        tag_suffix = f"_{args.out_tag}" if args.out_tag else ""
+        port_df.to_parquet(OUT / f"portfolio_returns_{interval}_{cost_mode}{tag_suffix}.parquet")
 
         n = len(port_df)
         split = n // 2
@@ -669,7 +788,9 @@ def main() -> int:
             key: pd.DataFrame({s: d[key] for s, d in per_symbol_pnl.items() if key in d}).sort_index()
             for key in keys
         }
-        pd.concat(sym_panels, axis=1).to_parquet(OUT / f"symbol_returns_{interval}_{cost_mode}.parquet")
+        pd.concat(sym_panels, axis=1).to_parquet(
+            OUT / f"symbol_returns_{interval}_{cost_mode}" f"{f'_{args.out_tag}' if args.out_tag else ''}.parquet"
+        )
         for key in keys:
             s_all = port_df[key]
             s_sel = port_df[key].iloc[:split]
@@ -730,7 +851,7 @@ def main() -> int:
                 }
             )
 
-    mode_tag = "_".join(cost_modes)
+    mode_tag = "_".join(cost_modes) + (f"_{args.out_tag}" if args.out_tag else "")
     summary = pd.DataFrame(summary_rows)
     summary.to_csv(OUT / f"summary_{mode_tag}.csv", index=False)
     pd.DataFrame(per_symbol_rows).to_csv(OUT / f"per_symbol_{mode_tag}.csv", index=False)

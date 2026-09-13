@@ -153,3 +153,11 @@
 | cross_momentum | PORTFOLIO_CORE15 | 2019-11-08 | 2026-09-12 | iter14:cs/1d |
 | ts_momentum | PORTFOLIO_SKIPMOM_12_1 | 2019-11-08 | 2026-09-12 | iter14:skipmom-12-1/1d |
 | pairs_arb | NEWPAIRS_CORE15 | 2023-09-12 | 2026-09-12 | iter14:coint-scan/1h |
+
+| regime_supervisor / політики RS | CORE_15 | 2019-11-08 | 2026-09-12 | iter15:rs/1d |
+| regime_supervisor / політики RS | CORE_15 | 2019-11-08 | 2026-09-12 | iter15:rs/4h |
+| regime_supervisor / політики RS | CORE_15 | 2023-09-12 | 2026-09-12 | iter15:rs/1h |
+| regime_supervisor / політики RS | CORE_15 | 2019-11-08 | 2026-09-12 | iter15:rs/1d-taker |
+| regime_supervisor / політики RS-2 (holdout) | FRESH_11 (APT,ARB,OP,INJ,SUI,FIL,ETC,TRX,ALGO,RUNE,SAND) | 2020-01-15 | 2026-09-12 | iter16:rs-holdout/1d |
+| regime_supervisor / політики RS-2 (holdout) | FRESH_11 | 2023-06-01 | 2026-09-12 | iter16:rs-holdout/4h |
+| regime_supervisor / політики RS-2 (overlay) | CORE_15 | 2019-11-08 | 2026-09-12 | iter16:rs-overlay/4h+1d |

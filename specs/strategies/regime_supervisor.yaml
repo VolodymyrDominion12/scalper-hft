@@ -1,21 +1,23 @@
 name: regime_supervisor
-version: "2.0"
+version: "2.2"
 status: candidate
 family: meta
 
 hypothesis: >
-  Ринковий режим (каузальна 1h-структура EMA 9/50 + vol-перцентиль) визначає,
-  ЯКА альфа-модель заробляє: у бичому режимі (trend_up) працює моментум/flow
-  (supertrend, smc_fvg, stoch_rsi), у флеті та ведмежому — carry (funding_carry).
-  Комбінація «перемикання стратегії за режимом» має давати позитивний OOS там,
-  де будь-яка одиночна стратегія збиткова, бо кожна стратегія знищується саме
-  у «чужому» режимі (10/10 символів: моментум −4.8…−5.3 у флеті/ведмежому;
-  carry −3.99 у бичому).
-  КАРТА «режим → стратегія» має бути ЕМПІРИЧНОЮ (OOS-матриця Sharpe per
-  regime × strategy), а не статичною таксономічною гіпотезою: iter7 показав, що
-  preferred_regimes-пріори суперечать даним (supertrend мав тег trend_down —
-  свій найгірший режим), а порожній preferred_regimes (= вага 1.0 у всіх режимах)
-  вироджував best_prior у «завжди перша універсальна стратегія».
+  Ризик-шар, а НЕ перемикач стратегій. Цикл RS (iter15–iter16) показав на holdout
+  зі 11 свіжих символів: селекторні політики («режим → стратегія», argmax,
+  gap+dwell) НЕ переносяться — на даних, які не використовувались для вибору,
+  вони програють incumbent'у (mean per-symbol Sharpe +0.078; «зірка» валідації
+  RS-1 gap_dwell@det_mkt дає −0.14 на 4h і +0.39 на 1d проти +1.53 на CORE).
+  Натомість МАСШТАБУВАННЯ ЕКСПОЗИЦІЇ за власною волатильністю переноситься:
+  рівноважний портфель 5 рукавів з експозицією ×0.25 у режимі vol=high (4h) дає
+  port Sharpe +1.156 проти +0.610 в incumbent'а (t_Newey–West +2.01, bootstrap
+  CI [+0.05, +2.15], 91% символів > 0, Calmar 0.731 проти 0.362); на тейкерських
+  витратах перевага зберігається (ΔSR +0.37) → Tier-2 (risk-overlay).
+  Отже edge — у режимно-умовному РОЗМІРІ позиції, а не в режимно-умовному виборі.
+  Стара (v2.0) гіпотеза «режим визначає, ЯКА альфа заробляє» відкинута як
+  невідтворювана (docs/reports/iter15_regime_supervisor.md,
+  docs/reports/iter16_rs2_holdout.md).
 
 edge_conditions:
   - name: regime_conditional_edge_exists
@@ -44,6 +46,34 @@ edge_conditions:
       Карта будується лише на періоді, що строго передує періоду застосування
       (fit_days → потім apply), метадані fit-вікна зберігаються у JSON карти;
       у самій стратегії карта є статичним входом (жодного перенавчання на барі).
+  - name: risk_overlay_beats_incumbent_on_holdout
+    description: >
+      [ВИКОНАНО, iter16, Tier-2] blend_mode="risk_overlay" на 4h, заморожений пул
+      5 рукавів, на 11 СВІЖИХ символах (holdout): port Sharpe ≥ +0.9 і Δ проти
+      incumbent ≥ +0.2 при ≥70% позитивних символів. Факт: +1.156 проти +0.610
+      (Δ +0.546), 91% символів > 0, maxDD −0.29% проти −0.46%.
+  - name: risk_overlay_statistically_significant
+    description: >
+      [ЧАСТКОВО, iter16] t_Newey–West(20) ≥ 2.0 і bootstrap CI без нуля на
+      validation half. Факт: t = +2.01, CI [+0.05, +2.15] → виконано для CI/t, але
+      DSR ≥ 0.95 НЕ досягнуто (потрібен t ≈ 3.4 при n_trials=85) — тому статус
+      Tier-2 (paper-моніторинг), а не Tier-1/promotion.
+  - name: risk_overlay_survives_costs
+    description: >
+      [ВИКОНАНО, iter16] Перевага над incumbent'ом зберігається на тейкерських
+      витратах (fee 5 bps + slippage). Факт: maker ΔSR +0.546, taker ΔSR +0.37
+      (t 1.49, 82% символів > 0).
+  - name: selector_claims_refuted
+    description: >
+      [НЕ ВИКОНАНО — фальсифіковано в iter15/iter16] Селекторні умови вище
+      (regime_conditional_edge_exists, selector_beats_best_single_oos,
+      not_data_snooping, map_not_lookahead) лишаються в spec як ІСТОРІЯ перевірок,
+      але жодна з них не підтвердилась на даних, які не використовувались для
+      вибору: переможець RS-1 на 1d `argmax@det_rule` дає mean per-symbol Sharpe
+      +0.078 на свіжих символах, «зірка валідації» `gap_dwell@det_mkt` — −0.14
+      (4h) / +0.39 (1d). Селекторні режими (regime_soft/best_prior) заборонені
+      для paper/live; див. docs/reports/iter15_regime_supervisor.md,
+      docs/reports/iter16_rs2_holdout.md.
 
 params_doc:
   strategies:
@@ -57,10 +87,27 @@ params_doc:
   blend_mode:
     default: "regime_soft"
     description: >
-      regime_soft | best_prior | contextual_hedge | exp3. Дефолт v2.0 =
-      regime_soft: за наявності regime_map_path це ТОЧНИЙ empirical switch
-      (карта з політикою best_prior дає вагу 1 одній стратегії, 0 решті).
-      contextual_hedge/exp3 лишаються дослідницькими: 80–85 тис. угод (churn).
+      risk_overlay | regime_soft | best_prior | contextual_hedge | exp3.
+      **risk_overlay** (v2.2, РЕКОМЕНДОВАНИЙ для paper): режимний шар як
+      масштабування експозиції — risk-on (vol != high) = рівновага всіх
+      суб-стратегій (1/n); risk-off (vol == high) = risk_off_scale × incumbent
+      (перша суб-стратегія). Без гістерезису (dwell фальсифіковано, H16-B).
+      Валідований конфіг: 4h, пул ts_momentum(long-only),ts_momentum(ls),
+      cross_momentum,funding_carry,supertrend, scale 0.25 — Tier-2 на holdout
+      (11 свіжих символів: port SR +1.156 vs +0.610 incumbent, t 2.01).
+      Дефолт v2.0 = regime_soft лишається для сумісності, але селекторні режими
+      (regime_soft/best_prior на taxonomy-пріорах або карті) НЕ валідовані для
+      paper/live — див. docs/reports/iter15_regime_supervisor.md.
+      contextual_hedge/exp3 — дослідницькі: 80–85 тис. угод (churn).
+  risk_off_scale:
+    default: 0.25
+    min: 0.0
+    max: 1.0
+    step: 0.05
+    description: >
+      Експозиція у risk-off режимі для blend_mode="risk_overlay" (множник на
+      сигнал incumbent-рукава). Значення 0.25 ЗАМОРОЖЕНО за результатами RS-1/RS-2;
+      підбір іншого значення = нова гіпотеза з окремою pre-registration.
   regime_map_path:
     default: ""
     description: >
@@ -152,6 +199,22 @@ invariants:
 preferred_regimes: []
 
 notes: >
+  v2.1 (2026-09-12, цикл RS): доданий чесний вердикт iter15 і заборона промоції
+  селекторного режиму до проходження Tier-1.
+  РЕЗУЛЬТАТ RS-1 (docs/reports/iter15_regime_supervisor.md):
+  (1) на 1d/4h/1h з вибором політики ЛИШЕ на selection half (лаг на РІШЕННІ,
+  вартість re-weighting віднімається) жодна з 7 політик не проходить Tier-1;
+  найкращий near-miss — risk-scaling на 4h (`riskoff_anchor@det_vol`): val SR
+  +0.963 проти incumbent +0.721 (Δ+0.24, 14/15 символів >0), але t=1.72 і DSR=0;
+  (2) «зірка валідації» 1d `gap_dwell@det_mkt` (val SR +1.53, t 2.14, PBO 0.071)
+  має Sharpe −0.09 на selection half → артефакт відбору, не edge; taxonomy-карта
+  і argmax-перемикання лишаються невалідованими;
+  (3) 1h повністю збитковий (val SR −0.92) — підтверджує економіку ТФ;
+  (4) |IC| детекторів ≈0.02 → стан не передбачає відносний PnL рукавів.
+  НАСТУПНИЙ КРОК: RS-2 (docs/reports/hypothesis_iter16_rs2.md) — holdout на 11
+  свіжих символах + risk-off overlay з асиметричним гістерезисом; лаг-тест
+  `experiments/iter15_regime_supervisor_cycle.py --selfcheck`.
+
   v2.0 (2026-09-11, iter7): карта «режим → стратегія» стала ЕМПІРИЧНОЮ.
   Зміни проти v1.4: (1) regime_map_path авторитетний для regime_soft і best_prior
   (taxonomy-пріори обходяться); (2) дефолтний пул дітей —
@@ -164,6 +227,7 @@ notes: >
   preferred_regimes вироджував best_prior, пул дітей не мав carry.
   Побудова карти: `python -m scalper_hft.cli regime-map --strategies ... --symbols ...
   --fit-days N --out results/regime_map.json` (фіксує fit-вікно у метаданих).
-  Референси: docs/reports/strategy_rating_regime.md, docs/reports/iter7_tables.md.
-  НАСТУПНИЙ КРОК перед paper: sensitivity порогів детектора режиму + валідація
-  карти на символах поза спаленим вікном (iter8).
+  Референси: docs/reports/strategy_rating_regime.md, docs/reports/iter7_tables.md,
+  docs/reports/iter15_regime_supervisor.md, docs/reports/regime_supervisor_research.md.
+  ЗАБОРОНА: не використовувати селекторний режим (regime_soft/best_prior на
+  taxonomy-пріорах) для paper/live без проходження Tier-1 у циклі RS.

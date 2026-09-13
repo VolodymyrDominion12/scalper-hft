@@ -81,3 +81,9 @@
 {"ts": "2026-09-12T18:36:07+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell/cscv", "n_trials": 22, "score": 0.5}
 {"ts": "2026-09-12T18:36:07+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell", "n_trials": 2, "score": 0.5}
 {"ts": "2026-09-12T18:36:07+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell/cscv", "n_trials": 22, "score": 0.5}
+{"ts": "2026-09-12T23:10:22+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell/cscv", "n_trials": 22, "score": 0.5}
+{"ts": "2026-09-12T23:10:22+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell", "n_trials": 2, "score": 0.5}
+{"ts": "2026-09-12T23:10:22+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell/cscv", "n_trials": 22, "score": 0.5}
+{"ts": "2026-09-12T23:28:01+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell/cscv", "n_trials": 22, "score": 0.5}
+{"ts": "2026-09-12T23:28:01+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell", "n_trials": 2, "score": 0.5}
+{"ts": "2026-09-12T23:28:01+00:00", "strategy": "supertrend", "symbol": "BTCUSDT", "purpose": "audit_cell/cscv", "n_trials": 22, "score": 0.5}

@@ -47,6 +47,7 @@ def main() -> int:
 
     h = load_harness()
     ppy = h.PPY[args.interval]
+    cost_side = 0.0004 if args.cost_mode == "maker" else 0.0007  # fee + slippage, як у CostModel
     days = h.DEFAULT_DAYS[args.interval]
     sleeves = load_sleeves(args.interval, args.cost_mode, h.CORE15, h)
     if not sleeves:
@@ -71,7 +72,9 @@ def main() -> int:
             p = None
             if pool is not None:
                 p = [(pool[s], states[s][det]) for s in pool if s != symbol]
-            res = h.run_policy(R, states[symbol][det], policy, h.compute_folds(R.index), ppy, pool=p, **kw)
+            res = h.run_policy(
+                R, states[symbol][det], policy, h.compute_folds(R.index), ppy, pool=p, cost_per_side=cost_side, **kw
+            )
             port[symbol] = res["pnl"]
             switch[symbol] = res["switch_bars"]
         mat = pd.DataFrame(port).sort_index()
@@ -123,10 +126,16 @@ def main() -> int:
                 port_per, port_pool, sw = {}, {}, {}
                 for symbol in held_out:
                     R = sleeves[symbol]
-                    res_per = h.run_policy(R, states[symbol][det], pol, h.compute_folds(R.index), ppy)
+                    res_per = h.run_policy(R, states[symbol][det], pol, h.compute_folds(R.index), ppy, cost_per_side=cost_side)
                     pool_frames = [(sleeves[s], states[s][det]) for s in train_pool]
                     res_pool = h.run_policy(
-                        R, states[symbol][det], pol, h.compute_folds(R.index), ppy, pool=pool_frames
+                        R,
+                        states[symbol][det],
+                        pol,
+                        h.compute_folds(R.index),
+                        ppy,
+                        pool=pool_frames,
+                        cost_per_side=cost_side,
                     )
                     port_per[symbol] = res_per["pnl"]
                     port_pool[symbol] = res_pool["pnl"]

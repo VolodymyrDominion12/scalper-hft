@@ -3,6 +3,98 @@
 Оновлюється після кожного аудиту. Методологія: повний цикл інвестігейт →
 реалізація → тест → аудит (walk-forward + Deflated Sharpe + CSCV/PBO + stress/cohort + paper-replay).
 
+## 🔄 Iteration 17 (цикл RS-3) — `risk_overlay` реалізовано в стратегії + виправлено дефект парсера (2026-09-12)
+
+Повний звіт: [reports/iter17_rs3_implementation.md](reports/iter17_rs3_implementation.md) ·
+pre-registration: [reports/hypothesis_iter17_rs3.md](reports/hypothesis_iter17_rs3.md).
+
+- **Spec → код → тести:** `regime_supervisor.yaml` v2.2 (`blend_mode: risk_overlay`,
+  `risk_off_scale: 0.25`), `_blend_risk_overlay()` у `RegimeSupervisor`, заморожений пул
+  5 рукавів як дефолт для режиму; +5 тестів (включно з no-lookahead-мутацією).
+- **Знайдено і виправлено реальний дефект:** парсер параметрів суб-стратегій не розумів
+  булевих значень (`bool("False") is True`) → конфіг `ts_momentum:allow_short=False`
+  **фактично вмикав шорти**. Саме це виявив reproducibility-гейт (стратегія давала
+  SR 0.77 замість 1.16 на тих самих даних). Тепер є регресійний тест.
+- **Reproducibility gate (11 свіжих символів, 4h, maker):** стратегія через свій інтерфейс
+  val SR **+1.179** проти harness **+1.156** (Δ **+0.023** ≤ 0.05 ✅), t_NW **+2.07**,
+  CI [+0.10, +2.14], **100%** символів > 0, Calmar 0.833; incumbent +0.701 (Calmar 0.443).
+  ΔSR проти incumbent'а **+0.479**.
+- **Чесно про межі:** per-symbol кореляція з harness-PnL 0.88 (поріг був 0.99) — причина
+  відома (harness агрегує окремі engine-прогони рукавів, стратегія торгує одну нетто-позицію);
+  DSR ≥ 0.95 не досягнуто (потрібен t ≈ 3.4, є 2.07) → **paper-моніторинг, не live**.
+
+**Підсумок циклу RS (iter15 → iter17):** перемикання стратегій за режимом **не має edge**,
+який виживає чесну оцінку (селектор закрито з числами); робочим виявився **ризик-шар** —
+масштабування експозиції за власною волатильністю на 4h (Tier-2 на holdout), і він тепер
+реалізований у самій стратегії з підтвердженим відтворенням.
+
+## 🔄 Iteration 16 (цикл RS-2) — holdout на свіжих символах: селектор закрито, risk-overlay підтверджено (2026-09-12)
+
+Повний звіт: [reports/iter16_rs2_holdout.md](reports/iter16_rs2_holdout.md) ·
+pre-registration: [reports/hypothesis_iter16_rs2.md](reports/hypothesis_iter16_rs2.md).
+
+Holdout — **11 свіжих символів** (APT, ARB, OP, INJ, SUI, FIL, ETC, TRX, ALGO, RUNE, SAND),
+які жодного разу не використовувались для вибору політики; 4h (2023-06 → 2026-09) і 1d.
+
+- **Селектор не переноситься** (H16-A ✅): `argmax@det_rule` (переможець RS-1 на 1d) на свіжих
+  дає mean sym SR **+0.078** і turnover 569. «Зірка валідації» RS-1 `gap_dwell@det_mkt`
+  (+1.53 на CORE) на свіжих дає **−0.140** (4h) і **+0.388** (1d) → H16-C ✅: це був артефакт.
+- **Risk-scaling переноситься** (H16-A ✅): `riskoff_anchor@det_vol` (рівновага 5 рукавів;
+  risk-off → 0.25 × incumbent-рукав; детектор — власний vol-перцентиль) на свіжих 4h:
+  port SR **+1.156**, t_Newey–West **+2.01**, bootstrap CI **[+0.05, +2.15]** (без нуля),
+  91% символів > 0, Calmar 0.731 проти incumbent 0.610 / 0.362, maxDD −0.29% проти −0.46%.
+- **Dwell-підтвердження шкодить** (H16-B ❌): `riskoff_gate` (асиметричні пороги + dwell) дає
+  0.912 проти 1.156 на свіжих і 0.676 проти 0.963 на CORE; turnover падає удвічі, Sharpe —
+  більше. Висновок: risk-off реагує одразу.
+- **1d overlay не працює** (0.171 проти incumbent 0.633) — цільовий ТФ overlay = **4h**.
+- **Гейт:** Tier-1 ❌ (DSR=0; потрібен t≈3.4 при n_trials=85, є 2.01), **Tier-2 ✅** для
+  `riskoff_anchor@det_vol` на 4h (ΔSR +0.55, ΔCalmar +0.37, ΔmaxDD +0.17 п.п.).
+
+**Головний висновок циклу RS (iter15+iter16):** режимний шар supervisor'а працює **не як
+перемикач стратегій, а як масштабування експозиції** — селекторні політики не б'ють
+incumbent'а на невикористаних даних, а risk-off scaling дає ΔSR +0.55 на holdout. Статус:
+risk-overlay → **paper-моніторинг разом із validated-ядром**, не live.
+
+**Далі (RS-3):** реалізувати `blend_mode: risk_overlay` у `RegimeSupervisor` (spec → код →
+тести, параметри заморожені), зафіксувати пул рукавів, інтеграційно перевірити відтворення
+чисел `results/iter15/*`, і лише потім paper. Паралельно — meta-labeling (HB-8) як шлях до
+Tier-1-потужності.
+
+## 🔄 Iteration 15 (цикл RS-1) — Regime Supervisor: чесна оцінка перемикання (2026-09-12)
+
+Повний звіт: [reports/iter15_regime_supervisor.md](reports/iter15_regime_supervisor.md).
+План циклу: [reports/regime_supervisor_research.md](reports/regime_supervisor_research.md) ·
+огляд знань: [reports/regime_switching_literature.md](reports/regime_switching_literature.md) ·
+pre-registration: [reports/hypothesis_iter15_rs.md](reports/hypothesis_iter15_rs.md).
+Harness: `experiments/iter15_regime_supervisor_cycle.py` (+ `iter15b` sensitivity, `iter15c` verdict).
+
+5 рукавів × 3 детектори × 7 політик (+oracle), 1d/4h/1h, maker/taker, CORE_15, вибір
+переможця **лише на selection half** (лаг на РІШЕННІ, вартість re-weighting віднімається).
+
+- **Tier-1 (promotion) не досягнуто на жодному ТФ.** 1d: чесний переможець `argmax@det_rule`
+  val SR **+0.457** проти incumbent **+1.046** (t 0.65, PBO 0.043, DSR 0). 1h: winner val SR
+  **−0.915** (incumbent −0.561) — підтверджує економіку ТФ (F5). 4h: near-miss —
+  `riskoff_anchor@det_vol` val SR **+0.963** vs incumbent +0.721 (Δ **+0.24**), 14/15 символів
+  > 0, Calmar 0.53 vs 0.37, **але t 1.72 і DSR 0** → Tier-1 fail, Tier-2 теж (ΔCalmar 0.16 < 0.20).
+- **Головний результат — методологічний.** «Зірка валідації» 1d `gap_dwell@det_mkt`
+  (val SR +1.53, t 2.14, CI [0.36, 2.60], плато по gap/dwell, PBO 0.071) має на
+  **selection half Sharpe −0.09** і тому не вибирається чесно. Артефакт відбору, а не edge
+  (та сама природа, що iter7 +2.58, але вже без lookahead).
+- **Фальсифіковано**: H15-C (PBO riskoff 0.371 > argmax 0.20) і H15-D (|IC| детекторів ≈0.02,
+  ранжування не збігається з OOS). **Частково підтверджено**: H15-B (PBO gap_dwell 0.029
+  ≪ argmax 0.20; але чесний вибір усе одно програв incumbent'у).
+- **Корисні побічні факти**: (1) пулінг символів для умовної статистики покращує слабкі
+  детектори (det_vol transfer 0.26 → 0.61); (2) `soft_shrink` монотонно кращий при
+  **більшому** шринкеджі — умовні Sharpe-оцінки шумні; (3) stеля пулу рукавів низька
+  (oracle 1.9–2.4 SR), тобто «правильне перемикання» не може дати багато.
+
+**Вердикт:** селекторний режим regime_supervisor у поточному вигляді — **Tier-3 (reject)**;
+єдиний живий слід — risk-scaling на 4h (overlay, не селектор) → перевіряється в RS-2
+([reports/hypothesis_iter16_rs2.md](reports/hypothesis_iter16_rs2.md)) на 11 **свіжих**
+символах (holdout) + `riskoff_gate` з асиметричним гістерезисом.
+
+⚠ Спалено: CORE_15 1d/4h/1h 2019-11 → 2026-09 (`iter15:rs/*`), див. `reports/oos_usage.md`.
+
 ## 🔄 Iteration 14 — CS-momentum / 12-1 TSMOM / друга пара (2026-09-12)
 
 Повний звіт: [reports/iter14_improvement_cycle.md](reports/iter14_improvement_cycle.md).

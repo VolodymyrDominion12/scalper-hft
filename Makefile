@@ -201,6 +201,30 @@ paper-audit: ## Порівняльний аудит paper SQLite vs бектес
 	$(PYTHON) -m scalper_hft.cli paper-audit
 
 # ==============================================================================
+# Цикл RS (regime supervisor): hypothesis → implement → test → audit → analyze
+# Документація: docs/reports/regime_supervisor_research.md
+# ==============================================================================
+RS_DETS ?= det_rule,det_vol,det_mkt,det_btcvol
+RS_POLS ?= argmax,gap_dwell,soft_shrink,riskoff_anchor,riskoff_gate
+
+.PHONY: rs-selfcheck rs-round rs-verdict rs-sensitivity
+rs-selfcheck: ## Mutation-тест лага політик RS (лаг на РІШЕННІ)
+	$(PYTHON) experiments/iter15_regime_supervisor_cycle.py --selfcheck
+
+rs-round: ## Раунд циклу RS: прогін політик на ТФ (INT=4h,1d MODE=maker TAG=core)
+	$(PYTHON) experiments/iter15_regime_supervisor_cycle.py --intervals $(or $(INT),4h,1d) \
+		--cost-modes $(or $(MODE),maker) --detectors $(RS_DETS) --policies $(RS_POLS) \
+		--out-tag $(or $(TAG),core) $(if $(SYMBOLS),--symbols $(SYMBOLS),)
+
+rs-verdict: ## Вердикт RS із cached sleeves (INT=4h MODE=maker TAG=core)
+	$(PYTHON) experiments/iter15c_verdict.py --interval $(or $(INT),4h) --cost-mode $(or $(MODE),maker) \
+		--out-tag $(or $(TAG),core) --detectors $(RS_DETS) --policies $(RS_POLS) \
+		$(if $(SYMBOLS),--symbols $(SYMBOLS),) $(if $(NTRIALS),--n-trials $(NTRIALS),)
+
+rs-sensitivity: ## Sensitivity/transfer/PBO із cached sleeves (INT=1d MODE=maker)
+	$(PYTHON) experiments/iter15b_policy_sensitivity.py --interval $(or $(INT),1d) --cost-mode $(or $(MODE),maker)
+
+# ==============================================================================
 # Очищення
 # ==============================================================================
 .PHONY: clean
