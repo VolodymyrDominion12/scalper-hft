@@ -162,4 +162,154 @@ def arch_lm_test(returns: pd.Series, lags: int = 5) -> tuple[float, float]:
         return 0.0, 1.0
 
 
-__all__ = ["garch11_vol", "garch11_fit", "garch_forecast", "ewma_vol", "arch_lm_test"]
+def egarch11_fit(
+    returns: np.ndarray | pd.Series,
+    alpha0: float = 0.1,
+    beta0: float = 0.9,
+    gamma0: float = 0.0,
+) -> tuple[float, float, float, float]:
+    """Оцінка (ω, α, β, γ) EGARCH(1,1) через MLE.
+    
+    Returns:
+        (omega, alpha, beta, gamma).
+    """
+    r = np.asarray(returns, dtype=float)
+    r = r[np.isfinite(r)]
+    if len(r) < 30:
+        return 0.0, alpha0, beta0, gamma0
+    long_var = float(np.var(r))
+    if long_var <= 0:
+        return 0.0, alpha0, beta0, gamma0
+
+    ln_long_var = np.log(long_var)
+    E_z = np.sqrt(2.0 / np.pi)
+
+    def neg_ll(params: np.ndarray) -> float:
+        omega, alpha, beta, gamma = params
+        if beta >= 1 or beta <= -1:
+            return 1e10
+        ln_var = np.empty(len(r))
+        ln_var[0] = ln_long_var
+        for i in range(1, len(r)):
+            z_prev = r[i - 1] / max(np.exp(0.5 * ln_var[i - 1]), 1e-8)
+            ln_var[i] = omega + beta * ln_var[i - 1] + alpha * (np.abs(z_prev) - E_z) + gamma * z_prev
+        ln_var = np.clip(ln_var, -50, 50)
+        var = np.maximum(np.exp(ln_var), 1e-12)
+        return float(0.5 * np.sum(ln_var + r**2 / var))
+
+    try:
+        from scipy.optimize import minimize
+
+        omega0 = ln_long_var * (1 - beta0)
+        res = minimize(
+            neg_ll,
+            x0=np.array([omega0, alpha0, beta0, gamma0]),
+            bounds=[(None, None), (0.0, 1.0), (0.0, 0.999), (-1.0, 1.0)],
+            method="L-BFGS-B",
+        )
+        omega, alpha, beta, gamma = float(res.x[0]), float(res.x[1]), float(res.x[2]), float(res.x[3])
+    except Exception:  # noqa: BLE001
+        alpha, beta, gamma = alpha0, beta0, gamma0
+        omega = ln_long_var * (1 - beta)
+
+    if not np.isfinite(omega) or not np.isfinite(alpha):
+        omega, alpha, beta, gamma = ln_long_var * (1 - beta0), alpha0, beta0, gamma0
+    return omega, alpha, beta, gamma
+
+
+def egarch_forecast(
+    returns: pd.Series,
+    window: int = 500,
+    refit_every: int = 100,
+    warmup: int = 50,
+) -> pd.Series:
+    """Прогноз σ̂_{t+1} за допомогою EGARCH(1,1).
+    
+    Модель враховує асиметрію волатильності (leverage effect) через параметр γ.
+    На кожному барі t прогноз використовує дані до t.
+    """
+    r = returns.astype(float)
+    n = len(r)
+    out = np.full(n, np.nan)
+    omega, alpha, beta, gamma = 0.0, 0.0, 0.0, 0.0
+    v = 1e-8
+    ln_v = np.log(v)
+    t = 0
+    E_z = np.sqrt(2.0 / np.pi)
+
+    while t < n:
+        if t < warmup:
+            t += 1
+            continue
+        if t % refit_every == 0:
+            hist = r.iloc[max(0, t - window) : t]
+            omega, alpha, beta, gamma = egarch11_fit(hist.to_numpy())
+            if t == warmup or v <= 0:
+                v = float(np.var(hist.to_numpy())) if len(hist) > 1 else 1e-8
+                ln_v = np.log(v)
+
+        z_t = r.iloc[t - 1] / max(np.exp(0.5 * ln_v), 1e-8)
+        ln_v_t = omega + beta * ln_v + alpha * (np.abs(z_t) - E_z) + gamma * z_t
+        
+        z_t1 = r.iloc[t] / max(np.exp(0.5 * ln_v_t), 1e-8)
+        ln_v_t1 = omega + beta * ln_v_t + alpha * (np.abs(z_t1) - E_z) + gamma * z_t1
+        
+        out[t] = float(np.exp(0.5 * max(min(ln_v_t1, 50), -50)))
+        ln_v = ln_v_t
+        t += 1
+    return pd.Series(out, index=r.index)
+
+
+def har_rv_forecast(rv: pd.Series, lags: tuple[int, int, int] = (1, 5, 22), min_window: int = 100) -> pd.Series:
+    """Прогноз HAR-RV (Heterogeneous Autoregressive model of Realized Volatility).
+    
+    Args:
+        rv: Realized Volatility (або інший proxy для волатильності, наприклад range).
+        lags: Лаги для денної, тижневої, місячної компонент (у барах).
+        min_window: Мінімальне вікно для OLS.
+        
+    Returns:
+        Прогноз RV на наступний бар.
+    """
+    if len(rv) < max(lags) + min_window:
+        return pd.Series(np.nan, index=rv.index)
+
+    rv_arr = np.asarray(rv, dtype=float)
+    rv_d = rv_arr
+    
+    rv_w = pd.Series(rv).rolling(lags[1], min_periods=1).mean().to_numpy()
+    rv_m = pd.Series(rv).rolling(lags[2], min_periods=1).mean().to_numpy()
+
+    n = len(rv)
+    out = np.full(n, np.nan)
+    
+    for t in range(min_window, n):
+        y = rv_arr[1 : t + 1]
+        X = np.column_stack([
+            np.ones(t),
+            rv_d[0 : t],
+            rv_w[0 : t],
+            rv_m[0 : t],
+        ])
+        
+        try:
+            beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+            x_t = np.array([1.0, rv_d[t], rv_w[t], rv_m[t]])
+            out[t] = max(float(np.dot(x_t, beta)), 1e-12)
+        except Exception:  # noqa: BLE001
+            if t > 0:
+                out[t] = out[t - 1]
+
+    return pd.Series(out, index=rv.index)
+
+
+__all__ = [
+    "garch11_vol", 
+    "garch11_fit", 
+    "garch_forecast", 
+    "ewma_vol", 
+    "arch_lm_test",
+    "egarch11_fit",
+    "egarch_forecast",
+    "har_rv_forecast",
+]

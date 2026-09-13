@@ -225,6 +225,7 @@ Paper Gate ≥8 тижнів на конфігурації LINK/BTC 1h maker + r
 | W9-1 | `ts_momentum` 1d: pre-registration + універсум 42 перпи — H1 на 27 нових FAIL (t_NW 1.70); CORE_15 monitoring — [iter11](reports/iter11_improvement_cycle.md) | ✅ |
 | W9-2 | Vol-targeting overlay для momentum-портфеля: pre-registered A/B (σ-вікно 20–90, t_NW 2.05–2.54 — пост-хок) | 📋 |
 | W9-3 | Нативна 4h-історія CORE_15; long-only PASS Sharpe +1.01 t_NW +2.49 — [iter11](reports/iter11_improvement_cycle.md) | ✅ |
+| W1-V | Впровадження EGARCH/HAR-RV для оцінки волатильності; Fractional Kelly у risk_budget | 📋 |
 
 Дефолти (`use_kalman`, chase, ERC) **не** змінювати без PASS звіту.
 
@@ -251,6 +252,9 @@ Paper Gate ≥8 тижнів на конфігурації LINK/BTC 1h maker + r
 | HFT-1 | L2 archive `quality_ok` → revival `ob_imbalance` / `market_maker` OOS | ⏳ |
 | HFT-2 | Nautilus benchmark vs `event_engine` fill parity | 📋 |
 | HFT-3 | Tardis.dev історія для queue model (Phase 4) | 📋 |
+| HFT-4 | Hawkes Processes feature для детекції токсичного потоку ордерів (мікроструктура) | 📋 |
+| HFT-5 | Алгоритмічний маркет-мейкінг: GLFT модель + DRL оптимізація γ | 📋 |
+| HFT-6 | Графовий трикутний арбітраж (після Tardis та колокації) | 📋 |
 
 ### 6.6 — Honesty, live-parity, hygiene (аудит 2026-09-12) [P0–P1]
 

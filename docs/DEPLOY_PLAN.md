@@ -140,6 +140,7 @@ live-vX.Y.Z       — той самий SHA після Paper-Gate (фаза 3)
 - [ ] Binance ключі для paper/testnet **або** порожні ключі (симуляція на публічних klines)
 - [ ] Telegram bot окремий або той самий chat, але старт-повідомлення з hostname
 - [ ] Streamlit/pgAdmin не слухають `0.0.0.0` (або firewall drop)
+- [ ] **Колокація для HFT (Phase 6.5)**: VPS у дата-центрі AWS Tokyo (ap-northeast-1) для latency <2мс
 
 **Операційний ритм**
 

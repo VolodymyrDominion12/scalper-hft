@@ -37,6 +37,7 @@ class PassiveMarketMaker(Strategy):
         "gamma": (0.01, 1.0, 0.05),
         "kappa": (0.5, 5.0, 0.5),
         "vpin_threshold": (0.5, 0.95, 0.05),
+        "use_glft": (False, True, [False, True]),
     }
 
     def __init__(
@@ -51,6 +52,7 @@ class PassiveMarketMaker(Strategy):
         vpin_threshold: float = 0.75,
         use_liquidation_shield: bool = True,
         liquidation_threshold: float = 5_000_000.0,
+        use_glft: bool = False,
     ) -> None:
         super().__init__(
             spread_offset_mult=spread_offset_mult,
@@ -63,6 +65,7 @@ class PassiveMarketMaker(Strategy):
             vpin_threshold=float(vpin_threshold),
             use_liquidation_shield=bool(use_liquidation_shield),
             liquidation_threshold=float(liquidation_threshold),
+            use_glft=bool(use_glft),
         )
 
     def reservation_price(
@@ -129,14 +132,17 @@ class PassiveMarketMaker(Strategy):
         if use_liq and liquidation_cascade > liq_thresh:
             return 0.0, float("inf"), False
 
-        r = self.reservation_price(mid_or_micro, inventory, vol)
-        if base_spread is not None and base_spread > 0:
-            delta = base_spread * float(self.get("spread_offset_mult", 0.5))
+        if bool(self.get("use_glft", False)):
+            bid, ask = self.glft_quotes(mid_or_micro, inventory, vol)
         else:
-            delta = self.optimal_half_spread(vol)
-
-        bid = r - delta
-        ask = r + delta
+            r = self.reservation_price(mid_or_micro, inventory, vol)
+            if base_spread is not None and base_spread > 0:
+                delta = base_spread * float(self.get("spread_offset_mult", 0.5))
+            else:
+                delta = self.optimal_half_spread(vol)
+    
+            bid = r - delta
+            ask = r + delta
 
         # Обмеження інвентарю
         if inventory >= inv_cap:
@@ -155,3 +161,45 @@ class PassiveMarketMaker(Strategy):
         """Повертає бажану позицію 0 завжди — market maker керується
         інвентарем, а не напрямком. Сигнали для нього генерує event_engine."""
         return pd.Series(0, index=df.index, dtype=int)
+
+    def glft_quotes(
+        self,
+        mid: float,
+        inventory: float,
+        vol: float,
+    ) -> tuple[float, float]:
+        """Обчислює оптимальні котирування (bid, ask) за моделлю GLFT.
+        
+        GLFT (Gueant, Lehalle, Fernandez-Tapia) — аналітичний фреймворк для
+        безперервного маркет-мейкінгу (infinite horizon approximation).
+        
+        Формули відстані від mid:
+            δ_b = 1/γ * ln(1 + γ/k) + (2q + 1) * γ * σ² / 2
+            δ_a = 1/γ * ln(1 + γ/k) - (2q - 1) * γ * σ² / 2
+            
+        де:
+            q = поточний інвентар
+            γ = несприйняття ризику (inventory risk aversion)
+            σ = миттєва волатильність
+            k = параметр затухання ймовірності виконання ордера (fill probability)
+        """
+        gamma = float(self.get("gamma", 0.1))
+        kappa = float(self.get("kappa", 1.5))
+        
+        if gamma <= 0 or kappa <= 0:
+            return 0.0, float("inf")
+            
+        base_half_spread = (1.0 / gamma) * float(np.log1p(gamma / kappa))
+        
+        # Risk adjustment terms
+        q = inventory
+        var_term = gamma * (vol ** 2) / 2.0
+        
+        delta_b = base_half_spread + (2.0 * q + 1.0) * var_term
+        delta_a = base_half_spread - (2.0 * q - 1.0) * var_term
+        
+        # Забезпечуємо невід'ємність спреду
+        delta_b = max(delta_b, 1e-8)
+        delta_a = max(delta_a, 1e-8)
+        
+        return float(mid - delta_b), float(mid + delta_a)

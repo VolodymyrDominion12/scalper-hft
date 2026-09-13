@@ -131,4 +131,32 @@ def estimate_tail_dependence(
     return pd.DataFrame(lambda_l, index=cols, columns=cols)
 
 
-__all__ = ["portfolio_var", "vol_target_scale", "loss_budget_split", "estimate_tail_dependence"]
+def fractional_kelly(
+    mean_return: float,
+    variance: float,
+    fraction: float = 0.5,
+    max_leverage: float = 3.0,
+) -> float:
+    """Розрахунок Fractional Kelly для динамічного sizing-у позицій.
+    
+    Для неперервного розподілу (наближення): f* = μ / σ^2.
+    
+    Args:
+        mean_return: очікувана прибутковість μ.
+        variance: дисперсія σ^2.
+        fraction: частка Келлі (за замовчуванням 0.5 = Half-Kelly).
+        max_leverage: максимальне допустиме плече.
+        
+    Returns:
+        Оптимальний розмір позиції (частка від капіталу), обмежений max_leverage.
+    """
+    if variance <= 1e-12 or not np.isfinite(mean_return) or not np.isfinite(variance):
+        return 0.0
+        
+    f_star = mean_return / variance
+    f_frac = fraction * f_star
+    
+    return float(np.clip(f_frac, 0.0, max_leverage))
+
+
+__all__ = ["portfolio_var", "vol_target_scale", "loss_budget_split", "estimate_tail_dependence", "fractional_kelly"]
