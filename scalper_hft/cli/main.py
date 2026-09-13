@@ -359,6 +359,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--db", default="results/paper_pairs.sqlite", help="Шлях до paper SQLite")
     p.set_defaults(func=_cli_pkg.cmd_is_report)
 
+    p = sub.add_parser("tax-report", help="Податковий аудит-звіт для України (Закон 10225-д)")
+    p.add_argument("--year", type=int, default=0, help="Рік звіту (0 = весь період)")
+    p.add_argument("--db", default="results/paper_pairs.sqlite", help="Шлях до paper SQLite")
+    p.add_argument("--out", default="results/tax", help="Директорія для CSV/JSON експорту")
+    p.set_defaults(func=_cli_pkg.cmd_tax_report)
+
     p = sub.add_parser("experiments", help="Каталог val→OOS експериментів (sparse_basket / ml_strategy)")
     p.add_argument("--catalog", default=None, help="Markdown каталог (за замовч. docs/reports/experiments.md)")
     p.set_defaults(func=_cli_pkg.cmd_experiments)

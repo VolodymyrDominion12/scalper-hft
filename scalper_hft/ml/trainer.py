@@ -137,27 +137,31 @@ def train_walk_forward(
     sample_weights: pd.Series | None = None,
     t1: pd.Series | None = None,
     cost: object | None = None,
+    backend: str = "lightgbm",
 ) -> MlResult:
-    """Walk-forward навчання LightGBM з AFML sample weights.
+    """Walk-forward навчання LightGBM/XGBoost з AFML sample weights.
 
     Args:
         X: матриця фіч (з build_labeled_dataset).
         y: лейбли {-1, +1}.
         train_size: кількість зразків у навчальному вікні.
         test_size: крок / розмір тестового вікна.
-        params: гіперпараметри LightGBM (None = дефолт).
+        params: гіперпараметри (None = дефолт).
         close: ряд цін для симуляції Sharpe.
         sample_weights: ваги зразків (з compute_sample_weights або build_labeled_dataset).
                         None = рівні ваги.
         t1: час завершення лейбла кожного зразка (build_labeled_dataset з
             return_t1=True). Якщо задано — AFML purge: train-зразки, чиї лейбли
             заходять у test-вікно, вилучаються (без label leakage).
+        backend: "lightgbm" (дефолт) або "xgboost" (дослідження §2.1 bake-off).
 
     Returns:
         MlResult з OOS метриками.
     """
-    if not _HAS_LGBM:
-        raise ImportError("Встановіть lightgbm: uv add --optional ml lightgbm scikit-learn")
+    from scalper_hft.ml.backends import is_available, make_backend
+
+    if not is_available(backend):
+        raise ImportError(f"Встановіть {backend}: uv pip install -e '.[ml]'")
 
     params = params or _default_lgbm_params()
     oos_preds: list[pd.Series] = []
@@ -193,15 +197,18 @@ def train_walk_forward(
         else:
             w_tr = None
 
-        model = LGBMClassifier(**params)
-        model.fit(X_tr, y_tr, sample_weight=w_tr)
+        model = make_backend(backend, params)
+        # XGBoost вимагає лейбли 0/1 (не -1/+1); конвертуємо для fit.
+        y_tr_fit = y_tr.replace({-1: 0, 1: 1}) if backend == "xgboost" else y_tr
+        model.fit(X_tr, y_tr_fit, sample_weight=w_tr)
 
         proba = np.asarray(model.predict_proba(X_te))
         classes = list(model.classes_)
 
-        # ймовірність класу +1
-        if 1 in classes:
-            p_pos = proba[:, classes.index(1)]
+        # ймовірність класу +1 (LightGBM: classes [-1,1]; XGBoost: [0,1])
+        target_class = 1 if 1 in classes else 1  # XGBoost: 1 → клас "1"
+        if target_class in classes:
+            p_pos = proba[:, classes.index(target_class)]
         else:
             p_pos = np.full(len(X_te), 0.5)
 

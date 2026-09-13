@@ -654,3 +654,75 @@ def cmd_is_report(args: argparse.Namespace) -> None:
         print("  Калібровка пропущена: mid=fill (немає чесного IS).")
     else:
         print(f"  Потрібно ≥20 fills для калібровки (зараз {report.n_fills})")
+
+
+def cmd_tax_report(args: argparse.Namespace) -> None:
+    """Податковий аудит-звіт для України (Закон 10225-д, дослідження §8).
+
+    Читає ордери з paper SQLite, будує FIFO cost-basis, розрізняє crypto→crypto
+    (не оподатковується) від crypto→fiat (опудатковується 23%), експортує CSV/JSON.
+    Не дає податкових порад — лише структурує дані для бухгалтера.
+    """
+    from scalper_hft.live.store import PaperStore
+    from scalper_hft.live.tax_audit import Fill, build_tax_report, export_csv, export_json
+
+    db = Path(getattr(args, "db", None) or "results/paper_pairs.sqlite")
+    year = int(getattr(args, "year", 0) or 0)
+    out_dir = Path(getattr(args, "out", None) or "results/tax")
+
+    with PaperStore(db) as store:
+        orders = store.all_orders()
+
+    if orders is None or orders.empty:
+        print("Немає ордерів для податкового звіту.")
+        return
+
+    df = orders.copy()
+    if "ts" in df.columns:
+        df["ts_dt"] = pd.to_datetime(df["ts"], utc=True, errors="coerce")
+        if year > 0:
+            df = df[df["ts_dt"].dt.year == year]
+    if df.empty:
+        print(f"Немає ордерів за {year or 'весь період'}.")
+        return
+
+    # Конвертуємо ордери у Fill-и для tax_audit.
+    # symbol — базовий актив пари (прибираємо USDT/USDC з кінця); quote — решта.
+    fills: list[Fill] = []
+    for _, row in df.iterrows():
+        pair = str(row.get("symbol", row.get("pair", "")))
+        # pair типу BTCUSDT → symbol=BTC, quote=USDT
+        symbol = pair
+        quote = "USDT"
+        for q in ("USDT", "USDC", "USD", "UAH", "EUR", "BTC", "ETH"):
+            if pair.endswith(q):
+                symbol = pair[: -len(q)]
+                quote = q
+                break
+        fills.append(
+            Fill(
+                timestamp=str(row.get("ts", "")),
+                symbol=symbol,
+                side=str(row.get("side", "")).lower(),
+                qty=float(row.get("size", 0.0)),
+                price=float(row.get("price", 0.0)),
+                quote=quote,
+                pair=pair,
+            )
+        )
+
+    report = build_tax_report(fills)
+    s = report
+    print(f"Податковий звіт ({year or 'весь період'}): {len(s.events)} подій")
+    print(f"  Crypto→Crypto обмінів (не оподатковується): {s.exchange_events_count}")
+    print(f"  Виходів у фіат (оподатковується 23%): {s.taxable_events_count}")
+    print(f"  Загальна виручка: {s.total_proceeds:.2f}")
+    print(f"  Собівартість (FIFO): {s.total_cost_basis:.2f}")
+    print(f"  Реалізований прибуток: {s.total_realized_pnl:.2f}")
+    print(f"  Податок (23%): {s.total_tax_estimate:.2f}")
+    print("  ⚠ Не є податковою порадою — для звіту зверніться до бухгалтера.")
+
+    csv_path = export_csv(report, out_dir / f"tax_report_{year or 'all'}.csv")
+    json_path = export_json(report, out_dir / f"tax_report_{year or 'all'}.json")
+    print(f"  CSV: {csv_path}")
+    print(f"  JSON: {json_path}")

@@ -39,6 +39,7 @@ from scalper_hft.cli.ops import (
     cmd_record_bookticker,
     cmd_run,
     cmd_sweep,
+    cmd_tax_report,
     cmd_telegram_bot,
 )
 from scalper_hft.cli.pairs import cmd_arb, cmd_pairs, cmd_pairs_portfolio
@@ -140,6 +141,7 @@ __all__ = [
     "cmd_stress",
     "cmd_survival",
     "cmd_sweep",
+    "cmd_tax_report",
     "cmd_telegram_bot",
     "cmd_time_decay",
     "cmd_walkforward",
