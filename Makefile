@@ -193,12 +193,23 @@ job-prune: ## Очистити застарілі задачі та звільн
 # ==============================================================================
 # Paper Trading
 # ==============================================================================
-.PHONY: paper-run-pairs paper-audit
+.PHONY: paper-run-pairs paper-audit vps-paper-sync vps-paper-status vps-paper-watch
 paper-run-pairs: ## Запустити paper pairs трейдер (LEG1=XRPUSDT LEG2=BTCUSDT)
 	$(PYTHON) -m scalper_hft.cli paper-run-pairs --leg1 $(LEG1) --leg2 $(LEG2)
 
 paper-audit: ## Порівняльний аудит paper SQLite vs бектест
 	$(PYTHON) -m scalper_hft.cli paper-audit
+
+# Моніторинг paper-ботів на VPS за локальним знімком (read-only для VPS).
+# Деталі: docs/RUNBOOK_PAPER_MONITORING.md
+vps-paper-sync: ## Підтягнути консистентні копії paper-журналів із VPS → results/vps/
+	bash scripts/sync_vps_paper.sh
+
+vps-paper-status: ## Статус paper-ботів на VPS за локальним знімком (exit 1 = проблема)
+	$(PYTHON) scripts/vps_paper_status.py
+
+vps-paper-watch: ## Цикл синку кожні INTERVAL секунд (за замовч. 300) для дашборду «VPS Paper»
+	INTERVAL=$(if $(INTERVAL),$(INTERVAL),300) bash scripts/vps_paper_watch.sh
 
 # ==============================================================================
 # Цикл RS (regime supervisor): hypothesis → implement → test → audit → analyze

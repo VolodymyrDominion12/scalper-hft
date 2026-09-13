@@ -57,6 +57,7 @@ nav = st.navigation(
         ],
         "Операції": [
             st.Page("app_pages/overview.py", title="Моніторинг", icon=":material/monitoring:", default=True),
+            st.Page("app_pages/vps_paper.py", title="VPS Paper", icon=":material/cloud_sync:"),
             st.Page("app_pages/live_monitor.py", title="Live / WebSocket", icon=":material/sensors:"),
             st.Page("app_pages/multi_exchange.py", title="Multi-Exchange", icon=":material/stacked_line_chart:"),
         ],

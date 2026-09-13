@@ -48,6 +48,13 @@
 3. **FastAPI сервер на VPS** читає дані з SQLite та миттєво транслює їх через WebSocket (`/ws`) та REST ендпоінти.
 4. **Локальний ПК** підключається через зашифрований **SSH-тунель**, що гарантує 100% безпеку без відкриття портів у публічний інтернет.
 
+Два робочі варіанти (не виключають один одного):
+
+| Варіант | Що робить | Латентність | Керування ботами | Зміни на VPS |
+|---|---|---|---|---|
+| **A. Snapshot-синк** (розділ 3) | ssh + консистентні копії SQLite → локальний дашборд/CLI | до 5 хв | немає (лише перегляд) | **немає** |
+| **B. FastAPI на VPS + тунель** (розділ 4) | REST/WebSocket із живого SQLite | субсекундна | pause / no_new_entries / flatten | юніт + `API_SECRET_KEY` |
+
 ---
 
 ## 2. Налаштування оточення (`.env`)
@@ -88,7 +95,102 @@ API_SECRET_KEY=той_самий_ключ_що_й_на_vps_не_менше_32_с
 
 ---
 
-## 3. Покрокова інструкція запуску
+## 3. Варіант A (рекомендований): локальний snapshot-моніторинг
+
+**Нічого не змінюється на VPS.** Локальна машина періодично забирає
+*консистентні* копії paper-журналів, а дашборд і CLI читають їх локально.
+Керування ботами (пауза/flatten) у цьому варіанті недоступне — для нього
+див. Варіант B (розділ 4).
+
+```text
+VPS: 3 paper-боти → results/paper_*.sqlite (WAL)
+        │  sqlite3 backup API (знімок, не «сирі» файли)
+        ▼
+VPS: results/.vps_sync_tmp/*.sqlite + manifest.json (стан юнітів, хеші)
+        │  ssh + tar (одна сесія, тільки читання)
+        ▼
+Локально: results/vps/*.sqlite + manifest.json
+        │
+        ├── сторінка дашборду «VPS Paper» (auto-refresh 30 с)
+        ├── `uv run python scripts/vps_paper_status.py` (exit 1 = проблема)
+        └── `uv run python -m scalper_hft.cli paper-audit --db <копія копії>`
+```
+
+### Крок 1. Один синк
+
+```bash
+bash scripts/sync_vps_paper.sh          # або: make vps-paper-sync
+uv run python scripts/vps_paper_status.py   # або: make vps-paper-status
+```
+
+`VPS_USER`, `VPS_HOST`, `VPS_PORT`, `VPS_PATH`, `SSH_KEY`, `LOCAL_DIR` —
+перевизначаються змінними оточення (дефолти збігаються з `Makefile`).
+
+> [!IMPORTANT]
+> `paper-audit` відкриває журнал через `PaperStore`, а той на старті застосовує
+> міграції схеми (тобто **пише** в БД). На знімку це безпечно, але псує
+> «еталонність» копії та плодить `-wal`, тому аудит ганяйте на копії копії:
+> `cp results/vps/paper_pairs.sqlite /tmp/pa.sqlite && uv run python -m scalper_hft.cli paper-audit --db /tmp/pa.sqlite`.
+> Читання знімка самою сторінкою/`vps_paper_status.py` — строго read-only
+> (`mode=ro&immutable=1`, жодних міграцій).
+
+### Крок 2. Періодичний синк (кожні 5 хв)
+
+```bash
+bash scripts/vps_paper_watch.sh            # або: make vps-paper-watch (INTERVAL=60 …)
+```
+
+Лог: `results/logs/vps_paper_sync.log`. Для автостарту — systemd **user**-юніт
+на локальній машині:
+
+```ini
+# ~/.config/systemd/user/scalper-vps-paper-sync.service
+[Unit]
+Description=scalper-hft: локальний синк VPS paper-журналів
+[Service]
+WorkingDirectory=%h/PycharmProjects/scalper-hft
+ExecStart=/usr/bin/env bash scripts/vps_paper_watch.sh
+Restart=always
+RestartSec=30
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload && systemctl --user enable --now scalper-vps-paper-sync
+```
+
+### Крок 3. Дашборд
+
+```bash
+uv run python -m scalper_hft.cli dashboard     # або: make dashboard
+```
+
+Сторінка **«VPS Paper»** (група «Операції») показує: вік знімка, стан трьох
+юнітів, equity/PnL/угоди по кожному боту, прапорці `control.json`, статус
+hard-гейта pairs, історію equity та кнопку ручного синку.
+
+> [!NOTE]
+> Свіжість вимірюється двома сигналами: вік останнього запису в журналі та
+> стан юніта з маніфесту. Для `ts_momentum` 1d тиша до 24 год — норма
+> (equity пишеться на закритті бару), тому пороги різні: 1h → 3 год,
+> 4h → 6 год, 1d → 26 год.
+
+### Стан інфраструктури (перевірено 2026-09-13)
+
+- Paper-юніти на VPS: `scalper-paper-pairs`, `scalper-paper-tsmom@1d`,
+  `scalper-paper-tsmom@4h` — усі `active`, тег `paper-v0.3.1`.
+- FastAPI **scalper-hft** на VPS **не запущений**: юніта `scalper-api.service`
+  немає, а `API_SECRET_KEY` у VPS `.env` відсутній (lifespan-перевірка
+  `require_safe_api_bind` не пропустила б сервер).
+- Порт `127.0.0.1:8000` на VPS зайнятий **іншим проєктом** (docker-контейнер
+  `analytics-api-1`, `trade-bots analytics`, `/home/tradebot/trade-bots`),
+  тому для Варіанту B беріть вільний порт (напр. 8080).
+- Варіант A жодного з цих обмежень не має: жодних змін на VPS.
+
+---
+
+## 4. Варіант B: FastAPI на VPS + SSH-тунель (real-time і керування)
 
 ### Крок 1. Запуск торгового бота на VPS
 
@@ -161,7 +263,7 @@ uv run python -m scalper_hft.cli dashboard
 
 ---
 
-## 4. Панель керування з локального дашборду
+## 5. Панель керування з локального дашборду
 
 Зі сторінки **Live / WebSocket** локального дашборду ви можете безпечно надсилати сигнали боту на VPS:
 
@@ -174,7 +276,7 @@ uv run python -m scalper_hft.cli dashboard
 
 ---
 
-## 5. Чек-лист щоденного моніторингу
+## 6. Чек-лист щоденного моніторингу
 
 1. **Telegram-канал:**
    * Чи надходять повідомлення про закриття бару щогодини (`step`)?
@@ -193,7 +295,7 @@ uv run python -m scalper_hft.cli dashboard
 
 ---
 
-## 6. Діагностика та усунення несправностей
+## 7. Діагностика та усунення несправностей
 
 ### 1. Помилка `Connection refused` при перевірці REST зв'язку
 * **Причина:** SSH-тунель не піднято або API сервер на VPS вимкнено.

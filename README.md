@@ -179,6 +179,10 @@ uv run python -m scalper_hft.cli dashboard
 
 Мультисторінка (`st.navigation`, сторінки у `scalper_hft/app_pages/`):
 - **Моніторинг** — книга стратегій, свіжість кешу, paper pairs, топ sweep;
+- **VPS Paper** — три paper-боти на VPS за локальним знімком журналів
+  (`make vps-paper-sync`, сторінка читає `results/vps/`, див.
+  [docs/RUNBOOK_PAPER_MONITORING.md](docs/RUNBOOK_PAPER_MONITORING.md));
+- **Live / WebSocket** — real-time через FastAPI на VPS і SSH-тунель (Варіант B);
 - **Бектест** — черга `backtest`/`pairs`, графік угод або спреду, діагностика;
 - **Дослідження** — sweep, filter attribution, equity, аудит комірки, режими;
 - **Задачі** — черга job (`results/jobs.sqlite`), логи, cancel / rerun, фільтри;

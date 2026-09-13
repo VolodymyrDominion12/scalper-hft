@@ -51,6 +51,13 @@ uv run python -m scalper_hft.cli job worker --jobs 2
 uv run python -m scalper_hft.cli backtest --strategy pairs_arb --symbol BTCUSDT --interval 1h --days 90 --enqueue
 uv run python -m scalper_hft.cli job list
 uv run python -m scalper_hft.cli record-bookticker --symbol BTCUSDT --minutes 60
+
+# Моніторинг VPS paper (read-only: знімок копій журналів, VPS не змінюється)
+bash scripts/sync_vps_paper.sh                       # → results/vps/ + manifest.json
+uv run python scripts/vps_paper_status.py            # exit 1 = проблема
+bash scripts/vps_paper_watch.sh                      # цикл синку кожні 5 хв
+# Дашборд: сторінка «VPS Paper» (група «Операції») читає results/vps/
+# paper-audit відкриває PaperStore (міграції → запис у БД) — ганяти на копії копії
 ```
 
 ## Пастки, на які вже наступали
