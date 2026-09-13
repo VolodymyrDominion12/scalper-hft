@@ -99,7 +99,8 @@ def test_fetch_recent_asks_for_recent_candles_not_listing_start(monkeypatch: pyt
 
     _fetch_recent("BTCUSDT", "1h", limit=600)
 
-    since_ms = client.fetch_klines.call_args.kwargs["since_ms"]
+    # Перша сторінка — не остання: пагінація добирає вікно до поточного моменту.
+    since_ms = client.fetch_klines.call_args_list[0].kwargs["since_ms"]
     assert since_ms > 0, "нуль — це startTime=0, тобто найстаріші свічки лістингу"
     age_hours = (pd.Timestamp.now("UTC").tz_localize(None).timestamp() * 1000 - since_ms) / 3_600_000
     # 600 годинних барів + запас ×2 → трохи більше 1200 годин.
@@ -116,3 +117,108 @@ def test_recent_since_ms_is_timeframe_aware() -> None:
     assert recent_since_ms("1m", 1, now=now) == int((now - pd.Timedelta(minutes=2)).timestamp() * 1000)
     with pytest.raises(ValueError):
         recent_since_ms("1w", 10, now=now)
+
+
+class _BinanceLikeClient:
+    """Мок Binance/ccxt: віддає ПЕРШІ `limit` барів від `startTime`, без майбутніх.
+
+    Саме така поведінка (перші барів вікна + стеля на розмір батчу) робила
+    pad-вікно ×2 без tail-слайсу пасткою.
+    """
+
+    def __init__(self, interval_ms: int, page_cap: int = 1000) -> None:
+        self.interval_ms = interval_ms
+        self.page_cap = page_cap
+        self.calls: list[tuple[int, int]] = []
+
+    def fetch_klines(self, symbol: str, timeframe: str, since_ms: int, limit: int = 1000) -> list[list[float]]:
+        self.calls.append((int(since_ms), int(limit)))
+        cap = min(int(limit), self.page_cap)
+        now_ms = _now_ms()
+        last_bar = (now_ms // self.interval_ms) * self.interval_ms
+        rows: list[list[float]] = []
+        for i in range(cap):
+            ts = int(since_ms) + i * self.interval_ms
+            if ts > last_bar:
+                break
+            rows.append([ts, 100.0, 101.0, 99.0, 100.0, 1.0])
+        return rows
+
+
+def _now_ms() -> float:
+    return pd.Timestamp.now("UTC").tz_localize(None).timestamp() * 1000
+
+
+@pytest.mark.parametrize(
+    ("interval", "limit", "interval_ms"),
+    [("1h", 600, 3_600_000), ("1d", 600, 86_400_000), ("1h", 800, 3_600_000), ("4h", 600, 14_400_000)],
+)
+def test_fetch_recent_klines_window_ends_at_now(interval: str, limit: int, interval_ms: int) -> None:
+    """Регресія 2026-09-13: боти бачили старшу половину pad-вікна.
+
+    Було: `fetch_klines(since=now−2L, limit=L)` → останній бар за L барів до
+    `now` (pairs 1h → 33 доби, ts_momentum 1d → 600 діб). Має бути tail.
+    """
+    from scalper_hft.data.client import MAX_KLINES_PER_REQUEST, fetch_recent_klines
+
+    client = _BinanceLikeClient(interval_ms)
+    batch = fetch_recent_klines(client, "BTCUSDT", interval, limit)
+
+    assert len(batch) == limit
+    since_ms, asked = client.calls[-1]
+    assert asked <= MAX_KLINES_PER_REQUEST
+    # вікно запиту мусить доходити до поточного моменту
+    assert since_ms + asked * interval_ms >= _now_ms() - interval_ms
+    age_bars = (_now_ms() - batch[-1][0]) / interval_ms
+    assert 0 <= age_bars <= 2, f"останній бар застарілий на {age_bars:.1f} барів"
+
+
+def test_fetch_recent_klines_respects_request_cap() -> None:
+    """limit=800, pad=2 → 1600 > ліміту Binance: вікно все одно має доходити до now."""
+    from scalper_hft.data.client import MAX_KLINES_PER_REQUEST, fetch_recent_klines
+
+    client = _BinanceLikeClient(3_600_000)
+    batch = fetch_recent_klines(client, "LINKUSDT", "1h", 800)
+
+    _, asked = client.calls[-1]
+    assert asked == MAX_KLINES_PER_REQUEST
+    assert (_now_ms() - batch[-1][0]) / 3_600_000 <= 2
+
+
+def test_fetch_recent_short_history_returns_all_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Символ, що торгується менше за вікно: повертаємо все, що є, без падіння."""
+    from scalper_hft.data.client import fetch_recent_klines
+
+    client = MagicMock()
+    client.fetch_klines.return_value = [[1_700_000_000_000 + i * 3_600_000, 1.0, 1.0, 1.0, 1.0, 1.0] for i in range(5)]
+
+    batch = fetch_recent_klines(client, "NEWUSDT", "1h", 600)
+    assert len(batch) == 5
+
+
+def test_pairs_fetch_ohlcv_is_not_stale(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`pairs_runner._fetch_ohlcv` має віддавати свіжі 1h-бари, не 33-добової давнини."""
+    from scalper_hft.live.pairs_runner import _fetch_ohlcv
+
+    monkeypatch.setattr(
+        "scalper_hft.live.pairs_runner.ExchangeClient",
+        lambda *a, **k: _BinanceLikeClient(3_600_000),
+    )
+    df = _fetch_ohlcv("LINKUSDT", "1h")
+
+    assert len(df) == 800
+    age_hours = (_now_ms() - df.index[-1].timestamp() * 1000) / 3_600_000
+    assert 0 <= age_hours <= 2, f"останній 1h-бар застарілий на {age_hours:.1f} год"
+
+
+def test_ts_momentum_fetch_recent_is_not_stale(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`paper_runner._fetch_recent` для 1d має віддавати свіжі денні бари, не 2025 рік."""
+    monkeypatch.setattr(
+        "scalper_hft.live.paper_runner.ExchangeClient",
+        lambda *a, **k: _BinanceLikeClient(86_400_000),
+    )
+    df = _fetch_recent("BTCUSDT", "1d")
+
+    assert len(df) == 600
+    age_days = (_now_ms() - df.index[-1].timestamp() * 1000) / 86_400_000
+    assert 0 <= age_days <= 2, f"останній 1d-бар застарілий на {age_days:.1f} діб"

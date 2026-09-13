@@ -164,12 +164,12 @@ class PairsLiveAdapter(PairsEngine):
         1m-свічки (BTCUSDT ~10 300 замість ~77 000) — а від неї залежать
         entry_price, UPNL, equity і всі ризик-гейти/сайзинг (аудит 2026-09-11, K6).
         """
-        from scalper_hft.data.client import recent_since_ms
+        from scalper_hft.data.client import fetch_recent_klines
 
         try:
             if not hasattr(self.client, "fetch_klines"):
                 raise KillSwitch(f"{self.pid}: немає mark-ціни {symbol} (клієнт без fetch_klines)")
-            batch = self.client.fetch_klines(symbol, "1m", since_ms=recent_since_ms("1m", 1), limit=1)
+            batch = fetch_recent_klines(self.client, symbol, "1m", 1)
         except KillSwitch:
             raise
         except Exception as exc:

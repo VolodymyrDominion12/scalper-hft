@@ -51,8 +51,9 @@ def recent_since_ms(interval: str, limit: int, *, now: Any = None, pad: float = 
     return int((now_ts - bar).timestamp() * 1000)
 
 
-# Binance USDT-M: максимум свічок за один запит.
-MAX_KLINES_PER_REQUEST = 1500
+# Binance USDT-M віддає за один запит не більше ніж ~1000 свічок, тому
+# pad-вікно доводиться добирати пагінацією (інакше вікно не доходить до now).
+MAX_KLINES_PER_REQUEST = 1000
 
 
 def fetch_recent_klines(
@@ -63,7 +64,7 @@ def fetch_recent_klines(
     *,
     pad: float = 2.0,
 ) -> list[list[Any]]:
-    """Останні `limit` свічок таймфрейму `interval` (tail, а не перші з вікна).
+    """Останні `limit` свічок таймфрейму `interval` — саме tail, не початок вікна.
 
     Пастка (аудит 2026-09-13). `recent_since_ms(..., pad=2)` дає
     `startTime = now − 2×limit×interval`, але Binance/ccxt повертають перші
@@ -74,16 +75,45 @@ def fetch_recent_klines(
         pairs 4h             → 133 доби тому
         ts_momentum 1d (600) → 600 діб тому
 
-    Тут вікно запиту й розмір батчу звʼязані (`raw_limit` барів назад і
-    `raw_limit` у запиті), тому tail завжди доходить до поточної свічки,
-    а `pad` лишається як запас на незакритий бар.
+    Тут пад-вікно добирається сторінками до поточного моменту, дублікати
+    відкидаються, і повертається tail. `pad` лишається запасом на незакритий
+    бар: без нього після `closed_klines` могло лишитись `limit − 1` закритих.
     """
-    raw_limit = max(1, min(int(int(limit) * float(pad)), MAX_KLINES_PER_REQUEST))
-    since_ms = recent_since_ms(interval, raw_limit, pad=1.0)
-    batch = client.fetch_klines(symbol, interval, since_ms=since_ms, limit=raw_limit)
-    if limit > 0 and len(batch) > limit:
-        return batch[-int(limit) :]
-    return batch
+    import math
+
+    import pandas as pd
+
+    from scalper_hft.data.downloader import _interval_ms
+
+    want = max(1, int(limit))
+    step = _interval_ms(interval)
+    now_ms = int(pd.Timestamp.now("UTC").tz_localize(None).timestamp() * 1000)
+    cursor = recent_since_ms(interval, want, pad=pad)
+    max_pages = int(math.ceil(want * float(pad) / MAX_KLINES_PER_REQUEST)) + 1
+
+    rows: list[list[Any]] = []
+    for _ in range(max_pages):
+        batch = client.fetch_klines(symbol, interval, since_ms=cursor, limit=MAX_KLINES_PER_REQUEST)
+        if not batch:
+            break
+        rows.extend(batch)
+        nxt = int(batch[-1][0]) + step
+        if nxt <= cursor or nxt >= now_ms:
+            break
+        cursor = nxt
+
+    if not rows:
+        return []
+    rows.sort(key=lambda r: int(r[0]))
+    deduped: list[list[Any]] = []
+    seen: set[int] = set()
+    for row in rows:
+        ts = int(row[0])
+        if ts in seen:
+            continue
+        seen.add(ts)
+        deduped.append(row)
+    return deduped[-want:] if len(deduped) > want else deduped
 
 
 class ExchangeClient:

@@ -196,13 +196,15 @@ def _funding_between(funding: pd.DataFrame | None, prev: pd.Timestamp | None, ts
 
 
 def _fetch_ohlcv(symbol: str, interval: str, limit: int = _RECENT_BARS) -> pd.DataFrame:
-    from scalper_hft.data.client import recent_since_ms
+    from scalper_hft.data.client import fetch_recent_klines
 
     client = ExchangeClient()
     # `since_ms` — реальний час, НЕ 0: з нулем Binance віддає найстаріші свічки
     # лістингу (див. recent_since_ms), через що pairs-демон назавжди застрягав
-    # на `hold:same_bar`.
-    batch = client.fetch_klines(symbol, interval, since_ms=recent_since_ms(interval, limit), limit=limit)
+    # на `hold:same_bar`. Другий дефект того ж місця (аудит 2026-09-13):
+    # pad-вікно без tail-слайсу давало дані на 33 доби в минулому (1h/800) —
+    # див. `fetch_recent_klines`.
+    batch = fetch_recent_klines(client, symbol, interval, limit)
     if not batch:
         raise RuntimeError(f"Немає даних для {symbol}")
     df = pd.DataFrame(batch, columns=["ts", "open", "high", "low", "close", "volume"])

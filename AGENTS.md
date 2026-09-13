@@ -63,3 +63,11 @@ uv run python -m scalper_hft.cli record-bookticker --symbol BTCUSDT --minutes 60
   inf profit_factor, |Sharpe|>20) — вони не потрапляють у рейтинги та haircut.
   `mode=backtest` для `ml_strategy`/`ensemble` — внутрішній walk-forward, для решти
   стратегій — in-sample: порівнювати їх в одній таблиці не можна (haircut групує за mode).
+- **`recent_since_ms` без tail-слайсу** (фікс 2026-09-13, тег `paper-v0.3.1`): pad-вікно
+  ×2 дає `startTime = now − 2×limit×interval`, але Binance віддає ПЕРШІ `limit` барів
+  від `startTime` і не більше ніж ~1000 за запит. Запит тим самим `limit` → paper-боти
+  бачили старшу половину вікна (pairs 1h — 33 доби, ts_momentum 1d — 600 діб тому;
+  у логах це виглядає як `Новий день <стара дата>`). Тепер усі live/paper-шляхи йдуть
+  через `data.client.fetch_recent_klines` (пагінація + dedupe + tail). **Будь-який новий
+  шлях завантаження «останніх N свічок» — тільки через цей хелпер**, не через
+  `fetch_klines(since_ms=recent_since_ms(...))` напряму.
