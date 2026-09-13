@@ -56,12 +56,14 @@ def _fetch_recent(symbol: str, interval: str, limit: int = _RECENT_BARS) -> pd.D
 
     Увага: `since_ms` мусить бути реальним часом. Історично тут стояло `0`
     (`0 is not None` → ccxt ставить `startTime=0`), і Binance віддавав
-    НАЙСТАРІШІ свічки лістингу — див. `recent_since_ms`.
+    НАЙСТАРІШІ свічки лістингу — див. `recent_since_ms`. Другий дефект того ж
+    місця (аудит 2026-09-13): pad-вікно без tail-слайсу давало старшу половину
+    барів (1d/600 → дані 600 діб тому) — див. `fetch_recent_klines`.
     """
-    from scalper_hft.data.client import recent_since_ms
+    from scalper_hft.data.client import fetch_recent_klines
 
     client = ExchangeClient()  # публічні дані, без ключів
-    batch = client.fetch_klines(symbol, interval, since_ms=recent_since_ms(interval, limit), limit=limit)
+    batch = fetch_recent_klines(client, symbol, interval, limit)
     if not batch:
         raise RuntimeError(f"Немає даних для {symbol}")
     df = pd.DataFrame(batch, columns=["ts", "open", "high", "low", "close", "volume"])

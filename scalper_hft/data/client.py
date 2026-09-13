@@ -51,6 +51,41 @@ def recent_since_ms(interval: str, limit: int, *, now: Any = None, pad: float = 
     return int((now_ts - bar).timestamp() * 1000)
 
 
+# Binance USDT-M: максимум свічок за один запит.
+MAX_KLINES_PER_REQUEST = 1500
+
+
+def fetch_recent_klines(
+    client: Any,
+    symbol: str,
+    interval: str,
+    limit: int,
+    *,
+    pad: float = 2.0,
+) -> list[list[Any]]:
+    """Останні `limit` свічок таймфрейму `interval` (tail, а не перші з вікна).
+
+    Пастка (аудит 2026-09-13). `recent_since_ms(..., pad=2)` дає
+    `startTime = now − 2×limit×interval`, але Binance/ccxt повертають перші
+    `limit` барів ВІД `startTime`. Запит тим самим `limit` віддавав старшу
+    половину вікна, тож paper/live-шляхи бачили застарілі дані:
+
+        pairs 1h (limit=800) → останній бар 33 доби тому
+        pairs 4h             → 133 доби тому
+        ts_momentum 1d (600) → 600 діб тому
+
+    Тут вікно запиту й розмір батчу звʼязані (`raw_limit` барів назад і
+    `raw_limit` у запиті), тому tail завжди доходить до поточної свічки,
+    а `pad` лишається як запас на незакритий бар.
+    """
+    raw_limit = max(1, min(int(int(limit) * float(pad)), MAX_KLINES_PER_REQUEST))
+    since_ms = recent_since_ms(interval, raw_limit, pad=1.0)
+    batch = client.fetch_klines(symbol, interval, since_ms=since_ms, limit=raw_limit)
+    if limit > 0 and len(batch) > limit:
+        return batch[-int(limit) :]
+    return batch
+
+
 class ExchangeClient:
     """Тонка обгортка над ccxt для підтримуваних бірж."""
 
