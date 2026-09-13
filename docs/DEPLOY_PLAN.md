@@ -243,16 +243,29 @@ live-vX.Y.Z       — той самий SHA після Paper-Gate (фаза 3)
 
 - [x] Фаза 0: snapshot/restore; `--daemon`; control flags; SIGTERM save
 - [x] Фаза 1 (код): `deploy/scalper-paper-pairs.service`; SHA в Telegram на старті; `.env` не в релізі
-- [x] Фаза 1 (реліз): тег `paper-v0.1.0` створено (2026-09-08, SHA з regime_scale overlay)
-- [ ] Фаза 2: 8 тижнів paper на VPS; `paper-audit` зелений
+- [x] Фаза 1 (реліз): теги `paper-v0.1.0` (2026-09-08, SHA з regime_scale overlay) і `paper-v0.3.0` (2026-09-13, набір із трьох paper-юнітів)
+- [ ] Фаза 2: 8 тижнів paper на VPS (старт 2026-09-13); `paper-audit` зелений; трекінг-ерор vs BT у межах maxDD ≤ BT × 1.5
 - [x] Фаза 3 (код): live-адаптер ніг `PairsLiveAdapter` + `PairsLiveRunner` під моком; paper як і раніше без реальних ордерів
 - [ ] Фаза 4: не стартує без явного запиту і закритої фази 2
 - [ ] `uv run pytest tests/ -q` зелений після кожної кодової фази
 - [ ] На VPS немає `git pull origin main`; `.env` не в релізі
 
-## Стан коду (2026-09-03)
+## Стан коду (2026-09-13)
 
 Фази 0–1 у репозиторії: persist `PaperAccount`, `--daemon`, `control.json`,
-systemd-юніт і `scripts/deploy_paper.sh`. Теги `paper-v0.1.0` і `paper-v0.2.0` є.
-Наступне — **фаза 2**: 8 тижнів paper-gate на VPS на `paper-v0.2.0` (не `git pull main`).
-Не вмикати live. Chase на live-адаптері не дефолт paper (див. ROADMAP Phase 6.6 L0).
+systemd-юніти і `scripts/deploy_paper.sh`. Теги `paper-v0.1.0`, `paper-v0.2.0`,
+`paper-v0.3.0`. На VPS (`tradebot@46.36.216.98`, репо `~/scalper-hft`) крутиться
+набір paper-моніторингу з тегу `paper-v0.3.0`:
+
+| Юніт | Комірка | Статус |
+|---|---|---|
+| `scalper-paper-pairs` | pairs_arb LINK/BTC 1h maker (regime_scale 0.25) | validated, гейт PASS |
+| `scalper-paper-tsmom@1d` | ts_momentum 1d long-only CORE_15 | monitoring (iter11) |
+| `scalper-paper-tsmom@4h` | ts_momentum 4h long-only CORE_15 | monitoring (iter11) |
+
+Наступне — **фаза 2**: 8 тижнів безрозривного paper-gate на цих трьох юнітах
+(не `git pull main`). Не вмикати live. Chase на live-адаптері не дефолт paper
+(див. ROADMAP Phase 6.6 L0). Directional `paper-run --strategy …` лишається
+заблокованим: PASS-вердиктів для односимвольних комірок немає (усі FAIL).
+
+Деталі встановлення/оновлення: [deploy/README.md](../deploy/README.md).

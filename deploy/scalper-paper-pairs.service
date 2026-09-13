@@ -1,5 +1,5 @@
 # systemd user-юніт: paper pairs портфель (демон)
-
+#
 # Встановлення (на машині, де крутиться бот):
 #   mkdir -p ~/.config/systemd/user
 #   cp deploy/scalper-paper-pairs.service ~/.config/systemd/user/
@@ -8,11 +8,18 @@
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now scalper-paper-pairs
 #
-# Реліз: scripts/deploy_paper.sh paper-v0.1.0
+# Шляхи нижче — під VPS-layout (~/scalper-hft). На машині розробника
+# (~/PycharmProjects/scalper-hft) замініть %h/scalper-hft на фактичний каталог.
+#
+# Реліз: scripts/deploy_paper.sh paper-v0.3.0
 #   (checkout тегу, НЕ git pull main, НЕ чіпає .env)
 #
 # Зупинка входів без рестарту: results/control.json
 #   {"no_new_entries": true}
+#
+# Telegram: додати --notify в ExecStart + TELEGRAM_BOT_TOKEN/CHAT_ID у .env.
+# Гейт: старт можливий лише за свіжого PASS у results/audit_verdicts.jsonl
+# для комірки LINKUSDT/BTCUSDT 1h (див. live/audit_gate.py).
 
 [Unit]
 Description=scalper-hft paper pairs portfolio (daemon)
@@ -21,10 +28,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/PycharmProjects/scalper-hft
-EnvironmentFile=%h/PycharmProjects/scalper-hft/.env
+WorkingDirectory=%h/scalper-hft
+EnvironmentFile=%h/scalper-hft/.env
 Environment=PYTHONUNBUFFERED=1
-ExecStart=%h/PycharmProjects/scalper-hft/.venv/bin/python -m scalper_hft.cli paper-run-pairs --portfolio --daemon --notify
+ExecStart=%h/scalper-hft/.venv/bin/python -m scalper_hft.cli paper-run-pairs --portfolio --daemon --control results/control.json
 KillSignal=SIGTERM
 TimeoutStopSec=30
 Restart=always

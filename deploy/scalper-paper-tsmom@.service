@@ -1,0 +1,37 @@
+# systemd user-юніт (шаблон): paper-моніторинг ts_momentum long-only CORE_15.
+#
+# Інстанс = таймфрейм. Кожен інстанс має СВІЙ SQLite-журнал
+# (results/paper_ts_momentum_<tf>.sqlite) — інакше equity/снапшоти 1d і 4h
+# змішуються в одному файлі.
+#
+# Встановлення:
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/scalper-paper-tsmom@.service ~/.config/systemd/user/
+#   loginctl enable-linger "$USER"
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now scalper-paper-tsmom@1d scalper-paper-tsmom@4h
+#
+# Шляхи нижче — під VPS-layout (~/scalper-hft); на машині розробника замініть.
+#
+# Pre-registration: docs/reports/hypothesis_ts_momentum.md (lookback=20, long-only).
+# Керування без рестарту: results/control.json {"pause": true} —
+# pause діє на обидва інстанси (спільний файл).
+
+[Unit]
+Description=scalper-hft paper ts_momentum CORE_15 (%i, daemon)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/scalper-hft
+EnvironmentFile=%h/scalper-hft/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/scalper-hft/.venv/bin/python -m scalper_hft.cli paper-run-ts-momentum --interval %i --daemon --control results/control.json --db results/paper_ts_momentum_%i.sqlite
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
