@@ -369,9 +369,9 @@ P3 (окремий HFT-трек, не pairs):
 | G12 | CVaR portfolio | P1 | 1–2 | ні | ✅ |
 | G11 | Fractional Kelly wire | P1 | 1 | ні | ✅ |
 | G1 | VPIN/Hawkes gate (опція) | P1 | 1–2 | ні | ✅ |
-| G5 | Time stop pairs_arb | P2 | 1–2 | ні | Paper Gate |
+| G5 | Time stop pairs_arb | P2 | 1–2 | ні | ✅ |
 | G2 | XGBoost bake-off | P2 | 3–4 | ні | Paper Gate |
-| G10 | EGARCH/HAR-RV wire | P2 | 2–3 | ні | Paper Gate |
+| G10 | EGARCH/HAR-RV wire | P2 | 2–3 | ні | ✅ |
 | G17 | Tax audit-log UA | P2 | 2–3 | ні | — |
 | G3 | DeepLOB revival | P3 | — | ні | L2 archive |
 | G6 | Live MM (AS/GLFT) | P3 | — | ні | G15, G16, L2 |

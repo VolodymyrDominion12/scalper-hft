@@ -150,6 +150,12 @@ class Settings:
     pairs_vpin_filter: bool = field(default_factory=lambda: _env_bool("PAIRS_VPIN_FILTER", False))
     pairs_vpin_threshold: float = field(default_factory=lambda: _env_float("PAIRS_VPIN_THRESHOLD", 0.9))
     pairs_hawkes_threshold: float = field(default_factory=lambda: _env_float("PAIRS_HAWKES_THRESHOLD", 0.7))
+    # Time Stop для pairs_arb (дослідження §3.3): примусово закриває позицію
+    # після PAIRS_TIME_STOP_MULT × half-life барів утримання (коінтеграція зламана).
+    # Дефолт False — лише після OOS PASS.
+    pairs_time_stop: bool = field(default_factory=lambda: _env_bool("PAIRS_TIME_STOP", False))
+    pairs_time_stop_mult: float = field(default_factory=lambda: _env_float("PAIRS_TIME_STOP_MULT", 2.0))
+    pairs_time_stop_lookback: int = field(default_factory=lambda: _env_int("PAIRS_TIME_STOP_LOOKBACK", 480))
     # Per-symbol notional cap + margin/liquidation proximity (1D): жорсткий ліміт
     # ноціоналу на одну монету (частка equity) + блок входів, коли сумарне плече
     # наближається до max_leverage (за `liquidation_proximity_buffer`).
@@ -163,6 +169,10 @@ class Settings:
     # у VALIDATED_PAIRS більше однієї пари.
     enable_vol_target: bool = field(default_factory=lambda: _env_bool("ENABLE_VOL_TARGET", False))
     vol_target_ann: float = field(default_factory=lambda: _env_float("VOL_TARGET_ANN", 0.10))
+    # Метод оцінки волатильності для vol-target (дослідження §6.1):
+    # realized = rolling std (дефолт); egarch = EGARCH(1,1) з асиметрією;
+    # har_rv = HAR-RV (денна/тижнева/місячна компоненти).
+    pairs_vol_method: str = field(default_factory=lambda: os.getenv("PAIRS_VOL_METHOD", "realized"))
     # Fractional Kelly sizing overlay (дослідження §6.2): множник ноціоналу
     # входу = clip(fractional_kelly(μ, σ², KELLY_FRACTION), 0, 1). 0.0 = вимкнено
     # (дефолт). Рекомендоване 0.25 (Quarter-Kelly) лише після OOS PASS.

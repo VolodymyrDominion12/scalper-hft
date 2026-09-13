@@ -119,6 +119,23 @@ params:
     default: 0.7
     description: >
       Поріг |Hawkes-дисбалансу| (0–1) для блокування. 0.7 = сильний спрямований потік.
+  time_stop:
+    default: false
+    description: >
+      Примусово закривати позицію після time_stop_mult × half-life барів
+      утримання. Дослідження §3.3: якщо позиція утримується довше 2 періодів
+      напіврозпаду, коінтеграція зламана — алгоритм примусово ліквідує її.
+      На відміну від інших гейтів, time stop форсує ВИХІД (sig=0), а не лише
+      блокує входи. Half-life оцінюється каузально (на спреді ≤ t). Дефолт off
+      — лише після OOS PASS.
+  time_stop_mult:
+    default: 2.0
+    description: >
+      Множник half-life для time stop (2.0 = 2 періоди напіврозпаду з дослідження §3.3).
+  time_stop_lookback:
+    default: 480
+    description: >
+      Вікно для rolling-оцінки half-life (у барах). 480 = 20 днів на 1h.
 
 invariants:
   no_lookahead: true

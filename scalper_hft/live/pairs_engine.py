@@ -200,6 +200,8 @@ class PairsEngine:
         self.kelly_fraction = float(getattr(settings, "kelly_fraction", 0.0))
         self.kelly_lookback = max(int(getattr(settings, "kelly_lookback", 168)), 20)
         self._kelly_size_mult = 1.0
+        # Метод оцінки vol для vol-target (дослідження §6.1).
+        self.vol_method = str(getattr(settings, "pairs_vol_method", "realized")).lower().strip()
         self.week_start_equity = account.equity
         self._last_day: object | None = None
         self._last_week: tuple[int, int] | None = None
@@ -283,13 +285,18 @@ class PairsEngine:
         return True, decision.reason
 
     def _update_vol_size_mult(self) -> None:
-        """Переважити _vol_size_mult за realized vol спреду (каузально, ≤ t).
+        """Переважити _vol_size_mult за vol спреду (каузально, ≤ t).
 
         Дельта-нейтральна пара заробляє Δlog-спреду на одиницю ноціоналу,
         тому цільова волатильність позиції досягається масштабуванням
         ноціоналу на target/realized. Кліп [0, 1]: vol-target лише зменшує
         розмір (без плеча понад базовий size_pct). При нестачі історії або
         нульовій волатильності — 1.0 (без зміни поведінки).
+
+        Метод оцінки vol (`pairs_vol_method`, дослідження §6.1):
+        - realized: rolling std (дефолт, backward-compat)
+        - egarch: EGARCH(1,1) з асиметрією (leverage effect) — краще для крахів
+        - har_rv: HAR-RV (денна/тижнева/місячна компоненти) — довга пам'ять
         """
         if self.vol_target_ann is None:
             self._vol_size_mult = 1.0
@@ -298,11 +305,45 @@ class PairsEngine:
         if len(diffs) < 20:
             self._vol_size_mult = 1.0
             return
-        realized = float(diffs.std(ddof=0)) * float(np.sqrt(self.bars_per_year))
+        method = str(getattr(self, "vol_method", "realized")).lower().strip()
+        realized = self._estimate_ann_vol(diffs, method=method)
         if realized <= 0 or not np.isfinite(realized):
             self._vol_size_mult = 1.0
             return
         self._vol_size_mult = float(np.clip(self.vol_target_ann / realized, 0.0, 1.0))
+
+    def _estimate_ann_vol(self, diffs: pd.Series, method: str = "realized") -> float:
+        """Річна волатильність Δlog-спреду за методом `method` (каузально).
+
+        - realized: std(diffs) × √bars_per_year (дефолт).
+        - egarch: EGARCH(1,1) forecast останнього бару × √bars_per_year.
+        - har_rv: HAR-RV forecast на |diffs| як RV proxy × √bars_per_year.
+        Fallback на realized при помилці/нестачі даних.
+        """
+        ann = float(np.sqrt(self.bars_per_year))
+        if method == "egarch":
+            try:
+                from scalper_hft.features.volatility import egarch_forecast
+
+                fc = egarch_forecast(diffs, window=min(len(diffs), 500), refit_every=100, warmup=50)
+                last = float(fc.dropna().iloc[-1]) if not fc.dropna().empty else 0.0
+                if last > 0 and np.isfinite(last):
+                    return last * ann
+            except Exception:  # noqa: BLE001
+                pass
+        elif method == "har_rv":
+            try:
+                from scalper_hft.features.volatility import har_rv_forecast
+
+                rv = diffs.abs()  # |Δ| як proxy для realized vol
+                fc = har_rv_forecast(rv, min_window=min(len(diffs), 100))
+                last = float(fc.dropna().iloc[-1]) if not fc.dropna().empty else 0.0
+                if last > 0 and np.isfinite(last):
+                    return last * ann
+            except Exception:  # noqa: BLE001
+                pass
+        # дефолт / fallback
+        return float(diffs.std(ddof=0)) * ann
 
     def _update_kelly_size_mult(self) -> None:
         """Переважити _kelly_size_mult за Fractional Kelly (каузально, ≤ t).

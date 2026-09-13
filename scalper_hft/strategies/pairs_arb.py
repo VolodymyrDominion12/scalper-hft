@@ -368,3 +368,52 @@ class PairsArb(Strategy):
         # Блокуємо лише нові входи; позиції що вже відкриті — не перекриваємо.
         holding = sig.shift(1).fillna(0.0) != 0.0
         return sig.where(~block | holding, other=0)
+
+    @staticmethod
+    def _apply_time_stop(
+        sig: pd.Series,
+        spread: pd.Series,
+        mult: float = 2.0,
+        lookback: int = 480,
+        step: int = 60,
+    ) -> pd.Series:
+        """Примусово закриває позицію після `mult × half-life` барів утримання.
+
+        Дослідження §3.3: якщо позиція утримується довше 2 періодів напіврозпаду,
+        коінтеграція зламана — алгоритм примусово ліквідує її. Half-life оцінюється
+        каузально (на спреді ≤ t) з вікна `lookback`, обчислюється кожні `step`
+        барів (як ADF-гейт) для швидкості.
+
+        На відміну від інших гейтів, time stop форсує ВИХІД (sig=0), а не лише
+        блокує входи. Після time-stop виходу можливий повторний вхід, якщо z-score
+        все ще екстремальний (наступний бар).
+        """
+        from scalper_hft.features.signal_processing import estimate_half_life
+
+        n = len(spread)
+        if n < lookback + step:
+            return sig
+
+        # Sparse rolling half-life (кожні `step` барів) — каузально, без lookahead.
+        hl = pd.Series(np.nan, index=spread.index)
+        calc_idx = np.arange(lookback, n, step)
+        if len(calc_idx) == 0 or calc_idx[-1] != n - 1:
+            calc_idx = np.append(calc_idx, n - 1)
+        for i in calc_idx:
+            slice_data = spread.iloc[i - lookback : i].dropna()
+            if len(slice_data) > lookback // 2:
+                hl.iloc[i] = estimate_half_life(slice_data, min_obs=20)
+        hl = hl.ffill().fillna(float("inf"))
+
+        # Тривалість утримання: кількість послідовних non-zero барів до поточного.
+        # run_id змінюється при кожному sig==0 → cumsum дає унікальний id для кожного run.
+        run_id = (sig == 0).cumsum()
+        holding_bars = sig.ne(0).astype(int).groupby(run_id).cumsum()
+
+        # Time stop: holding_bars > mult × half_life → форсуємо вихід (sig=0).
+        # inf half-life (нема mean-reversion) → time stop ніколи не спрацьовує.
+        max_hold = mult * hl
+        max_hold = max_hold.replace([float("inf")], np.inf)
+        stop = holding_bars > max_hold
+        stop = stop.fillna(False)  # NaN у holding_bars (де sig==0) → не стопаємо
+        return sig.where(~stop, other=0)
