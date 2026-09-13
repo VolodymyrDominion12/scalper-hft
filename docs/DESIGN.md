@@ -81,6 +81,17 @@ Paper/testnet за замовчуванням (`DRY_RUN=true`).
 - Звірка (reconciliation): `fetch_positions` + kill-switch у `run_trader_once` та `PairsPortfolioRunner.step` (paper/`DRY_RUN=true` — no-op);
 - Exit ladders (`live/exit_ladders.py`) — бібліотечний модуль; гілка в `trader_loop` **вимкнена прапорцем** `USE_EXIT_LADDERS` (дефолт `false`). Не для pairs-gate; не вмикати без окремого spec для directional;
 - Portfolio risk budget (`portfolio/risk_budget.py`) — бібліотечний модуль з тестами, **ще не** в paper/live циклі.
+- Fractional Kelly sizing (`pairs_engine.kelly_fraction`) — **вимкнено за замовчуванням**
+  (`KELLY_FRACTION=0.0`). Множник ноціоналу входу = clip(fractional_kelly(μ, σ²,
+  KELLY_FRACTION), 0, 1) — лише зменшує (без плеча). Дослідження §6.2:
+  Quarter-Kelly (0.25) лише після OOS PASS. Не вмикати в `VALIDATED_PAIRS`
+  (скине Paper Gate).
+- Flow Toxicity Gate (`pairs_arb.flow_toxicity_gate`) — **вимкнено за замовчуванням**
+  (`PAIRS_VPIN_FILTER=false`). Блокує нові входи при токсичному потоці (VPIN >
+  `PAIRS_VPIN_THRESHOLD` АБО |Hawkes-дисбаланс| > `PAIRS_HAWKES_THRESHOLD`).
+  Дослідження §1.1–1.2: високий VPIN + Hawkes = інформований потік, що пробиває
+  support/resistance → mean-reversion небезпечна. Потребує trades (aggTrades);
+  без trades — no-op. Не вмикати в `VALIDATED_PAIRS` без OOS PASS + DSR/CSCV.
 
 ---
 

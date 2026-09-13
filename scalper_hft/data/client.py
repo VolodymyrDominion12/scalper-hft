@@ -17,6 +17,7 @@ from typing import Any
 import ccxt
 
 from scalper_hft.data.exchange_registry import ExchangeRegistry
+from scalper_hft.data.weight_budget import WeightBudget
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +150,9 @@ class ExchangeClient:
 
         self.market_type = market_type
         self._market_cache: dict[str, dict[str, Any]] = {}
+        # Відстеження ваги API-запитів Binance (X-MBX-USED-WEIGHT-1M).
+        # Дослідження §7.2: 6000 ваги/хв за IP; 429=backoff, 418=бан.
+        self.weight_budget = WeightBudget()
 
     @property
     def api_url(self) -> str:
@@ -206,6 +210,40 @@ class ExchangeClient:
             status = "LIVE (НЕ testnet ✓)"
         return f"{ex_id} [{status}] endpoint={url}"
 
+    # ── API weight tracking (Binance X-MBX-USED-WEIGHT-1M) ──────────────────────
+    def _track_weight(self) -> None:
+        """Оновити weight_budget з останніх заголовків відповіді ccxt.
+
+        Викликається після кожного ccxt-методу (klines/trades/orders). ccxt
+        зберігає заголовки в `exchange.last_response_headers` (dict). Тихо
+        ігнорує біржі/ендпоінти, що не віддають вагу.
+        """
+        headers = getattr(self.exchange, "last_response_headers", None)
+        self.weight_budget.update_from_headers(headers)
+
+    def throttle_if_needed(self, *, sleep: bool = True) -> float:
+        """Пауза перед наступним запитом, якщо вага близька до ліміту.
+
+        Дослідження §7.2: при ≥92% ваги — exponential backoff, щоб уникнути
+        HTTP 429 (тимчасовий) / 418 (бан IP). Повертає тривалість sleep (с).
+        `sleep=False` — лише повернути рекомендацію без блокування (для тестів).
+
+        Fail-safe: якщо заголовки ніколи не бачили (біржа не віддає вагу),
+        не спимо «наосліп» — покладаємось на ccxt `enableRateLimit=True`.
+        """
+        if not self.weight_budget.needs_throttle():
+            return 0.0
+        delay = self.weight_budget.recommended_sleep_s()
+        if sleep and delay > 0.0:
+            logger.info(
+                "API weight throttle: sleep %.2fs (used=%d/%d)",
+                delay,
+                self.weight_budget.used_weight,
+                self.weight_budget.weight_limit,
+            )
+            time.sleep(delay)
+            self.weight_budget.mark_throttle()
+        return delay
 
     # ── метадані ──────────────────────────────────────────────────────────────
     def load_markets(self) -> dict[str, Any]:
@@ -275,7 +313,9 @@ class ExchangeClient:
     # ── дані ─────────────────────────────────────────────────────────────────
     def fetch_klines(self, symbol: str, timeframe: str, since_ms: int, limit: int = 1000) -> list[list[Any]]:
         """Один батч історичних свічок. Повертає сирі списки (у форматі ccxt)."""
-        return self.exchange.fetch_ohlcv(symbol, timeframe, since=since_ms, limit=limit)
+        out = self.exchange.fetch_ohlcv(symbol, timeframe, since=since_ms, limit=limit)
+        self._track_weight()
+        return out
 
     def fetch_agg_trades(
         self,
@@ -294,18 +334,25 @@ class ExchangeClient:
         `startTime`/`endTime`, тож у цьому режимі `since` має бути None.
         """
         if from_id is not None:
-            return self.exchange.fetch_trades(symbol, None, limit, {"fromId": int(from_id)})
-        return self.exchange.fetch_trades(symbol, since=since_ms, limit=limit)
+            out = self.exchange.fetch_trades(symbol, None, limit, {"fromId": int(from_id)})
+        else:
+            out = self.exchange.fetch_trades(symbol, since=since_ms, limit=limit)
+        self._track_weight()
+        return out
 
     def fetch_funding_rate_history(self, symbol: str, since_ms: int, limit: int = 1000) -> list[dict[str, Any]]:
         """Історія ставок фандінгу."""
-        return self.exchange.fetch_funding_rate_history(symbol, since=since_ms, limit=limit)
+        out = self.exchange.fetch_funding_rate_history(symbol, since=since_ms, limit=limit)
+        self._track_weight()
+        return out
 
     def fetch_open_interest_history(
         self, symbol: str, timeframe: str, since_ms: int, limit: int = 500
     ) -> list[dict[str, Any]]:
         """Історія Open Interest (ccxt)."""
-        return self.exchange.fetch_open_interest_history(symbol, timeframe, since=since_ms, limit=limit)
+        out = self.exchange.fetch_open_interest_history(symbol, timeframe, since=since_ms, limit=limit)
+        self._track_weight()
+        return out
 
     # ── торгівля (використовується live-модулем) ─────────────────────────────
     def create_order(
@@ -332,10 +379,14 @@ class ExchangeClient:
             params["postOnly"] = True
         if client_order_id:
             params["newClientOrderId"] = client_order_id
+        # Throttle перед order-submit, якщо вага близька до ліміту (дослідження §7.2).
+        self.throttle_if_needed()
         delay = 0.5
         for attempt in range(max_retries):
             try:
-                return self.exchange.create_order(symbol, order_type, side, amount, price, params)
+                out = self.exchange.create_order(symbol, order_type, side, amount, price, params)
+                self._track_weight()
+                return out
             except ccxt.RateLimitExceeded:
                 if attempt == max_retries - 1:
                     raise

@@ -162,3 +162,4 @@
 | regime_supervisor / політики RS-2 (holdout) | FRESH_11 | 2023-06-01 | 2026-09-12 | iter16:rs-holdout/4h |
 | regime_supervisor / політики RS-2 (overlay) | CORE_15 | 2019-11-08 | 2026-09-12 | iter16:rs-overlay/4h+1d |
 | pairs_arb | LINKUSDT | 2023-09-14 | 2026-09-13 | audit_cell/cscv |
+| pairs_arb | BTCUSDT | 2023-09-14 | 2026-09-13 | audit_cell/cscv |

@@ -101,6 +101,24 @@ params:
       Не входить у param_space CSCV-пошуку (фіксований вибір, перевіряється
       окремим sensitivity-тестом). Дефолт 0.25 з v1.3 — пік Calmar у
       iter6b sensitivity (3.12 vs 2.65 при 0.5).
+  flow_toxicity_gate:
+    default: false
+    description: >
+      Блокувати нові входи при токсичному потоці ордерів (VPIN > поріг АБО
+      |Hawkes-дисбаланс| > поріг). Дослідження §1.1–1.2: високий VPIN +
+      Hawkes-самозбудження = інформований потік, що пробиває support/resistance
+      → mean-reversion спреду небезпечна (коінтеграція може зламатись).
+      Потребує trades (aggTrades); без trades — no-op. Дефолт off — лише
+      після OOS PASS з DSR/CSCV. Не входить у param_space (фіксовані пороги).
+  vpin_threshold:
+    default: 0.9
+    description: >
+      Поріг VPIN для блокування входів (0–1). 0.9 = дуже токсичний потік.
+      Дослідження §1.2: різке зростання VPIN свідчить про інформованого гравця.
+  hawkes_imbalance_threshold:
+    default: 0.7
+    description: >
+      Поріг |Hawkes-дисбалансу| (0–1) для блокування. 0.7 = сильний спрямований потік.
 
 invariants:
   no_lookahead: true

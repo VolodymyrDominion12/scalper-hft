@@ -41,7 +41,13 @@ class CostModel:
 
     @classmethod
     def from_settings(cls, settings: object = None, df: pd.DataFrame | None = None) -> CostModel:
-        """Авто-калібровка vol_ref з Parkinson-vol якщо не задано."""
+        """Авто-калібровка vol_ref з Parkinson-vol якщо не задано.
+
+        Якщо `settings.fee_tier` ≠ "vip0" і біржа підтримується (`data/fees.py`),
+        maker_fee/taker_fee переоприділяються з VIP-таблиці (дослідження §7.1),
+        перекриваючи MAKER_FEE/TAKER_FEE. Це робить бектест чесним щодо реального
+        статусу акаунту (Binance VIP 9 → 0% maker).
+        """
         from scalper_hft.config import get_settings
 
         s = settings or get_settings()
@@ -52,9 +58,31 @@ class CostModel:
 
             pv = parkinson_vol(df["high"], df["low"], window=20)
             vol_ref = float(pv.dropna().median()) if not pv.dropna().empty else 0.0
+
+        # VIP-рівень комісій (дослідження §7.1): перекриває maker/taker з таблиці.
+        maker_fee = float(getattr(s, "maker_fee", 0.0002))
+        taker_fee = float(getattr(s, "taker_fee", 0.0005))
+        fee_tier = str(getattr(s, "fee_tier", "vip0")).lower().strip()
+        exchange = str(getattr(s, "data_exchange", getattr(s, "exchange", "binanceusdm")))
+        bnb = bool(getattr(s, "fee_tier_bnb_discount", False))
+        if fee_tier and fee_tier != "vip0":
+            try:
+                from scalper_hft.data.fees import resolve_fees
+
+                maker_fee, taker_fee = resolve_fees(fee_tier, exchange, bnb_discount=bnb)
+            except (ValueError, ImportError):  # noqa: BLE001
+                # Невідома біржа/рівень — лишаємо явні MAKER_FEE/TAKER_FEE.
+                pass
+        elif bnb and exchange.lower().strip() in ("binance", "binanceusdm"):
+            # BNB-дисконт 25% на базові комісії Binance (навіть без VIP-рівня).
+            from scalper_hft.data.fees import BNB_DISCOUNT
+
+            maker_fee = maker_fee * (1.0 - BNB_DISCOUNT)
+            taker_fee = taker_fee * (1.0 - BNB_DISCOUNT)
+
         return cls(
-            maker_fee=float(getattr(s, "maker_fee", 0.0002)),
-            taker_fee=float(getattr(s, "taker_fee", 0.0005)),
+            maker_fee=maker_fee,
+            taker_fee=taker_fee,
             slippage_frac=slippage_bps / 10_000.0,
             vol_ref=vol_ref,
             vol_exp=float(getattr(s, "vol_aware_slippage_exp", 1.0)),

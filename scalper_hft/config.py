@@ -97,6 +97,12 @@ class Settings:
     # Transaction cost model (книга, гл. 5: комісії + slippage + market impact)
     maker_fee: float = field(default_factory=lambda: _env_float("MAKER_FEE", 0.0002))
     taker_fee: float = field(default_factory=lambda: _env_float("TAKER_FEE", 0.0005))
+    # VIP-рівень комісій (дослідження §7.1): Binance VIP 4–9 → 0% maker;
+    # Bybit Supreme VIP → 0.000% maker. Коли `fee_tier` ≠ "vip0", переоприділяє
+    # maker_fee/taker_fee з таблиці `data/fees.py` (перекриває MAKER_FEE/TAKER_FEE).
+    # Дефолт "vip0" = базові ставки (без знижки). Не змінювати без реального статусу.
+    fee_tier: str = field(default_factory=lambda: os.getenv("FEE_TIER", "vip0"))
+    fee_tier_bnb_discount: bool = field(default_factory=lambda: _env_bool("FEE_TIER_BNB_DISCOUNT", False))
     slippage_bps: float = field(default_factory=lambda: _env_float("SLIPPAGE_BPS", 2.0))
     maker_execution: bool = field(default_factory=lambda: _env_bool("MAKER_EXECUTION", True))
     vol_aware_slippage_ref: float = field(default_factory=lambda: _env_float("VOL_AWARE_SLIPPAGE_REF", 0.0))
@@ -106,6 +112,11 @@ class Settings:
     adf_window_days: int = field(default_factory=lambda: _env_int("ADF_WINDOW_DAYS", 90))
     portfolio_allocation_method: str = field(default_factory=lambda: os.getenv("PORTFOLIO_ALLOCATION_METHOD", "equal"))
     erc_vol_window_days: int = field(default_factory=lambda: _env_int("ERC_VOL_WINDOW_DAYS", 7))
+    # API weight tracking (дослідження §7.2: Binance 6000 ваги/хв за IP).
+    # При ≥ API_WEIGHT_THROTTLE_PCT — exponential backoff перед order-submit,
+    # щоб уникнути HTTP 429 (тимчасовий) / 418 (бан IP). 0.0 = вимкнено.
+    api_weight_limit: int = field(default_factory=lambda: _env_int("API_WEIGHT_LIMIT", 6000))
+    api_weight_throttle_pct: float = field(default_factory=lambda: _env_float("API_WEIGHT_THROTTLE_PCT", 0.92))
 
     # Risk model
     position_pct: float = field(default_factory=lambda: _env_float("POSITION_PCT", 0.01))
@@ -125,9 +136,20 @@ class Settings:
     # блокує нові входи коли hist-VaR(95%) портфеля перевищує цей поріг (частка equity).
     # 0.0 = вимкнено (backward-compatible); рекомендоване значення: 0.05 (5%).
     portfolio_var_limit: float = field(default_factory=lambda: _env_float("PORTFOLIO_VAR_LIMIT", 0.0))
+    # Portfolio-level CVaR halt (дослідження §6.2): CVaR = середня втрата за
+    # хвостом, критичне для «товстих хвостів» крипто. 0.0 = вимкнено.
+    # Рекомендоване: 0.07 (7%) при alpha=0.05, або 0.10 (10%) при alpha=0.01.
+    portfolio_cvar_limit: float = field(default_factory=lambda: _env_float("PORTFOLIO_CVAR_LIMIT", 0.0))
+    portfolio_cvar_alpha: float = field(default_factory=lambda: _env_float("PORTFOLIO_CVAR_ALPHA", 0.05))
     corr_notional_cap: float = field(default_factory=lambda: _env_float("CORR_NOTIONAL_CAP", 0.40))
     pair_notional_pct: float = field(default_factory=lambda: _env_float("PAIR_NOTIONAL_PCT", 0.30))
     portfolio_notional_pct: float = field(default_factory=lambda: _env_float("PORTFOLIO_NOTIONAL_PCT", 0.60))
+    # Flow Toxicity Gate для pairs_arb (дослідження §1.1–1.2): блокує нові входи
+    # при токсичному потоці (VPIN > поріг АБО |Hawkes-дисбаланс| > поріг).
+    # Дефолт False — лише після OOS PASS; потребує trades (aggTrades).
+    pairs_vpin_filter: bool = field(default_factory=lambda: _env_bool("PAIRS_VPIN_FILTER", False))
+    pairs_vpin_threshold: float = field(default_factory=lambda: _env_float("PAIRS_VPIN_THRESHOLD", 0.9))
+    pairs_hawkes_threshold: float = field(default_factory=lambda: _env_float("PAIRS_HAWKES_THRESHOLD", 0.7))
     # Per-symbol notional cap + margin/liquidation proximity (1D): жорсткий ліміт
     # ноціоналу на одну монету (частка equity) + блок входів, коли сумарне плече
     # наближається до max_leverage (за `liquidation_proximity_buffer`).
@@ -141,6 +163,11 @@ class Settings:
     # у VALIDATED_PAIRS більше однієї пари.
     enable_vol_target: bool = field(default_factory=lambda: _env_bool("ENABLE_VOL_TARGET", False))
     vol_target_ann: float = field(default_factory=lambda: _env_float("VOL_TARGET_ANN", 0.10))
+    # Fractional Kelly sizing overlay (дослідження §6.2): множник ноціоналу
+    # входу = clip(fractional_kelly(μ, σ², KELLY_FRACTION), 0, 1). 0.0 = вимкнено
+    # (дефолт). Рекомендоване 0.25 (Quarter-Kelly) лише після OOS PASS.
+    kelly_fraction: float = field(default_factory=lambda: _env_float("KELLY_FRACTION", 0.0))
+    kelly_lookback: int = field(default_factory=lambda: _env_int("KELLY_LOOKBACK", 168))
     max_losing_months: int = field(default_factory=lambda: _env_int("MAX_LOSING_MONTHS", 2))
     maker_fill_wait_bars: int = field(default_factory=lambda: _env_int("MAKER_FILL_WAIT_BARS", 1))
     # Seed моделі філу maker pairs (paper PairsEngine і run_pairs_backtest).

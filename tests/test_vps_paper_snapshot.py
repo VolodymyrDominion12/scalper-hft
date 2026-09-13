@@ -19,6 +19,8 @@ def _pairs_db(path: Path, ts: str, *, equity: float = 10_000.0, snapshot_ts: str
         store.log_equity(pd.Timestamp(ts), "LINKUSDT/BTCUSDT", equity, cash=equity, realized_pnl=0.0)
         if snapshot_ts is not None:
             store.save_runtime({"version": 1, "equity": equity})
+            # Override saved_at with the requested timestamp so tests are deterministic
+            store._write("UPDATE snapshots SET saved_at = ? WHERE id = 'runtime'", (snapshot_ts,))
 
 
 def _tsmom_db(path: Path, ts: str, *, symbols: int = 3, per_symbol: float = 666.0) -> None:

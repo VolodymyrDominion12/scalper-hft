@@ -13,6 +13,7 @@ class FakeExchange:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple, dict]] = []
+        self.last_response_headers: dict[str, Any] | None = None
 
     # precision helpers (ccxt-сумісні)
     def amount_to_precision(self, symbol: str, amount: float) -> str:
@@ -44,11 +45,14 @@ class FakeExchange:
 
 def _client(exchange: FakeExchange, market: dict[str, Any] | None = None) -> ExchangeClient:
     """ExchangeClient без __init__ (без реального ccxt/мережі)."""
+    from scalper_hft.data.weight_budget import WeightBudget
+
     c = ExchangeClient.__new__(ExchangeClient)
     c.exchange = exchange  # type: ignore[assignment]
     c.exchange_id = "fake"
     c.market_type = "future"
     c._market_cache = {"BTCUSDT": market} if market else {}
+    c.weight_budget = WeightBudget()
     return c
 
 
@@ -256,4 +260,3 @@ class TestDescribeSource:
         desc = c.describe_source()
         assert "fake" in desc
         assert "LIVE (НЕ testnet ✓)" in desc
-

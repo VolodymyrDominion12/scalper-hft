@@ -195,6 +195,11 @@ class PairsEngine:
         self.vol_lookback = max(int(vol_lookback), 20)
         self.bars_per_year = float(bars_per_year)
         self._vol_size_mult = 1.0
+        # Fractional Kelly sizing overlay (дослідження §6.2): множник ноціоналу
+        # входу = clip(fractional_kelly(μ, σ², fraction), 0, 1). 0.0 = вимкнено.
+        self.kelly_fraction = float(getattr(settings, "kelly_fraction", 0.0))
+        self.kelly_lookback = max(int(getattr(settings, "kelly_lookback", 168)), 20)
+        self._kelly_size_mult = 1.0
         self.week_start_equity = account.equity
         self._last_day: object | None = None
         self._last_week: tuple[int, int] | None = None
@@ -298,6 +303,31 @@ class PairsEngine:
             self._vol_size_mult = 1.0
             return
         self._vol_size_mult = float(np.clip(self.vol_target_ann / realized, 0.0, 1.0))
+
+    def _update_kelly_size_mult(self) -> None:
+        """Переважити _kelly_size_mult за Fractional Kelly (каузально, ≤ t).
+
+        Дослідження §6.2: f* = μ / σ², fractional = fraction × f*. Множник
+        ноціоналу входу = clip(fractional, 0, 1) — лише зменшує (без плеча
+        понад базовий size_pct). При нестачі історії, нульовій дисперсії або
+        kelly_fraction=0 — 1.0 (без зміни поведінки).
+        """
+        if self.kelly_fraction <= 0.0:
+            self._kelly_size_mult = 1.0
+            return
+        diffs = self._spread_hist.diff().dropna().tail(self.kelly_lookback)
+        if len(diffs) < 20:
+            self._kelly_size_mult = 1.0
+            return
+        mean = float(diffs.mean())
+        var = float(diffs.var(ddof=0))
+        if var <= 1e-12 or not np.isfinite(mean) or not np.isfinite(var):
+            self._kelly_size_mult = 1.0
+            return
+        from scalper_hft.portfolio.risk_budget import fractional_kelly
+
+        kelly = fractional_kelly(mean, var, fraction=self.kelly_fraction, max_leverage=1.0)
+        self._kelly_size_mult = float(np.clip(kelly, 0.0, 1.0))
 
     def _log_order(
         self,
@@ -597,6 +627,8 @@ class PairsEngine:
             size_pct *= max(0.0, min(size_mult, 1.0))
             # Vol-target overlay (Phase 5.2): множник 1.0 коли вимкнено.
             size_pct *= self._vol_size_mult
+            # Fractional Kelly overlay (дослідження §6.2): множник 1.0 коли вимкнено.
+            size_pct *= self._kelly_size_mult
             if size_pct <= 0:
                 return "blocked:vol_target" if self._vol_size_mult <= 0 else "blocked:корельований ноціонал"
             # Жорсткий ліміт плеча: сумарний ноціонал (існуючі позиції за
@@ -719,6 +751,7 @@ class PairsEngine:
         if close1 > 0 and close2 > 0:
             self._spread_hist.loc[pd.Timestamp(ts)] = float(np.log(close1) - np.log(close2))  # type: ignore[call-overload]
         self._update_vol_size_mult()
+        self._update_kelly_size_mult()
         if self.is_journal.records:
             mid1 = 0.5 * (high1 + low1)
             mid2 = 0.5 * (high2 + low2)

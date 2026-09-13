@@ -61,6 +61,12 @@ class PairsArb(Strategy):
         regime_scale_factor: float = 0.25,
         coint_gate: bool = False,
         coint_window: int = 1440,
+        flow_toxicity_gate: bool = False,
+        vpin_threshold: float = 0.9,
+        hawkes_imbalance_threshold: float = 0.7,
+        time_stop: bool = False,
+        time_stop_mult: float = 2.0,
+        time_stop_lookback: int = 480,
     ) -> None:
         super().__init__(
             entry_z=entry_z,
@@ -76,6 +82,12 @@ class PairsArb(Strategy):
             regime_scale_factor=float(regime_scale_factor),
             coint_gate=bool(coint_gate),
             coint_window=int(coint_window),
+            flow_toxicity_gate=bool(flow_toxicity_gate),
+            vpin_threshold=float(vpin_threshold),
+            hawkes_imbalance_threshold=float(hawkes_imbalance_threshold),
+            time_stop=bool(time_stop),
+            time_stop_mult=float(time_stop_mult),
+            time_stop_lookback=int(time_stop_lookback),
         )
         self.betas: pd.Series | None = None
 
@@ -152,6 +164,22 @@ class PairsArb(Strategy):
         if bool(self.get("coint_gate", False)):
             coint_window = int(self.get("coint_window", 1440))
             sig = self._apply_adf_coint_gate(sig, spread_series, window=coint_window)
+
+        # ── Flow Toxicity Gate: блокуємо входи при токсичному потоці (VPIN/Hawkes) ──
+        # Дослідження §1.1–1.2: високий VPIN + Hawkes-дисбаланс = інформований
+        # потік, що пробиває support/resistance → mean-reversion небезпечна.
+        if bool(self.get("flow_toxicity_gate", False)) and trades is not None:
+            vpin_thr = float(self.get("vpin_threshold", 0.9))
+            hawkes_thr = float(self.get("hawkes_imbalance_threshold", 0.7))
+            sig = self._apply_flow_toxicity_gate(sig, trades, vpin_threshold=vpin_thr, hawkes_threshold=hawkes_thr)
+
+        # ── Time Stop: примусово закриває позицію після time_stop_mult × half-life ──
+        # Дослідження §3.3: якщо позиція утримується довше 2 періодів напіврозпаду,
+        # коінтеграція зламана — примусово ліквідувати.
+        if bool(self.get("time_stop", False)):
+            ts_mult = float(self.get("time_stop_mult", 2.0))
+            ts_lookback = int(self.get("time_stop_lookback", 480))
+            sig = self._apply_time_stop(sig, spread_series, mult=ts_mult, lookback=ts_lookback)
 
         return sig
 
@@ -243,11 +271,12 @@ class PairsArb(Strategy):
     @staticmethod
     def _apply_adf_coint_gate(sig: pd.Series, spread: pd.Series, window: int = 1440, step: int = 60) -> pd.Series:
         """Перевіряє коінтеграцію спреду через ADF тест (p-value).
-        
+
         Оскільки ADF тест повільний, він обчислюється лише кожні `step` барів (напр. кожні 60 хв).
         Якщо p-value > 0.05, коінтеграція вважається розірваною -> блокуємо НОВІ входи.
         """
         import warnings
+
         try:
             from statsmodels.tsa.stattools import adfuller
         except ImportError:
@@ -257,12 +286,12 @@ class PairsArb(Strategy):
             return sig
 
         p_values = pd.Series(index=spread.index, dtype=float)
-        
+
         # Sparse calculation to avoid huge backtest overhead
         calc_indices = np.arange(window, len(spread), step)
         if len(calc_indices) == 0 or calc_indices[-1] != len(spread) - 1:
             calc_indices = np.append(calc_indices, len(spread) - 1)
-            
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             for i in calc_indices:
@@ -273,9 +302,69 @@ class PairsArb(Strategy):
                         p_values.iloc[i] = res[1]
                     except Exception:
                         p_values.iloc[i] = 1.0
-                
+
         p_values = p_values.ffill().fillna(0.0)
         block = p_values > 0.05
-        
+
+        holding = sig.shift(1).fillna(0.0) != 0.0
+        return sig.where(~block | holding, other=0)
+
+    @staticmethod
+    def _apply_flow_toxicity_gate(
+        sig: pd.Series,
+        trades: pd.DataFrame,
+        vpin_threshold: float = 0.9,
+        hawkes_threshold: float = 0.7,
+    ) -> pd.Series:
+        """Блокує нові входи при токсичному потоці ордерів (VPIN + Hawkes).
+
+        Дослідження §1.1–1.2: VPIN (Volume-Synchronized PIN) міряє дисбаланс
+        агресивних покупців/продавців у об'ємних барах; Hawkes-дисбаланс —
+        само-збудження потоку. Високі значення обох = інформований потік,
+        що пробиває support/resistance → mean-reversion спреду небезпечна
+        (коінтеграція може зламатись). Тому блокуємо лише нові входи; виходи
+        та утримання позиції — не блокуємо (консистентно з іншими гейтами).
+
+        Каузально: VPIN/Hawkes обчислюються лише з trades ≤ t (ffill на
+        kline-індекс). Без trades — no-op (гейт вимкнений фактично).
+        """
+        if trades is None or trades.empty or "side" not in trades.columns:
+            return sig
+
+        try:
+            from scalper_hft.features.hawkes import order_flow_toxicity_hawkes
+            from scalper_hft.features.microstructure import vpin
+        except ImportError:  # noqa: BLE001
+            return sig
+
+        block = pd.Series(False, index=sig.index)
+
+        # VPIN: об'ємні бари ≈ 10% середнього об'єму свічки (AFML Ch.19.5.2).
+        try:
+            vpin_series = vpin(trades, bar_volume=1000.0, n=50)
+            if not vpin_series.empty:
+                # VPIN індексується часом закриття об'ємних барів; при токсичному
+                # потоці декілька об'ємних барів закриваються у межах одного kline —
+                # дублікати. Беремо останнє значення на кожен timestamp, потім ffill.
+                if vpin_series.index.has_duplicates:
+                    vpin_series = vpin_series.groupby(level=0).last()
+                vpin_aligned = vpin_series.reindex(sig.index, method="ffill").fillna(0.0)
+                block = block | (vpin_aligned > vpin_threshold)
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Hawkes-дисбаланс: |imbalance| > threshold = спрямований токсичний потік.
+        try:
+            hawkes_df = order_flow_toxicity_hawkes(trades, alpha=0.1, beta=0.5)
+            if not hawkes_df.empty and "hawkes_imbalance" in hawkes_df.columns:
+                imb = hawkes_df["hawkes_imbalance"]
+                if imb.index.has_duplicates:
+                    imb = imb.groupby(level=0).last()
+                imb_aligned = imb.reindex(sig.index, method="ffill").fillna(0.0)
+                block = block | (imb_aligned.abs() > hawkes_threshold)
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Блокуємо лише нові входи; позиції що вже відкриті — не перекриваємо.
         holding = sig.shift(1).fillna(0.0) != 0.0
         return sig.where(~block | holding, other=0)

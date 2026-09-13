@@ -35,6 +35,34 @@ def portfolio_var(
     return float(-np.quantile(port, alpha)) if len(port) else 0.0
 
 
+def historical_cvar(
+    returns: pd.Series | np.ndarray,
+    alpha: float = 0.01,
+) -> float:
+    """Історичний CVaR / Expected Shortfall (частка капіталу, додатне число).
+
+    Дослідження §6.2: CVaR — середня втрата за хвостом розподілу ( VaR_α),
+    критичне для «товстих хвостів» крипто. На відміну від VaR, CVaR враховує
+    Magnitude втрат за порогом, а не лише частоту.
+
+    Args:
+        returns: Series/масив прибутковостей портфеля (дійсні числа).
+        alpha: рівень хвоста (0.01 = 99% CVaR, 0.05 = 95% CVaR).
+
+    Returns:
+        CVaR як додатне число (частка капіталу). 0.0 якщо недостатньо даних.
+    """
+    r = np.asarray(returns, dtype=float).ravel()
+    if len(r) < 10:
+        return 0.0
+    var = float(np.quantile(r, alpha))
+    tail = r[r <= var]
+    if len(tail) == 0:
+        return max(0.0, float(-var))
+    # CVaR — середня втрата за хвостом (додатнє число); 0 якщо хвіст прибутковий.
+    return max(0.0, float(-np.mean(tail)))
+
+
 def vol_target_scale(
     returns: pd.DataFrame,
     weights: np.ndarray,
@@ -138,25 +166,32 @@ def fractional_kelly(
     max_leverage: float = 3.0,
 ) -> float:
     """Розрахунок Fractional Kelly для динамічного sizing-у позицій.
-    
+
     Для неперервного розподілу (наближення): f* = μ / σ^2.
-    
+
     Args:
         mean_return: очікувана прибутковість μ.
         variance: дисперсія σ^2.
         fraction: частка Келлі (за замовчуванням 0.5 = Half-Kelly).
         max_leverage: максимальне допустиме плече.
-        
+
     Returns:
         Оптимальний розмір позиції (частка від капіталу), обмежений max_leverage.
     """
     if variance <= 1e-12 or not np.isfinite(mean_return) or not np.isfinite(variance):
         return 0.0
-        
+
     f_star = mean_return / variance
     f_frac = fraction * f_star
-    
+
     return float(np.clip(f_frac, 0.0, max_leverage))
 
 
-__all__ = ["portfolio_var", "vol_target_scale", "loss_budget_split", "estimate_tail_dependence", "fractional_kelly"]
+__all__ = [
+    "portfolio_var",
+    "historical_cvar",
+    "vol_target_scale",
+    "loss_budget_split",
+    "estimate_tail_dependence",
+    "fractional_kelly",
+]

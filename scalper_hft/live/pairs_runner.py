@@ -599,6 +599,8 @@ class PairsPortfolioRunner:
         self.daily_loss_limit = settings.daily_loss_limit
         self.weekly_loss_limit = settings.weekly_loss_limit
         self.portfolio_var_limit = settings.portfolio_var_limit
+        self.portfolio_cvar_limit = float(getattr(settings, "portfolio_cvar_limit", 0.0))
+        self.portfolio_cvar_alpha = float(getattr(settings, "portfolio_cvar_alpha", 0.05))
         self.week_start_equity = self.account.equity
         self._last_week: tuple[int, int] | None = None
         # Ковзне вікно equity для hist-VaR: зберігаємо 100 останніх значень
@@ -666,6 +668,37 @@ class PairsPortfolioRunner:
             return False
         return True
 
+    def _portfolio_cvar_ok(self) -> bool:
+        """True якщо hist-CVaR портфеля в межах ліміту або ліміт вимкнений.
+
+        Дослідження §6.2: CVaR (Expected Shortfall) — середня втрата за хвостом,
+        критичне для «товстих хвостів» крипто. На відміну від VaR, враховує
+        magnitude втрат за порогом. Повертає True (no-op) якщо:
+        - portfolio_cvar_limit == 0.0 (дефолт, backward-compatible)
+        - недостатньо даних у вікні (< 10 точок → чекаємо накопичення)
+        """
+        limit = float(getattr(self, "portfolio_cvar_limit", 0.0))
+        if limit <= 0.0:
+            return True
+        win = list(self._equity_window)
+        if len(win) < 10:
+            return True
+        arr = np.array(win, dtype=float)
+        returns = np.diff(arr) / arr[:-1]
+        alpha = float(getattr(self, "portfolio_cvar_alpha", 0.05))
+        from scalper_hft.portfolio.risk_budget import historical_cvar
+
+        cvar = historical_cvar(returns, alpha=alpha)
+        if cvar > limit:
+            logger.warning(
+                "Portfolio hist-CVaR(%.0f%%) = %.4f > limit %.4f — halting new entries",
+                (1.0 - alpha) * 100.0,
+                cvar,
+                limit,
+            )
+            return False
+        return True
+
     def _should_halt_entries(self) -> bool:
         eq = self.account.equity
         if eq <= self.account.day_start_equity * (1.0 - self.daily_loss_limit):
@@ -673,6 +706,8 @@ class PairsPortfolioRunner:
         if eq <= self.week_start_equity * (1.0 - self.weekly_loss_limit):
             return True
         if not self._portfolio_var_ok():
+            return True
+        if not self._portfolio_cvar_ok():
             return True
         return False
 
@@ -706,7 +741,7 @@ class PairsPortfolioRunner:
         for r in self.runners:
             r.engine.portfolio_block_entries = halt
             r.engine.control_block_entries = ctrl.no_new_entries
-            
+
         # ERC (Equal Risk Contribution) ваги на основі 7-денної волатильності
         bars_7d = int(7 * 24 * 3600 / pd.Timedelta(self.interval).total_seconds()) if hasattr(pd, "Timedelta") else 168
         vols = []
@@ -716,7 +751,7 @@ class PairsPortfolioRunner:
                 vols.append(spread.diff().tail(bars_7d).std())
             else:
                 vols.append(0.0)
-                
+
         weights = [1.0 / max(len(self.runners), 1)] * len(self.runners)
         if all(v > 0 for v in vols):
             inv_vols = [1.0 / v for v in vols]
@@ -730,7 +765,7 @@ class PairsPortfolioRunner:
         else:
             prefix = ""
         action = prefix + " || ".join(
-            r.step(now=now, reconcile=False, control=ctrl, persist=False, portfolio_weight=w) 
+            r.step(now=now, reconcile=False, control=ctrl, persist=False, portfolio_weight=w)
             for w, r in zip(weights, self.runners)
         )
         self._persist_if_needed(action)

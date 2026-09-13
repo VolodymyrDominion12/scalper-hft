@@ -164,3 +164,24 @@ depth-weighted imbalance → бари → `ob_imbalance`/`market_maker` досл
 - **Дублікати/розриви ts** — дедуп за ts на етапі патлайну (Фаза 3).
 - **Диск** — `du` щодня; за потреби ротація за датами (пункт Фази 1 L2_PLAN).
 - **Запис при Ctrl+C** — буфер скидається у `finally` (вже реалізовано).
+
+## API weight hygiene (X-MBX-USED-WEIGHT-1M)
+
+Дослідження §7.2: Binance USDT-M futures обмежує REST-запити до 6000 ваги/хв
+за IP. HTTP 429 — тимчасовий backoff, HTTP 418 — авто-бан IP на кілька хвилин.
+
+`ExchangeClient` тепер відстежує вагу через `WeightBudget`
+(`scalper_hft/data/weight_budget.py`):
+
+- після кожного ccxt-виклику (klines/trades/funding/orders) парсить
+  `X-MBX-USED-WEIGHT-1M` з `exchange.last_response_headers`;
+- при ≥ `API_WEIGHT_THROTTLE_PCT` (дефолт 92% = 5520) — `throttle_if_needed()`
+  спить 0.2–5.0 с (лінійно до ліміту) перед наступним запитом;
+- `create_order` викликає throttle **перед** submit;
+- якщо біржа не віддає заголовок — не спимо «наосліп» (ccxt `enableRateLimit`
+  лишається основним механізмом).
+
+Конфіг: `API_WEIGHT_LIMIT` (дефолт 6000), `API_WEIGHT_THROTTLE_PCT` (дефолт 0.92).
+
+Метрики для дашборду: `client.weight_budget.snapshot()` →
+`{used_weight, usage_pct, is_critical, throttle_count, ...}`.

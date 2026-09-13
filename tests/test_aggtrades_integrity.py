@@ -107,7 +107,10 @@ def test_fetch_agg_trades_from_id_uses_fromId_without_start_time():
             return []
 
     client = ExchangeClient.__new__(ExchangeClient)
+    from scalper_hft.data.weight_budget import WeightBudget
+
     client.exchange = _Exchange()
+    client.weight_budget = WeightBudget()
 
     client.fetch_agg_trades("BTC/USDT:USDT", None, limit=1000, from_id=555)
     assert calls[-1] == ("BTC/USDT:USDT", None, 1000, {"fromId": 555})
