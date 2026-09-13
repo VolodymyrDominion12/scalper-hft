@@ -1,7 +1,37 @@
-# Статус стратегій scalper-hft (консолідовано; оновлено 2026-09-12)
+# Статус стратегій scalper-hft (консолідовано; оновлено 2026-09-13)
 
 Оновлюється після кожного аудиту. Методологія: повний цикл інвестігейт →
 реалізація → тест → аудит (walk-forward + Deflated Sharpe + CSCV/PBO + stress/cohort + paper-replay).
+
+## 🔄 Iteration 15 — Kalman bake-off / attribution / funding filter (2026-09-13)
+
+Повний звіт: [reports/iter15_attribution.md](reports/iter15_attribution.md).
+Pre-registration: [reports/hypothesis_iter15.md](reports/hypothesis_iter15.md).
+Дані: LINKUSDT/BTCUSDT 1h + CORE_15 1d, 1095 days, live Binance.
+
+- **H15-A Kalman vs OLS bake-off — FAIL Kalman.** 49 WF-вікон на LINK/BTC 1h:
+  OLS WF pos **55%**, OOS SRh **+0.010**, угоди 72, maxDD −2.93%.
+  Kalman: WF pos **22%**, OOS SRh −0.028, угоди **525** (7.3× більше → fee-drag −10.64%).
+  Причина: Kalman оновлює β щогодини → нервовий спред → overtrade.
+  **`use_kalman=False` підтверджено.** Детальний звіт: [kalman_ols_bakeoff_2026.md](reports/kalman_ols_bakeoff_2026.md).
+- **H15-B ts_momentum attribution CORE_15 — INCONCLUSIVE.** Per-symbol WF pos (8 вікон):
+  Top: NEARUSDT (75%), DOTUSDT (75%), ATOMUSDT (62%).
+  Bottom: UNIUSDT (25%), потім 10 символів на 38%.
+  Лише 8 вікон — надто мало для статистичного висновку; портфельний Sharpe Top-12
+  не обчислено. **CORE_15 лишається без змін.** UNIUSDT — watchlist.
+- **H15-C AVAX/NEAR + Kalman — BLOCKED** (залежить від H15-A, яка FAIL).
+- **H15-D Funding carry + filter — FAIL.** BTCUSDT 1h: 128 вікон, OOS>0 = **42%** < 55%.
+  Підтверджує iter9 відхилення; funding 2025–26 структурно низький.
+- **H15-E Sparse basket — BLOCKED** (CLI не підтримує basket_df напряму).
+
+**Paper Gate 🟢 ЖИВИЙ:** bars=2160, ret=+1.90%, win rate=60%, fill-rate=100%, 10 угод.
+
+**Висновок iter15:** усі прості структурно незалежні вісі перевірено та відхилено
+(H15-A FAIL, H15-D FAIL, H15-B/C/E INCONCLUSIVE/BLOCKED). Простір «дешевих» покращень
+остаточно вичерпано — iter9→15. Наступний крок виключно **Paper Gate** (8 тижнів VPS).
+Нові альфи потребують нових даних (L2 depth5) або нової інфраструктури (basket pipeline).
+
+
 
 ## 🔄 Iteration 17 (цикл RS-3) — `risk_overlay` реалізовано в стратегії + виправлено дефект парсера (2026-09-12)
 
