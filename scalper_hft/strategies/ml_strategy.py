@@ -121,7 +121,7 @@ class MLStrategy(Strategy):
         prob_size = bool(self.get("prob_size", True))
         meta_filter = bool(self.get("meta_filter", True))
         meta_scale = float(self.get("meta_scale", 1.0))
-        discretize_step = float(self.get("discretize_step", 0.25))
+        discretize_step = float(self.get("discretize_step", 0.0))
         ood_threshold = float(self.get("ood_threshold", 0.0))
         add_hmm = bool(self.get("add_hmm", False))
         add_garch = bool(self.get("add_garch", False))
@@ -194,6 +194,7 @@ class MLStrategy(Strategy):
                 test_size=test_bars,
                 sample_weights=w,
                 t1=t1,
+                backend=str(self.get("backend", "lightgbm")),
             )
             size = meta_size(p_meta.values) * meta_scale
             if discretize_step > 0:
@@ -209,6 +210,7 @@ class MLStrategy(Strategy):
                 sample_weights=w,
                 close=df["close"],
                 t1=t1,
+                backend=str(self.get("backend", "lightgbm")),
             )
             side = result.predictions  # {-1, +1} на OOS-індексах
             p_side = result.probabilities  # P(клас +1)
@@ -221,6 +223,9 @@ class MLStrategy(Strategy):
                 if discretize_step > 0:
                     size = discretize(size, step=discretize_step)
                 signals = side.astype(float) * size
+                print(f"DEBUG primary size: sum={size.sum()} max={size.max()}")
+                print(f"DEBUG primary side: {pd.Series(side).value_counts().to_dict()}")
+                print(f"DEBUG primary signals non-zero: {(signals != 0).sum()}")
             else:
                 signals = side.astype(float)
 

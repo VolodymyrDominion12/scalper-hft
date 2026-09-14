@@ -160,10 +160,10 @@ class PairsArb(Strategy):
             factor = float(self.get("regime_scale_factor", 0.25))
             sig = self._apply_regime_scale(sig, df, factor=factor)
 
-        # ── Cointegration Gate: блокуємо входи при втраті коінтеграції (ADF) ──
+        # ── Cointegration Gate: закриваємо позиції при втраті коінтеграції (Engle-Granger) ──
         if bool(self.get("coint_gate", False)):
             coint_window = int(self.get("coint_window", 1440))
-            sig = self._apply_adf_coint_gate(sig, spread_series, window=coint_window)
+            sig = self._apply_eg_coint_gate(sig, df, window=coint_window)
 
         # ── Flow Toxicity Gate: блокуємо входи при токсичному потоці (VPIN/Hawkes) ──
         # Дослідження §1.1–1.2: високий VPIN + Hawkes-дисбаланс = інформований
@@ -269,36 +269,45 @@ class PairsArb(Strategy):
         return (sig_f * entry_scale).clip(-1.0, 1.0)
 
     @staticmethod
-    def _apply_adf_coint_gate(sig: pd.Series, spread: pd.Series, window: int = 1440, step: int = 60) -> pd.Series:
-        """Перевіряє коінтеграцію спреду через ADF тест (p-value).
+    def _apply_eg_coint_gate(sig: pd.Series, df: pd.DataFrame, window: int = 1440, step: int = 60) -> pd.Series:
+        """Перевіряє коінтеграцію через тест Енгла-Грейнджера (p-value).
 
-        Оскільки ADF тест повільний, він обчислюється лише кожні `step` барів (напр. кожні 60 хв).
-        Якщо p-value > 0.05, коінтеграція вважається розірваною -> блокуємо НОВІ входи.
+        Обчислюється кожні `step` барів (напр. кожні 60 хв).
+        Якщо p-value > 0.05, коінтеграція вважається розірваною -> примусовий вихід (circuit breaker).
         """
         import warnings
 
         try:
-            from statsmodels.tsa.stattools import adfuller
+            from statsmodels.tsa.stattools import coint
         except ImportError:
             return sig
 
-        if len(spread) < window + step:
+        leg1 = df.get("leg1")
+        leg2 = df.get("leg2")
+        
+        if leg1 is None or leg2 is None or len(leg1) < window + step:
             return sig
 
-        p_values = pd.Series(index=spread.index, dtype=float)
+        p_values = pd.Series(index=leg1.index, dtype=float)
 
         # Sparse calculation to avoid huge backtest overhead
-        calc_indices = np.arange(window, len(spread), step)
-        if len(calc_indices) == 0 or calc_indices[-1] != len(spread) - 1:
-            calc_indices = np.append(calc_indices, len(spread) - 1)
+        calc_indices = np.arange(window, len(leg1), step)
+        if len(calc_indices) == 0 or calc_indices[-1] != len(leg1) - 1:
+            calc_indices = np.append(calc_indices, len(leg1) - 1)
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             for i in calc_indices:
-                slice_data = spread.iloc[i - window : i].dropna()
-                if len(slice_data) > window // 2:
+                s1 = leg1.iloc[i - window : i].dropna()
+                s2 = leg2.iloc[i - window : i].dropna()
+                
+                # Ensure they align
+                common_idx = s1.index.intersection(s2.index)
+                if len(common_idx) > window // 2:
                     try:
-                        res = adfuller(slice_data.values, maxlag=1, autolag=None)
+                        # coint assumes linear relationship, so usually we pass log prices
+                        # since spread = log(leg1) - log(leg2)
+                        res = coint(np.log(s1.loc[common_idx]), np.log(s2.loc[common_idx]), maxlag=1, autolag=None)
                         p_values.iloc[i] = res[1]
                     except Exception:
                         p_values.iloc[i] = 1.0
@@ -306,8 +315,8 @@ class PairsArb(Strategy):
         p_values = p_values.ffill().fillna(0.0)
         block = p_values > 0.05
 
-        holding = sig.shift(1).fillna(0.0) != 0.0
-        return sig.where(~block | holding, other=0)
+        # Circuit breaker: force exit if cointegration is broken
+        return sig.where(~block, other=0)
 
     @staticmethod
     def _apply_flow_toxicity_gate(

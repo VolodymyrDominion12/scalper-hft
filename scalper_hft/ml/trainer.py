@@ -212,8 +212,8 @@ def train_walk_forward(
         else:
             p_pos = np.full(len(X_te), 0.5)
 
-        # Універсальне мапування: {−1,+1} (primary) або {0,1} (мета-лейблінг)
-        other = classes[0]
+        # Для XGBoost classes = [0, 1], але якщо оригінальний y мав -1, повертаємо -1
+        other = -1 if -1 in y.values else classes[0]
         pred = pd.Series(np.where(p_pos >= 0.5, 1, other), index=X_te.index)
         oos_preds.append(pred)
         oos_proba.append(p_pos.astype(float))
@@ -386,6 +386,7 @@ def _oof_primary_predictions(
     n_splits: int = 3,
     gap: int = 10,
     t1: pd.Series | None = None,
+    backend: str = "lightgbm",
 ) -> np.ndarray:
     """Чесні (OOF) прогнози primary на train-вікні (expanding + t1-purge).
 
@@ -398,9 +399,11 @@ def _oof_primary_predictions(
     for tr, te in folds:
         if len(te) == 0 or len(tr) < 2:
             continue
-        m = LGBMClassifier(**params)
+        from scalper_hft.ml.backends import make_backend
+        m = make_backend(backend, params)
         w_tr = w[tr] if w is not None else None
-        m.fit(X.iloc[tr], y.iloc[tr], sample_weight=w_tr)
+        y_tr_fit = y.iloc[tr].replace({-1: 0, 1: 1}) if backend == "xgboost" else y.iloc[tr]
+        m.fit(X.iloc[tr], y_tr_fit, sample_weight=w_tr)
         preds[te] = _predict_binary(m, X.iloc[te])
     return preds
 
@@ -415,6 +418,7 @@ def train_walk_forward_meta(
     close: pd.Series | None = None,
     cost: object | None = None,
     t1: pd.Series | None = None,
+    backend: str = "lightgbm",
 ) -> tuple[pd.Series, pd.Series]:
     """Walk-forward мета-лейблінг: primary задає сторону, мета — «торгувати чи ні».
 
@@ -431,8 +435,10 @@ def train_walk_forward_meta(
         (side, p_meta): Series, вирівняні на OOS-індексі X.
             side ∈ {−1, +1}; p_meta ∈ [0, 1] — імовірність, що угода прибуткова.
     """
-    if not _HAS_LGBM:
-        raise ImportError("Встановіть lightgbm: uv add --optional ml lightgbm scikit-learn")
+    from scalper_hft.ml.backends import is_available, make_backend
+
+    if not is_available(backend):
+        raise ImportError(f"Встановіть {backend}: uv pip install -e '.[ml]'")
 
     params = params or _default_lgbm_params()
     oos_side: list[pd.Series] = []
@@ -464,13 +470,14 @@ def train_walk_forward_meta(
             w_tr = w_tr / s if s > 0 else np.ones(len(w_tr)) / len(w_tr)
 
         # 1) primary: fit на train
-        primary = LGBMClassifier(**params)
-        primary.fit(X_tr, y_tr, sample_weight=w_tr)
+        primary = make_backend(backend, params)
+        y_tr_fit = y_tr.replace({-1: 0, 1: 1}) if backend == "xgboost" else y_tr
+        primary.fit(X_tr, y_tr_fit, sample_weight=w_tr)
         side_te = _predict_binary(primary, X_te)  # OOS side (сигнал)
 
         # 2) чесні OOF-прогнози primary на train → мета-мітки (PurgedKFold по t1)
         t1_tr = t1.reindex(X_tr.index) if t1 is not None else None
-        side_tr_oof = _oof_primary_predictions(X_tr, y_tr, w_tr, params, t1=t1_tr)
+        side_tr_oof = _oof_primary_predictions(X_tr, y_tr, w_tr, params, t1=t1_tr, backend=backend)
         from scalper_hft.backtest.execution import CostModel
 
         fee = (cost if isinstance(cost, CostModel) else CostModel()).taker_cost_per_side() * 2
@@ -489,8 +496,9 @@ def train_walk_forward_meta(
             X_meta_tr["primary_pred"] = side_tr_oof
             X_meta_te = X_te.copy()
             X_meta_te["primary_pred"] = side_te
-            meta = LGBMClassifier(**params)
-            meta.fit(X_meta_tr, y_meta_tr, sample_weight=w_tr)
+            meta = make_backend(backend, params)
+            y_meta_tr_fit = y_meta_tr # it's already {0, 1}
+            meta.fit(X_meta_tr, y_meta_tr_fit, sample_weight=w_tr)
             proba = np.asarray(meta.predict_proba(X_meta_te))
             classes = list(meta.classes_)
             p_meta_te = proba[:, classes.index(1)] if 1 in classes else np.full(len(X_te), 0.5)
@@ -512,8 +520,9 @@ def _predict_binary(model: object, X: pd.DataFrame) -> np.ndarray:
     proba = model.predict_proba(X)  # type: ignore[attr-defined]
     classes = list(model.classes_)  # type: ignore[attr-defined]
     p_pos = proba[:, classes.index(1)] if 1 in classes else np.full(len(X), 0.5)
-    other = classes[0]
-    return np.where(p_pos >= 0.5, 1, other)
+    # Для XGBoost other = 0, але для primary моделі нам потрібно -1
+    # Оскільки ця функція використовується лише для primary, завжди повертаємо -1 для other
+    return np.where(p_pos >= 0.5, 1, -1)
 
 
 # ── Inference ─────────────────────────────────────────────────────────────────

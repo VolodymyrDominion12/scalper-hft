@@ -75,6 +75,8 @@ def make_backend(
         if not _HAS_XGB:
             raise ImportError("xgboost не встановлено (uv pip install -e '.[ml]')")
         # XGBoost вимагає лейбли 0/1 (не -1/+1); конвертацію робить trainer.
+        if "verbosity" in params and params["verbosity"] < 0:
+            params["verbosity"] = 0
         return XGBClassifier(**params)
     raise ValueError(f"Невідомий ML-бэкенд: '{name}'. Доступні: lightgbm, xgboost")
 

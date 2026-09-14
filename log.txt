@@ -1,0 +1,5 @@
+15:20:54 INFO    scalper_hft.data.downloader: BTCUSDT 1m: у кеші 2023-09-11 11:39:00 … 2026-09-14 12:18:00 (1582600 барів); потрібно 2026-06-16 12:20:54.105661 … 2026-09-14 12:20:54.105661; бракує 1 вікно: 2026-09-14 12:18:00 → 2026-09-14 12:21:54.105000 (0 days 00:03:54.105000)
+15:20:54 INFO    scalper_hft.data.downloader: Докачую klines BTCUSDT 1m з джерела binanceusdm [LIVE (НЕ testnet ✓)] endpoint=https://fapi.binance.com/fapi/v1: 2026-09-14 12:18:00 → 2026-09-14 12:21:54.428000 (0 days 00:03:54.428000)
+15:20:56 INFO    scalper_hft.data.storage: Збережено klines: /home/volodymyr/PycharmProjects/scalper-hft/data/BTCUSDT_1m_klines.parquet (1582602 рядків)
+15:20:56 INFO    scalper_hft.data.access: Ресемплінг BTCUSDT 1m → 1h (1582602 → 26377 барів, не кешуємо)
+15:21:02 INFO    scalper_hft.cli: Графік збережено: docs/plots/ml_strategy_BTCUSDT.png

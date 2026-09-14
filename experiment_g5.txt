@@ -1,0 +1,29 @@
+
+Пара: LINKUSDT / BTCUSDT (1h, 26281 спільних барів)
+Pairs arb: ret=+0.710% | SRh=+0.001 | угод=94 | maxDD=-2.91% | funding=+0.035%
+Загальна дохідність:          0.71%
+CAGR:                         0.24%
+Річна волатильність:          1.81%
+Sharpe (річний):              0.140
+Sharpe (годинний):            0.001  ← без ануалізації
+Sortino:                      0.199
+Calmar:                       0.081
+Макс. просідання:            -2.91%
+Win rate:                    50.00%
+Profit factor:                1.114
+Угоди:                           94
+Середній прибуток/угода:    0.0080%
+Експозиція:                  36.44%
+Угод на день:                  0.09
+Turnover (зміна позиції):    6.8000
+P(розорення):                0.0000
+
+Quintile / time-decay на −Δspread (не close ноги):
+  Quintile: FAIL | ρ=+0.600 | monotonic=False
+Quintile z: Spearman ρ=+0.600 (не монотонно)
+Q1   -0.000059
+Q2   -0.000022
+Q3    0.000155
+Q4    0.000062
+Q5   -0.000014
+  Time-decay: PASS | Time-decay: lag0 SR=+1.267 | lag1 SR=+1.118 | lag2 SR=+1.065 | lag3 SR=+1.287
